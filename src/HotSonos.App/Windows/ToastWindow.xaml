@@ -1,0 +1,25 @@
+<Window x:Class="HotSonos.App.Windows.ToastWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight"
+        Focusable="False"
+        ShowActivated="False">
+    <Border CornerRadius="10" Padding="18,12" MinWidth="200"
+            Background="#F01C2536" BorderBrush="#FF2ECC71" BorderThickness="1.5">
+        <StackPanel Orientation="Horizontal">
+            <TextBlock x:Name="MessageText"
+                       Foreground="White"
+                       FontFamily="Segoe UI"
+                       FontSize="16"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center"
+                       Text="HotSonos" />
+        </StackPanel>
+    </Border>
+</Window>

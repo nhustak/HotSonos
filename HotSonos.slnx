@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HotSonos.App/HotSonos.App.csproj" />
+    <Project Path="src/HotSonos.Core/HotSonos.Core.csproj" />
+    <Project Path="src/HotSonos.Harness/HotSonos.Harness.csproj" />
+  </Folder>
+</Solution>

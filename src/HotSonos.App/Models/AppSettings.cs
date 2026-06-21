@@ -1,0 +1,76 @@
+namespace HotSonos.App.Models;
+
+/// <summary>One of the four "play a specific favorite/playlist" hotkey slots.</summary>
+public sealed class FavoriteSlot
+{
+    /// <summary>Title of the Sonos favorite/playlist to play; null when unassigned.</summary>
+    public string? FavoriteName { get; set; }
+
+    public HotkeyConfig Hotkey { get; set; } = new();
+}
+
+/// <summary>
+/// Persisted HotSonos configuration (JSON at %LocalAppData%\HotSonos\settings.json).
+/// </summary>
+public sealed class AppSettings
+{
+    /// <summary>Room/group the hotkeys target. Null until first discovery resolves one.</summary>
+    public string? ActiveRoom { get; set; }
+
+    /// <summary>Show a brief now-playing toast when an action fires.</summary>
+    public bool ShowToast { get; set; } = true;
+
+    public HotkeyConfig PlayPause { get; set; } = new();
+    public HotkeyConfig Next { get; set; } = new();
+    public HotkeyConfig Previous { get; set; } = new();
+
+    /// <summary>Shuffle the entire local Music Library — the primary action.</summary>
+    public HotkeyConfig ShuffleLibrary { get; set; } = new();
+
+    /// <summary>Exactly four favorite slots (see <see cref="EnsureShape"/>).</summary>
+    public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
+
+    public const int FavoriteSlotCount = 4;
+
+    /// <summary>Returns the hotkey configured for <paramref name="action"/>.</summary>
+    public HotkeyConfig HotkeyFor(HotsonosAction action)
+    {
+        var slot = action.FavoriteSlotIndex();
+        if (slot >= 0)
+            return FavoriteSlots[slot].Hotkey;
+
+        return action switch
+        {
+            HotsonosAction.PlayPause => PlayPause,
+            HotsonosAction.Next => Next,
+            HotsonosAction.Previous => Previous,
+            HotsonosAction.ShuffleLibrary => ShuffleLibrary,
+            _ => new HotkeyConfig(),
+        };
+    }
+
+    /// <summary>Guarantees there are exactly four favorite slots after load/default.</summary>
+    public AppSettings EnsureShape()
+    {
+        PlayPause ??= new HotkeyConfig();
+        Next ??= new HotkeyConfig();
+        Previous ??= new HotkeyConfig();
+        ShuffleLibrary ??= new HotkeyConfig();
+        FavoriteSlots ??= [];
+        while (FavoriteSlots.Count < FavoriteSlotCount)
+            FavoriteSlots.Add(new FavoriteSlot());
+        if (FavoriteSlots.Count > FavoriteSlotCount)
+            FavoriteSlots = FavoriteSlots.Take(FavoriteSlotCount).ToList();
+        return this;
+    }
+
+    /// <summary>Sensible first-run defaults: Ctrl+Alt chords that rarely collide.</summary>
+    public static AppSettings CreateDefault() => new AppSettings
+    {
+        ShowToast = true,
+        ShuffleLibrary = new HotkeyConfig { Control = true, Alt = true, Key = "F8" },
+        PlayPause = new HotkeyConfig { Control = true, Alt = true, Key = "F9" },
+        Previous = new HotkeyConfig { Control = true, Alt = true, Key = "F10" },
+        Next = new HotkeyConfig { Control = true, Alt = true, Key = "F11" },
+    }.EnsureShape();
+}

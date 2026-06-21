@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>HotSonos.App</RootNamespace>
+    <AssemblyName>HotSonos</AssemblyName>
+    <Version>2026.0.0.1</Version>
+    <AssemblyVersion>2026.0.0.1</AssemblyVersion>
+    <FileVersion>2026.0.0.1</FileVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HotSonos.Core\HotSonos.Core.csproj" />
+  </ItemGroup>
+
+</Project>
