@@ -26,6 +26,9 @@ public partial class MainWindow : Window
     private readonly HotkeyConfig _playPause;
     private readonly HotkeyConfig _next;
     private readonly HotkeyConfig _previous;
+    private readonly HotkeyConfig _volumeUp;
+    private readonly HotkeyConfig _volumeDown;
+    private readonly HotkeyConfig _mute;
     private readonly HotkeyConfig[] _favHotkeys;
 
     private readonly Dictionary<TextBox, HotkeyConfig> _boxToConfig = [];
@@ -53,6 +56,9 @@ public partial class MainWindow : Window
         _playPause = Clone(_settings.PlayPause);
         _next = Clone(_settings.Next);
         _previous = Clone(_settings.Previous);
+        _volumeUp = Clone(_settings.VolumeUp);
+        _volumeDown = Clone(_settings.VolumeDown);
+        _mute = Clone(_settings.Mute);
         _favHotkeys = _settings.FavoriteSlots.Select(s => Clone(s.Hotkey)).ToArray();
 
         InitializeComponent();
@@ -68,6 +74,9 @@ public partial class MainWindow : Window
         _boxToConfig[PlayPauseHotkeyBox] = _playPause;
         _boxToConfig[NextHotkeyBox] = _next;
         _boxToConfig[PreviousHotkeyBox] = _previous;
+        _boxToConfig[VolumeUpHotkeyBox] = _volumeUp;
+        _boxToConfig[VolumeDownHotkeyBox] = _volumeDown;
+        _boxToConfig[MuteHotkeyBox] = _mute;
         _boxToConfig[Fav1HotkeyBox] = _favHotkeys[0];
         _boxToConfig[Fav2HotkeyBox] = _favHotkeys[1];
         _boxToConfig[Fav3HotkeyBox] = _favHotkeys[2];
@@ -77,6 +86,9 @@ public partial class MainWindow : Window
         _byTag["PlayPause"] = (PlayPauseHotkeyBox, _playPause);
         _byTag["Next"] = (NextHotkeyBox, _next);
         _byTag["Previous"] = (PreviousHotkeyBox, _previous);
+        _byTag["VolumeUp"] = (VolumeUpHotkeyBox, _volumeUp);
+        _byTag["VolumeDown"] = (VolumeDownHotkeyBox, _volumeDown);
+        _byTag["Mute"] = (MuteHotkeyBox, _mute);
         _byTag["Fav1"] = (Fav1HotkeyBox, _favHotkeys[0]);
         _byTag["Fav2"] = (Fav2HotkeyBox, _favHotkeys[1]);
         _byTag["Fav3"] = (Fav3HotkeyBox, _favHotkeys[2]);
@@ -86,6 +98,7 @@ public partial class MainWindow : Window
             box.Text = cfg.ToString();
 
         ShowToastCheckBox.IsChecked = _settings.ShowToast;
+        VolumeStepBox.Text = _settings.VolumeStep.ToString();
         LoadStartupPreference();
 
         PopulateRooms();
@@ -221,6 +234,11 @@ public partial class MainWindow : Window
         _settings.PlayPause = _playPause;
         _settings.Next = _next;
         _settings.Previous = _previous;
+        _settings.VolumeUp = _volumeUp;
+        _settings.VolumeDown = _volumeDown;
+        _settings.Mute = _mute;
+        if (int.TryParse(VolumeStepBox.Text, out var step) && step is >= 1 and <= 50)
+            _settings.VolumeStep = step;
         _settings.ShowToast = ShowToastCheckBox.IsChecked == true;
         if (RoomComboBox.SelectedItem is SonosGroup group)
             _settings.ActiveRoom = group.CoordinatorRoom;

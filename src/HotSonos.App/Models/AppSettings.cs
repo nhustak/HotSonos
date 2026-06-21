@@ -27,6 +27,13 @@ public sealed class AppSettings
     /// <summary>Shuffle the entire local Music Library — the primary action.</summary>
     public HotkeyConfig ShuffleLibrary { get; set; } = new();
 
+    public HotkeyConfig VolumeUp { get; set; } = new();
+    public HotkeyConfig VolumeDown { get; set; } = new();
+    public HotkeyConfig Mute { get; set; } = new();
+
+    /// <summary>Percent the group volume changes per Volume Up/Down press.</summary>
+    public int VolumeStep { get; set; } = 5;
+
     /// <summary>Exactly four favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
 
@@ -45,6 +52,9 @@ public sealed class AppSettings
             HotsonosAction.Next => Next,
             HotsonosAction.Previous => Previous,
             HotsonosAction.ShuffleLibrary => ShuffleLibrary,
+            HotsonosAction.VolumeUp => VolumeUp,
+            HotsonosAction.VolumeDown => VolumeDown,
+            HotsonosAction.Mute => Mute,
             _ => new HotkeyConfig(),
         };
     }
@@ -56,6 +66,10 @@ public sealed class AppSettings
         Next ??= new HotkeyConfig();
         Previous ??= new HotkeyConfig();
         ShuffleLibrary ??= new HotkeyConfig();
+        VolumeUp ??= new HotkeyConfig();
+        VolumeDown ??= new HotkeyConfig();
+        Mute ??= new HotkeyConfig();
+        if (VolumeStep < 1) VolumeStep = 5;
         FavoriteSlots ??= [];
         while (FavoriteSlots.Count < FavoriteSlotCount)
             FavoriteSlots.Add(new FavoriteSlot());
@@ -68,9 +82,13 @@ public sealed class AppSettings
     public static AppSettings CreateDefault() => new AppSettings
     {
         ShowToast = true,
+        VolumeStep = 5,
         ShuffleLibrary = new HotkeyConfig { Control = true, Alt = true, Key = "F8" },
         PlayPause = new HotkeyConfig { Control = true, Alt = true, Key = "F9" },
         Previous = new HotkeyConfig { Control = true, Alt = true, Key = "F10" },
         Next = new HotkeyConfig { Control = true, Alt = true, Key = "F11" },
+        VolumeUp = new HotkeyConfig { Control = true, Alt = true, Key = "Up" },
+        VolumeDown = new HotkeyConfig { Control = true, Alt = true, Key = "Down" },
+        Mute = new HotkeyConfig { Control = true, Alt = true, Key = "M" },
     }.EnsureShape();
 }

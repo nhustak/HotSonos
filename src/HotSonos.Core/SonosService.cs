@@ -12,6 +12,9 @@ public sealed record SonosService(string Type, string ControlPath)
     public static readonly SonosService RenderingControl =
         new("urn:schemas-upnp-org:service:RenderingControl:1", "/MediaRenderer/RenderingControl/Control");
 
+    public static readonly SonosService GroupRenderingControl =
+        new("urn:schemas-upnp-org:service:GroupRenderingControl:1", "/MediaRenderer/GroupRenderingControl/Control");
+
     public static readonly SonosService ContentDirectory =
         new("urn:schemas-upnp-org:service:ContentDirectory:1", "/MediaServer/ContentDirectory/Control");
 

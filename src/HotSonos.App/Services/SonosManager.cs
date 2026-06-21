@@ -99,9 +99,114 @@ public sealed class SonosManager
                 await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
                 await _controller.ShuffleMusicLibraryAsync(ct).ConfigureAwait(false);
                 return "🔀 Shuffling library → all speakers";
+            case HotsonosAction.VolumeUp:
+                return $"🔊 Volume {await ChangeVolumeAsync(settings.VolumeStep, ct).ConfigureAwait(false)}%";
+            case HotsonosAction.VolumeDown:
+                return $"🔊 Volume {await ChangeVolumeAsync(-settings.VolumeStep, ct).ConfigureAwait(false)}%";
+            case HotsonosAction.Mute:
+                return await ToggleMuteAsync(ct).ConfigureAwait(false) ? "🔇 Muted" : "🔊 Unmuted";
             default:
                 return null;
         }
+    }
+
+    // ---- Volume (group-wide) ----------------------------------------------
+    // Group-volume WRITE actions (SetGroupVolume/SetGroupMute) return 803 on
+    // systems with a fixed-volume member, so we nudge each visible member via
+    // per-player RenderingControl and read back the group value for display.
+
+    /// <summary>Adjusts every group member's volume by <paramref name="delta"/> and returns the new group volume.</summary>
+    private async Task<int> ChangeVolumeAsync(int delta, CancellationToken ct)
+    {
+        var members = ActiveGroupMemberIps();
+        await Task.WhenAll(members.Select(ip => AdjustMemberVolumeAsync(ip, delta, ct))).ConfigureAwait(false);
+        return await GetGroupVolumeAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task AdjustMemberVolumeAsync(string ip, int delta, CancellationToken ct)
+    {
+        try
+        {
+            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetRelativeVolume",
+                [
+                    new("InstanceID", "0"),
+                    new("Channel", "Master"),
+                    new("Adjustment", delta.ToString()),
+                ], ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Fixed-volume members (Sub/Port/Amp line-out) reject this; ignore them.
+        }
+    }
+
+    /// <summary>Toggles mute across the group; returns the new muted state.</summary>
+    private async Task<bool> ToggleMuteAsync(CancellationToken ct)
+    {
+        var desired = !await GetGroupMuteAsync(ct).ConfigureAwait(false);
+        var members = ActiveGroupMemberIps();
+        await Task.WhenAll(members.Select(ip => SetMemberMuteAsync(ip, desired, ct))).ConfigureAwait(false);
+        return desired;
+    }
+
+    private async Task SetMemberMuteAsync(string ip, bool mute, CancellationToken ct)
+    {
+        try
+        {
+            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetMute",
+                [
+                    new("InstanceID", "0"),
+                    new("Channel", "Master"),
+                    new("DesiredMute", mute ? "1" : "0"),
+                ], ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Tolerate members that reject mute.
+        }
+    }
+
+    private async Task<int> GetGroupVolumeAsync(CancellationToken ct)
+    {
+        try
+        {
+            var r = await _soap.InvokeAsync(_controller!.CoordinatorIp, SonosService.GroupRenderingControl,
+                "GetGroupVolume", [new("InstanceID", "0")], ct).ConfigureAwait(false);
+            return int.TryParse(SonosSoapClient.ReadValue(r, "CurrentVolume"), out var v) ? v : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private async Task<bool> GetGroupMuteAsync(CancellationToken ct)
+    {
+        // Read the coordinator's per-player mute (RenderingControl), not the group
+        // mute flag — we set mute per-player (SetGroupMute 803s on this system), so
+        // the group flag never changes and would make the toggle one-way.
+        try
+        {
+            var r = await _soap.InvokeAsync(_controller!.CoordinatorIp, SonosService.RenderingControl,
+                "GetMute", [new("InstanceID", "0"), new("Channel", "Master")], ct).ConfigureAwait(false);
+            return SonosSoapClient.ReadValue(r, "CurrentMute") == "1";
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>IPs of the visible members in the active group.</summary>
+    private IReadOnlyList<string> ActiveGroupMemberIps()
+    {
+        if (_controller is null)
+            return [];
+        return _zones
+            .Where(z => string.Equals(z.CoordinatorUuid, _controller.CoordinatorUuid, StringComparison.OrdinalIgnoreCase))
+            .Select(z => z.IpAddress)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>

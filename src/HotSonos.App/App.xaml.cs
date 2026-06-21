@@ -55,6 +55,9 @@ public partial class App : System.Windows.Application
                 PlayPause: () => _ = ExecuteActionAsync(HotsonosAction.PlayPause),
                 Next: () => _ = ExecuteActionAsync(HotsonosAction.Next),
                 Previous: () => _ = ExecuteActionAsync(HotsonosAction.Previous),
+                VolumeUp: () => _ = ExecuteActionAsync(HotsonosAction.VolumeUp),
+                VolumeDown: () => _ = ExecuteActionAsync(HotsonosAction.VolumeDown),
+                Mute: () => _ = ExecuteActionAsync(HotsonosAction.Mute),
                 PlayFavoriteSlot: slot => _ = ExecuteActionAsync(HotsonosAction.Favorite1 + slot),
                 SetRoom: OnTraySetRoom,
                 Exit: ExitApplication));

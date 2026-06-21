@@ -98,6 +98,42 @@
                             Click="ClearHotkey_Click" />
                 </Grid>
 
+                <TextBlock Text="Volume hotkeys (all speakers)" Style="{StaticResource SectionHeader}" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Volume up" VerticalAlignment="Center" Margin="0,4" />
+                    <TextBox Grid.Row="0" Grid.Column="1" x:Name="VolumeUpHotkeyBox" Style="{StaticResource HotkeyBox}"
+                             Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                    <Button Grid.Row="0" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="VolumeUp"
+                            Click="ClearHotkey_Click" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Volume down" VerticalAlignment="Center" Margin="0,4" />
+                    <TextBox Grid.Row="1" Grid.Column="1" x:Name="VolumeDownHotkeyBox" Style="{StaticResource HotkeyBox}"
+                             Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                    <Button Grid.Row="1" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="VolumeDown"
+                            Click="ClearHotkey_Click" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Mute toggle" VerticalAlignment="Center" Margin="0,4" />
+                    <TextBox Grid.Row="2" Grid.Column="1" x:Name="MuteHotkeyBox" Style="{StaticResource HotkeyBox}"
+                             Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                    <Button Grid.Row="2" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="Mute"
+                            Click="ClearHotkey_Click" />
+                </Grid>
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Step per press (%)" VerticalAlignment="Center" Width="120" />
+                    <TextBox x:Name="VolumeStepBox" Width="50" Padding="6,4" VerticalContentAlignment="Center" />
+                </StackPanel>
+
                 <TextBlock Text="Playlist / favorite hotkeys (4 slots)" Style="{StaticResource SectionHeader}" />
                 <TextBlock Text="Pick a Sonos favorite or playlist for each slot, then assign a hotkey."
                            Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
