@@ -20,6 +20,19 @@ public sealed class AppSettings
     /// <summary>Show a brief now-playing toast when an action fires.</summary>
     public bool ShowToast { get; set; } = true;
 
+    /// <summary>Pop the Now-Playing flyout on every track change.</summary>
+    public bool ShowFlyoutOnTrackChange { get; set; } = true;
+
+    /// <summary>Pop the Now-Playing flyout when you trigger an action (skip/volume/etc.).</summary>
+    public bool ShowFlyoutOnAction { get; set; } = true;
+
+    /// <summary>Keep the flyout on-screen always (updates live).</summary>
+    public bool FlyoutPinned { get; set; }
+
+    /// <summary>Persisted flyout position; null until the user drags it.</summary>
+    public double? FlyoutLeft { get; set; }
+    public double? FlyoutTop { get; set; }
+
     public HotkeyConfig PlayPause { get; set; } = new();
     public HotkeyConfig Next { get; set; } = new();
     public HotkeyConfig Previous { get; set; } = new();

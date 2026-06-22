@@ -97,7 +97,8 @@ public partial class MainWindow : Window
         foreach (var (box, cfg) in _boxToConfig)
             box.Text = cfg.ToString();
 
-        ShowToastCheckBox.IsChecked = _settings.ShowToast;
+        FlyoutOnTrackChangeCheckBox.IsChecked = _settings.ShowFlyoutOnTrackChange;
+        FlyoutOnActionCheckBox.IsChecked = _settings.ShowFlyoutOnAction;
         VolumeStepBox.Text = _settings.VolumeStep.ToString();
         LoadStartupPreference();
 
@@ -239,7 +240,8 @@ public partial class MainWindow : Window
         _settings.Mute = _mute;
         if (int.TryParse(VolumeStepBox.Text, out var step) && step is >= 1 and <= 50)
             _settings.VolumeStep = step;
-        _settings.ShowToast = ShowToastCheckBox.IsChecked == true;
+        _settings.ShowFlyoutOnTrackChange = FlyoutOnTrackChangeCheckBox.IsChecked == true;
+        _settings.ShowFlyoutOnAction = FlyoutOnActionCheckBox.IsChecked == true;
         if (RoomComboBox.SelectedItem is SonosGroup group)
             _settings.ActiveRoom = group.CoordinatorRoom;
 

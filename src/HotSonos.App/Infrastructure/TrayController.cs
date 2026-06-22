@@ -28,6 +28,7 @@ public sealed class TrayController : IDisposable
     private readonly ContextMenuStrip _menu;
     private readonly Icon _trayIcon;
     private readonly Callbacks _callbacks;
+    private readonly string _versionLabel;
 
     private readonly ToolStripMenuItem _roomMenu;
     private readonly ToolStripMenuItem _favoritesMenu;
@@ -35,6 +36,7 @@ public sealed class TrayController : IDisposable
     public TrayController(string versionLabel, Callbacks callbacks)
     {
         _callbacks = callbacks;
+        _versionLabel = versionLabel;
         _menu = new ContextMenuStrip();
 
         _menu.Items.Add(new ToolStripMenuItem(versionLabel) { Enabled = false });
@@ -115,6 +117,13 @@ public sealed class TrayController : IDisposable
             item.Click += (_, _) => _callbacks.PlayFavoriteSlot(slotIndex);
             _favoritesMenu.DropDownItems.Add(item);
         }
+    }
+
+    /// <summary>Sets the tray hover tooltip to the current track (truncated to fit).</summary>
+    public void UpdateNowPlaying(string? line)
+    {
+        var text = string.IsNullOrWhiteSpace(line) ? _versionLabel : $"♪ {line}";
+        _notifyIcon.Text = text.Length <= 63 ? text : text[..62] + "…";
     }
 
     public void ShowBalloon(string title, string message)

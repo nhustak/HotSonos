@@ -189,8 +189,13 @@
                             Click="ClearHotkey_Click" />
                 </Grid>
 
+                <TextBlock Text="Now-Playing flyout" Style="{StaticResource SectionHeader}" />
+                <CheckBox x:Name="FlyoutOnTrackChangeCheckBox" Content="Pop the flyout on every track change" Margin="0,2" />
+                <CheckBox x:Name="FlyoutOnActionCheckBox" Content="Pop the flyout when I use a hotkey or action" Margin="0,6" />
+                <TextBlock Text="Tip: drag the flyout to reposition it; click the 📌 to keep it on-screen."
+                           Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+
                 <TextBlock Text="Options" Style="{StaticResource SectionHeader}" />
-                <CheckBox x:Name="ShowToastCheckBox" Content="Show a now-playing toast when a hotkey fires" Margin="0,2" />
                 <CheckBox x:Name="StartWithWindowsCheckBox" Content="Start HotSonos with Windows" Margin="0,6"
                           Checked="StartWithWindows_Changed" Unchecked="StartWithWindows_Changed" />
             </StackPanel>

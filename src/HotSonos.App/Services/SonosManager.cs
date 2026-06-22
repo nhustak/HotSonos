@@ -24,11 +24,21 @@ public sealed class SonosManager
 {
     private readonly SonosSoapClient _soap = new();
     private readonly SonosDiscovery _discovery;
+    private readonly SonosEventSubscriber _events = new();
 
     private IReadOnlyList<SonosZone> _zones = [];
     private SonosController? _controller;
 
-    public SonosManager() => _discovery = new SonosDiscovery(_soap);
+    /// <summary>Raised when the active coordinator pushes a now-playing change.</summary>
+    public event Action<NowPlaying>? NowPlayingChanged;
+
+    public SonosManager()
+    {
+        _discovery = new SonosDiscovery(_soap);
+        _events.NowPlayingChanged += np => NowPlayingChanged?.Invoke(np);
+    }
+
+    public ValueTask DisposeEventsAsync() => _events.DisposeAsync();
 
     /// <summary>Discovered groups, largest first (so "All Speakers" leads).</summary>
     public IReadOnlyList<SonosGroup> Groups { get; private set; } = [];
@@ -274,11 +284,19 @@ public sealed class SonosManager
         if (group is not null)
         {
             _controller = new SonosController(group.CoordinatorIp, group.CoordinatorUuid, _soap);
+            SubscribeToActiveCoordinator();
             return;
         }
 
         var zone = _zones.FirstOrDefault(z => string.Equals(z.RoomName, ActiveRoom, StringComparison.OrdinalIgnoreCase));
         _controller = zone is null ? null : SonosController.ForZone(zone, _soap);
+        SubscribeToActiveCoordinator();
+    }
+
+    private void SubscribeToActiveCoordinator()
+    {
+        if (_controller is not null)
+            _ = _events.SubscribeAsync(_controller.CoordinatorIp);
     }
 
     private bool ContainsRoom(SonosGroup group, string? room) =>

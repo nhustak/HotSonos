@@ -6,6 +6,7 @@ using HotSonos.App.Infrastructure;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
 using HotSonos.App.Windows;
+using HotSonos.Core.Models;
 
 namespace HotSonos.App;
 
@@ -19,7 +20,8 @@ public partial class App : System.Windows.Application
     private SonosManager _sonos = null!;
     private GlobalHotkeyManager _hotkeys = null!;
     private TrayController _tray = null!;
-    private ToastWindow? _toast;
+    private NowPlayingFlyout? _flyout;
+    private NowPlaying? _lastNowPlaying;
     private MainWindow? _mainWindow;
     private bool _isExiting;
 
@@ -38,10 +40,20 @@ public partial class App : System.Windows.Application
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
 
+        // A tray utility must survive stray errors (e.g. flaky album-art loads or
+        // event-callback hiccups) rather than vanish. Swallow + surface instead.
+        DispatcherUnhandledException += (_, ex) =>
+        {
+            ex.Handled = true;
+            try { _tray?.ShowBalloon("HotSonos", $"Recovered from an error: {ex.Exception.Message}"); } catch { }
+        };
+        TaskScheduler.UnobservedTaskException += (_, ex) => ex.SetObserved();
+
         _store = new ConfigStore();
         _settings = _store.Load();
 
         _sonos = new SonosManager();
+        _sonos.NowPlayingChanged += OnNowPlayingChanged;
 
         _hotkeys = new GlobalHotkeyManager();
         _hotkeys.HotkeyPressed += OnHotkeyPressed;
@@ -107,19 +119,36 @@ public partial class App : System.Windows.Application
         try
         {
             var toast = await _sonos.ExecuteAsync(action, _settings);
-            if (_settings.ShowToast && !string.IsNullOrEmpty(toast))
-                ShowToast(toast!);
+            if (!string.IsNullOrEmpty(toast) && (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned))
+                EnsureFlyout().ShowAction(toast!);
         }
         catch (Exception ex)
         {
-            ShowToast($"Sonos error: {ex.Message}");
+            EnsureFlyout().ShowAction($"Sonos error: {ex.Message}"); // errors always surface
         }
     }
 
-    private void ShowToast(string message)
+    private NowPlayingFlyout EnsureFlyout()
     {
-        _toast ??= new ToastWindow();
-        _toast.ShowMessage(message);
+        if (_flyout is null)
+        {
+            _flyout = new NowPlayingFlyout(_settings, TrySaveSettings);
+            if (_lastNowPlaying is not null)
+                _flyout.ShowNowPlaying(_lastNowPlaying);
+        }
+        return _flyout;
+    }
+
+    private void OnNowPlayingChanged(NowPlaying nowPlaying)
+    {
+        // Raised on a background (listener) thread — marshal to the UI thread.
+        Dispatcher.InvokeAsync(() =>
+        {
+            _lastNowPlaying = nowPlaying;
+            _tray.UpdateNowPlaying(nowPlaying.IsEmpty ? null : nowPlaying.DisplayLine);
+            if (_settings.ShowFlyoutOnTrackChange || _settings.FlyoutPinned)
+                EnsureFlyout().ShowNowPlaying(nowPlaying);
+        });
     }
 
     private void OnTrayRefresh() => _ = OnTrayRefreshAsync();
@@ -195,7 +224,8 @@ public partial class App : System.Windows.Application
         _isExiting = true;
 
         _hotkeys?.Dispose();
-        _toast?.HardClose();
+        _ = _sonos?.DisposeEventsAsync();
+        _flyout?.HardClose();
 
         if (_mainWindow is not null)
         {
