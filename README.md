@@ -116,4 +116,6 @@ dotnet run --project src/HotSonos.Harness -- --ip 192.168.1.50 playpause
 
 ---
 
-*HotSonos is a personal utility, provided as-is with no warranty. Not affiliated with Sonos, Inc.*
+## License
+
+[MIT](LICENSE) © 2026 Nick Hustak. Provided as-is with no warranty. Not affiliated with Sonos, Inc.
