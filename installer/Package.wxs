@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!--
+    HotSonos installer — per-user MSI (no admin/UAC), installs to
+    %LocalAppData%\Programs\HotSonos. Harvests the self-contained publish output.
+  -->
+  <Package Name="HotSonos"
+           Manufacturer="Nick Hustak"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="8F3A2B1C-5D4E-4A6F-9B2C-1E7D8A0C3F45"
+           Scope="perUser"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of HotSonos is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="HotSonosIcon" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="HotSonosIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/nhustak/HotSonos" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/nhustak/HotSonos" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="HotSonos" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="HotSonos" Level="1">
+      <!-- Harvest every file from the publish folder into the install directory. -->
+      <Files Directory="INSTALLFOLDER" Include="$(var.PublishDir)**" />
+      <ComponentGroupRef Id="ShortcutComponents" />
+    </Feature>
+
+    <ComponentGroup Id="ShortcutComponents" Directory="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="2C7F1E9A-8B4D-4C3E-A1F6-9D0E2B5A7C18">
+        <Shortcut Id="HotSonosShortcut"
+                  Name="HotSonos"
+                  Description="Control Sonos with global hotkeys"
+                  Target="[INSTALLFOLDER]HotSonos.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="HotSonosIcon" />
+        <RegistryValue Root="HKCU" Key="Software\HotSonos" Name="installed"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Package>
+</Wix>

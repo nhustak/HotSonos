@@ -1,0 +1,19 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <PropertyGroup>
+    <OutputName>HotSonos</OutputName>
+    <OutputType>Package</OutputType>
+    <!-- ICE38/ICE64 are false positives for an intentional per-user (LocalAppData)
+         install — they assume per-machine semantics. Suppress just those. -->
+    <SuppressIces>ICE38;ICE64;ICE91</SuppressIces>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Overridable from the command line / CI. Defaults are for a local build. -->
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\publish\</PublishDir>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.0</ProductVersion>
+    <IconFile Condition="'$(IconFile)' == ''">$(MSBuildThisFileDirectory)..\src\HotSonos.App\hotsonos.ico</IconFile>
+    <DefineConstants>PublishDir=$(PublishDir);ProductVersion=$(ProductVersion);IconFile=$(IconFile)</DefineConstants>
+  </PropertyGroup>
+
+</Project>
