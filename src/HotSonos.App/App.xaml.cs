@@ -23,6 +23,7 @@ public partial class App : System.Windows.Application
     private NowPlayingFlyout? _flyout;
     private NowPlaying? _lastNowPlaying;
     private MainWindow? _mainWindow;
+    private System.Threading.Timer? _nightlyTimer;
     private bool _isExiting;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -54,6 +55,8 @@ public partial class App : System.Windows.Application
 
         _sonos = new SonosManager();
         _sonos.NowPlayingChanged += OnNowPlayingChanged;
+        _sonos.TopologyChanged += OnTopologyChanged;
+        _sonos.SpeakerAvailabilityChanged += OnSpeakerAvailabilityChanged;
 
         _hotkeys = new GlobalHotkeyManager();
         _hotkeys.HotkeyPressed += OnHotkeyPressed;
@@ -63,6 +66,7 @@ public partial class App : System.Windows.Application
             new TrayController.Callbacks(
                 OpenSettings: ShowMainWindow,
                 Refresh: OnTrayRefresh,
+                FreshStart: () => _ = ExecuteActionAsync(HotsonosAction.FreshStart),
                 ShuffleLibrary: () => _ = ExecuteActionAsync(HotsonosAction.ShuffleLibrary),
                 PlayPause: () => _ = ExecuteActionAsync(HotsonosAction.PlayPause),
                 Next: () => _ = ExecuteActionAsync(HotsonosAction.Next),
@@ -102,7 +106,28 @@ public partial class App : System.Windows.Application
     {
         var failures = _hotkeys.ApplyBindings(_settings);
         UpdateTrayDynamic();
+        ScheduleNightlyReset();
         return failures;
+    }
+
+    /// <summary>Arms a one-shot timer for the next nightly reset; re-arms itself after firing.</summary>
+    private void ScheduleNightlyReset()
+    {
+        _nightlyTimer?.Dispose();
+        _nightlyTimer = null;
+        if (!_settings.NightlyResetEnabled)
+            return;
+
+        var now = DateTime.Now;
+        var target = now.Date.AddMinutes(_settings.NightlyResetMinutes);
+        if (target <= now)
+            target = target.AddDays(1);
+
+        _nightlyTimer = new System.Threading.Timer(async _ =>
+        {
+            try { await _sonos.NightlyResetAsync(); } catch { }
+            await Dispatcher.InvokeAsync(ScheduleNightlyReset); // re-arm for tomorrow
+        }, null, target - now, System.Threading.Timeout.InfiniteTimeSpan);
     }
 
     private void UpdateTrayDynamic()
@@ -110,6 +135,7 @@ public partial class App : System.Windows.Application
         var groups = _sonos.Groups.Select(g => (g.DisplayName, g.CoordinatorRoom)).ToList();
         _tray.UpdateRooms(groups, _settings.ActiveRoom ?? _sonos.ActiveRoom);
         _tray.UpdateFavorites(_settings.FavoriteSlots.Select(s => s.FavoriteName).ToList());
+        _tray.UpdateOfflineSpeakers(_sonos.OfflineSpeakers);
     }
 
     private async void OnHotkeyPressed(HotsonosAction action) => await ExecuteActionAsync(action);
@@ -138,6 +164,13 @@ public partial class App : System.Windows.Application
         }
         return _flyout;
     }
+
+    private void OnTopologyChanged() =>
+        Dispatcher.InvokeAsync(UpdateTrayDynamic);
+
+    private void OnSpeakerAvailabilityChanged(string room, bool isOnline) =>
+        Dispatcher.InvokeAsync(() =>
+            _tray.ShowBalloon("HotSonos", isOnline ? $"✓ {room} reconnected" : $"⚠️ {room} dropped off the network"));
 
     private void OnNowPlayingChanged(NowPlaying nowPlaying)
     {
@@ -186,7 +219,8 @@ public partial class App : System.Windows.Application
     {
         if (_mainWindow is null)
         {
-            _mainWindow = new MainWindow(_sonos, _store, _settings, ApplyBindings, OnRoomChangedFromWindow);
+            _mainWindow = new MainWindow(_sonos, _store, _settings, ApplyBindings, OnRoomChangedFromWindow,
+                () => _ = ExecuteActionAsync(HotsonosAction.FreshStart));
             _mainWindow.HideToTrayRequested += (_, _) => _mainWindow?.Hide();
             _mainWindow.Closing += OnMainWindowClosing;
         }
@@ -223,6 +257,7 @@ public partial class App : System.Windows.Application
     {
         _isExiting = true;
 
+        _nightlyTimer?.Dispose();
         _hotkeys?.Dispose();
         _ = _sonos?.DisposeEventsAsync();
         _flyout?.HardClose();

@@ -10,6 +10,7 @@ public enum HotsonosAction
     VolumeUp,
     VolumeDown,
     Mute,
+    FreshStart,
     Favorite1,
     Favorite2,
     Favorite3,

@@ -114,6 +114,20 @@ public sealed class SonosDiscovery
         return zones;
     }
 
+    /// <summary>Room names of devices Sonos reports as vanished (dropped off the network).</summary>
+    public static IReadOnlyList<string> ParseVanishedRooms(string stateXml)
+    {
+        var doc = XDocument.Parse(stateXml);
+        return doc.Descendants()
+            .Where(e => e.Name.LocalName == "Device" &&
+                        e.Parent?.Name.LocalName == "VanishedDevices")
+            .Select(e => (string?)e.Attribute("ZoneName"))
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private static string? HostFromLocation(string? location) =>
         Uri.TryCreate(location, UriKind.Absolute, out var uri) ? uri.Host : null;
 

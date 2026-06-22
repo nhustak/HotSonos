@@ -29,13 +29,62 @@ public sealed class SonosManager
     private IReadOnlyList<SonosZone> _zones = [];
     private SonosController? _controller;
 
+    private IReadOnlyList<string> _offline = [];
+    private bool _topologySeen;
+
     /// <summary>Raised when the active coordinator pushes a now-playing change.</summary>
     public event Action<NowPlaying>? NowPlayingChanged;
+
+    /// <summary>Raised when the speaker topology changes (regroup / drop / return).</summary>
+    public event Action? TopologyChanged;
+
+    /// <summary>Raised when a speaker drops off (false) or comes back (true): (roomName, isOnline).</summary>
+    public event Action<string, bool>? SpeakerAvailabilityChanged;
+
+    /// <summary>Rooms currently reported as vanished/offline by Sonos.</summary>
+    public IReadOnlyList<string> OfflineSpeakers => _offline;
 
     public SonosManager()
     {
         _discovery = new SonosDiscovery(_soap);
         _events.NowPlayingChanged += np => NowPlayingChanged?.Invoke(np);
+        _events.TopologyChanged += OnTopologyEvent;
+    }
+
+    private void OnTopologyEvent(string stateXml)
+    {
+        try
+        {
+            var zones = SonosDiscovery.ParseZoneGroupState(stateXml);
+            if (zones.Count > 0)
+            {
+                _zones = zones;
+                RebuildGroups();
+                RebuildController();
+            }
+
+            var vanishedNow = SonosDiscovery.ParseVanishedRooms(stateXml);
+
+            // Skip drop/return balloons for the first snapshot — speakers already
+            // offline at startup populate the indicator without a "just dropped" alert.
+            if (_topologySeen)
+            {
+                var previous = new HashSet<string>(_offline, StringComparer.OrdinalIgnoreCase);
+                var current = new HashSet<string>(vanishedNow, StringComparer.OrdinalIgnoreCase);
+                foreach (var dropped in current.Where(r => !previous.Contains(r)))
+                    SpeakerAvailabilityChanged?.Invoke(dropped, false);
+                foreach (var returned in previous.Where(r => !current.Contains(r)))
+                    SpeakerAvailabilityChanged?.Invoke(returned, true);
+            }
+
+            _offline = vanishedNow;
+            _topologySeen = true;
+            TopologyChanged?.Invoke();
+        }
+        catch
+        {
+            // A malformed topology push shouldn't disrupt anything.
+        }
     }
 
     public ValueTask DisposeEventsAsync() => _events.DisposeAsync();
@@ -81,6 +130,18 @@ public sealed class SonosManager
     /// </summary>
     public async Task<string?> ExecuteAsync(HotsonosAction action, AppSettings settings, CancellationToken ct = default)
     {
+        // Fresh start re-discovers first (topology may have drifted, e.g. overnight),
+        // so it must run before the "is a room selected" guard.
+        if (action == HotsonosAction.FreshStart)
+        {
+            await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
+            if (_controller is null)
+                throw new InvalidOperationException("No Sonos speakers found. Check the speakers are powered on and on the network.");
+            await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
+            await _controller.ShuffleMusicLibraryAsync(ct).ConfigureAwait(false);
+            return "🔄 Fresh start: re-synced + shuffling all speakers";
+        }
+
         if (_controller is null)
             throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
 
@@ -251,6 +312,45 @@ public sealed class SonosManager
                 // One speaker failing to join shouldn't abort the whole-house grouping.
             }
         }
+    }
+
+    /// <summary>
+    /// Nightly maintenance: re-discover, and if NOTHING is playing anywhere,
+    /// silently regroup every speaker under one coordinator (no playback).
+    /// Returns a short status describing what happened.
+    /// </summary>
+    public async Task<string> NightlyResetAsync(CancellationToken ct = default)
+    {
+        await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
+        if (_controller is null)
+            return "no speakers found";
+
+        if (await IsAnythingPlayingAsync(ct).ConfigureAwait(false))
+            return "skipped — music is playing";
+
+        await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
+        return "regrouped all speakers";
+    }
+
+    /// <summary>True if any group coordinator is currently playing or mid-transition.</summary>
+    private async Task<bool> IsAnythingPlayingAsync(CancellationToken ct)
+    {
+        foreach (var group in Groups)
+        {
+            try
+            {
+                var controller = new SonosController(group.CoordinatorIp, group.CoordinatorUuid, _soap);
+                var state = await controller.GetTransportStateAsync(ct).ConfigureAwait(false);
+                if (state is SonosTransportState.Playing or SonosTransportState.Transitioning)
+                    return true;
+            }
+            catch
+            {
+                // If we can't read a coordinator, err on the safe side and treat as "not playing"
+                // only for that one; a real playing group would normally answer.
+            }
+        }
+        return false;
     }
 
     private void RebuildGroups()

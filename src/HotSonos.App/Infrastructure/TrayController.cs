@@ -13,6 +13,7 @@ public sealed class TrayController : IDisposable
     public sealed record Callbacks(
         Action OpenSettings,
         Action Refresh,
+        Action FreshStart,
         Action ShuffleLibrary,
         Action PlayPause,
         Action Next,
@@ -32,6 +33,7 @@ public sealed class TrayController : IDisposable
 
     private readonly ToolStripMenuItem _roomMenu;
     private readonly ToolStripMenuItem _favoritesMenu;
+    private readonly ToolStripMenuItem _offlineItem;
 
     public TrayController(string versionLabel, Callbacks callbacks)
     {
@@ -44,6 +46,7 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add("Open HotSonos", null, (_, _) => _callbacks.OpenSettings());
         _menu.Items.Add("Refresh devices", null, (_, _) => _callbacks.Refresh());
         _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add("🔄 Restart fresh (re-sync all + shuffle)", null, (_, _) => _callbacks.FreshStart());
         _menu.Items.Add("🔀 Shuffle Music Library", null, (_, _) => _callbacks.ShuffleLibrary());
         _menu.Items.Add("Play / Pause", null, (_, _) => _callbacks.PlayPause());
         _menu.Items.Add("Next", null, (_, _) => _callbacks.Next());
@@ -59,6 +62,8 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add(_roomMenu);
         _menu.Items.Add(_favoritesMenu);
         _menu.Items.Add(new ToolStripSeparator());
+        _offlineItem = new ToolStripMenuItem("All speakers online") { Enabled = false };
+        _menu.Items.Add(_offlineItem);
         _menu.Items.Add("Exit", null, (_, _) => _callbacks.Exit());
 
         _trayIcon = TrayIconFactory.Create();
@@ -117,6 +122,14 @@ public sealed class TrayController : IDisposable
             item.Click += (_, _) => _callbacks.PlayFavoriteSlot(slotIndex);
             _favoritesMenu.DropDownItems.Add(item);
         }
+    }
+
+    /// <summary>Updates the offline-speakers indicator line.</summary>
+    public void UpdateOfflineSpeakers(IReadOnlyList<string> offline)
+    {
+        _offlineItem.Text = offline.Count == 0
+            ? "All speakers online"
+            : $"⚠ Offline: {string.Join(", ", offline)}";
     }
 
     /// <summary>Sets the tray hover tooltip to the current track (truncated to fit).</summary>

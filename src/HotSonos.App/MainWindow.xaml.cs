@@ -20,8 +20,10 @@ public partial class MainWindow : Window
     private readonly AppSettings _settings;
     private readonly Func<IReadOnlyList<HotsonosAction>> _applyBindings;
     private readonly Action<string> _onRoomChanged;
+    private readonly Action _onFreshStart;
 
     // Working copies edited by the UI; copied back into _settings on Save.
+    private readonly HotkeyConfig _freshStart;
     private readonly HotkeyConfig _shuffle;
     private readonly HotkeyConfig _playPause;
     private readonly HotkeyConfig _next;
@@ -44,14 +46,17 @@ public partial class MainWindow : Window
         ConfigStore store,
         AppSettings settings,
         Func<IReadOnlyList<HotsonosAction>> applyBindings,
-        Action<string> onRoomChanged)
+        Action<string> onRoomChanged,
+        Action onFreshStart)
     {
         _sonos = sonos;
         _store = store;
         _settings = settings.EnsureShape();
         _applyBindings = applyBindings;
         _onRoomChanged = onRoomChanged;
+        _onFreshStart = onFreshStart;
 
+        _freshStart = Clone(_settings.FreshStart);
         _shuffle = Clone(_settings.ShuffleLibrary);
         _playPause = Clone(_settings.PlayPause);
         _next = Clone(_settings.Next);
@@ -70,6 +75,7 @@ public partial class MainWindow : Window
     {
         _favCombos = [Fav1NameCombo, Fav2NameCombo, Fav3NameCombo, Fav4NameCombo];
 
+        _boxToConfig[FreshStartHotkeyBox] = _freshStart;
         _boxToConfig[ShuffleHotkeyBox] = _shuffle;
         _boxToConfig[PlayPauseHotkeyBox] = _playPause;
         _boxToConfig[NextHotkeyBox] = _next;
@@ -82,6 +88,7 @@ public partial class MainWindow : Window
         _boxToConfig[Fav3HotkeyBox] = _favHotkeys[2];
         _boxToConfig[Fav4HotkeyBox] = _favHotkeys[3];
 
+        _byTag["FreshStart"] = (FreshStartHotkeyBox, _freshStart);
         _byTag["Shuffle"] = (ShuffleHotkeyBox, _shuffle);
         _byTag["PlayPause"] = (PlayPauseHotkeyBox, _playPause);
         _byTag["Next"] = (NextHotkeyBox, _next);
@@ -100,6 +107,8 @@ public partial class MainWindow : Window
         FlyoutOnTrackChangeCheckBox.IsChecked = _settings.ShowFlyoutOnTrackChange;
         FlyoutOnActionCheckBox.IsChecked = _settings.ShowFlyoutOnAction;
         VolumeStepBox.Text = _settings.VolumeStep.ToString();
+        NightlyResetCheckBox.IsChecked = _settings.NightlyResetEnabled;
+        NightlyResetTimeBox.Text = MinutesToHhmm(_settings.NightlyResetMinutes);
         LoadStartupPreference();
 
         PopulateRooms();
@@ -231,6 +240,7 @@ public partial class MainWindow : Window
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         // Copy working values back into the live settings object.
+        _settings.FreshStart = _freshStart;
         _settings.ShuffleLibrary = _shuffle;
         _settings.PlayPause = _playPause;
         _settings.Next = _next;
@@ -242,6 +252,9 @@ public partial class MainWindow : Window
             _settings.VolumeStep = step;
         _settings.ShowFlyoutOnTrackChange = FlyoutOnTrackChangeCheckBox.IsChecked == true;
         _settings.ShowFlyoutOnAction = FlyoutOnActionCheckBox.IsChecked == true;
+        _settings.NightlyResetEnabled = NightlyResetCheckBox.IsChecked == true;
+        if (TryParseHhmm(NightlyResetTimeBox.Text, out var minutes))
+            _settings.NightlyResetMinutes = minutes;
         if (RoomComboBox.SelectedItem is SonosGroup group)
             _settings.ActiveRoom = group.CoordinatorRoom;
 
@@ -275,6 +288,12 @@ public partial class MainWindow : Window
     private void HideButton_Click(object sender, RoutedEventArgs e) =>
         HideToTrayRequested?.Invoke(this, EventArgs.Empty);
 
+    private void FreshStartButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetStatus("Re-syncing all speakers and starting a fresh shuffle…", warn: false);
+        _onFreshStart();
+    }
+
     private void StartWithWindows_Changed(object sender, RoutedEventArgs e)
     {
         if (_loadingStartupPreference)
@@ -307,6 +326,22 @@ public partial class MainWindow : Window
         StatusText.Foreground = warn
             ? System.Windows.Media.Brushes.IndianRed
             : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2E, 0x7D, 0x46));
+    }
+
+    private static string MinutesToHhmm(int minutes) =>
+        $"{minutes / 60:D2}:{minutes % 60:D2}";
+
+    private static bool TryParseHhmm(string? text, out int minutes)
+    {
+        minutes = 0;
+        var parts = (text ?? "").Split(':');
+        if (parts.Length == 2 && int.TryParse(parts[0], out var h) && int.TryParse(parts[1], out var m)
+            && h is >= 0 and <= 23 && m is >= 0 and <= 59)
+        {
+            minutes = h * 60 + m;
+            return true;
+        }
+        return false;
     }
 
     private static HotkeyConfig Clone(HotkeyConfig c) => new()

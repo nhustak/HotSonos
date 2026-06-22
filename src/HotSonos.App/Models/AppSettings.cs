@@ -44,8 +44,17 @@ public sealed class AppSettings
     public HotkeyConfig VolumeDown { get; set; } = new();
     public HotkeyConfig Mute { get; set; } = new();
 
+    /// <summary>Re-discover, regroup all speakers, and fresh-shuffle the library.</summary>
+    public HotkeyConfig FreshStart { get; set; } = new();
+
     /// <summary>Percent the group volume changes per Volume Up/Down press.</summary>
     public int VolumeStep { get; set; } = 5;
+
+    /// <summary>Silently regroup all speakers once a night (skipped if anything is playing).</summary>
+    public bool NightlyResetEnabled { get; set; } = true;
+
+    /// <summary>Time of the nightly reset, as minutes since midnight (default 180 = 3:00 AM).</summary>
+    public int NightlyResetMinutes { get; set; } = 180;
 
     /// <summary>Exactly four favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
@@ -68,6 +77,7 @@ public sealed class AppSettings
             HotsonosAction.VolumeUp => VolumeUp,
             HotsonosAction.VolumeDown => VolumeDown,
             HotsonosAction.Mute => Mute,
+            HotsonosAction.FreshStart => FreshStart,
             _ => new HotkeyConfig(),
         };
     }
@@ -82,7 +92,9 @@ public sealed class AppSettings
         VolumeUp ??= new HotkeyConfig();
         VolumeDown ??= new HotkeyConfig();
         Mute ??= new HotkeyConfig();
+        FreshStart ??= new HotkeyConfig();
         if (VolumeStep < 1) VolumeStep = 5;
+        if (NightlyResetMinutes is < 0 or > 1439) NightlyResetMinutes = 180;
         FavoriteSlots ??= [];
         while (FavoriteSlots.Count < FavoriteSlotCount)
             FavoriteSlots.Add(new FavoriteSlot());

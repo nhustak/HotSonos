@@ -60,6 +60,21 @@
                                      PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
                             <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="Shuffle" Click="ClearHotkey_Click" />
                         </StackPanel>
+
+                        <Separator Margin="0,12,0,10" Background="#FF2ECC71" Opacity="0.4" />
+
+                        <TextBlock Text="🔄 Restart fresh" FontSize="15" FontWeight="SemiBold" Foreground="#FF1C2536" />
+                        <TextBlock Text="Re-discovers speakers, regroups them all (clears out-of-sync), and starts a brand-new shuffle. Use this if speakers drift out of sync."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="🔄  Restart fresh now" Height="32" Padding="14,0" Margin="0,0,12,0"
+                                    Background="#FF1C8E54" Foreground="White" FontWeight="SemiBold"
+                                    Click="FreshStartButton_Click" />
+                            <TextBlock Text="Hotkey" VerticalAlignment="Center" Margin="8,0,6,0" />
+                            <TextBox x:Name="FreshStartHotkeyBox" Style="{StaticResource HotkeyBox}" Width="130"
+                                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="FreshStart" Click="ClearHotkey_Click" />
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 
@@ -198,6 +213,15 @@
                 <TextBlock Text="Options" Style="{StaticResource SectionHeader}" />
                 <CheckBox x:Name="StartWithWindowsCheckBox" Content="Start HotSonos with Windows" Margin="0,6"
                           Checked="StartWithWindows_Changed" Unchecked="StartWithWindows_Changed" />
+                <StackPanel Orientation="Horizontal" Margin="0,6">
+                    <CheckBox x:Name="NightlyResetCheckBox" Content="Re-sync all speakers nightly at" VerticalAlignment="Center" />
+                    <TextBox x:Name="NightlyResetTimeBox" Width="60" Margin="8,0,0,0" Padding="6,2"
+                             VerticalContentAlignment="Center" />
+                    <TextBlock Text="(24-hour, e.g. 03:00)" VerticalAlignment="Center" Margin="8,0,0,0"
+                               Foreground="#FF60707F" FontSize="11" />
+                </StackPanel>
+                <TextBlock Text="Silently regroups every speaker so they start the day in sync. Skipped automatically if anything is playing — it will never start music on its own."
+                           Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
             </StackPanel>
         </ScrollViewer>
 

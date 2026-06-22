@@ -8,15 +8,18 @@ using HotSonos.Core.Models;
 namespace HotSonos.Core;
 
 /// <summary>
-/// Subscribes to a coordinator's AVTransport GENA events and raises
-/// <see cref="NowPlayingChanged"/> whenever the track or transport state
-/// changes (push, not poll). Runs a small TCP HTTP server to receive the
-/// speaker's NOTIFY callbacks, and renews the subscription before it expires.
+/// Subscribes to a coordinator's AVTransport and ZoneGroupTopology GENA events
+/// and raises <see cref="NowPlayingChanged"/> / <see cref="TopologyChanged"/>
+/// on push (no polling). Runs a small TCP HTTP server for the NOTIFY callbacks
+/// and renews both subscriptions before they expire.
 /// </summary>
 public sealed partial class SonosEventSubscriber : IAsyncDisposable
 {
     private const int SubscriptionSeconds = 300;
-    private const string EventPath = "/MediaRenderer/AVTransport/Event";
+    private const string AvTransportEventPath = "/MediaRenderer/AVTransport/Event";
+    private const string TopologyEventPath = "/ZoneGroupTopology/Event";
+
+    private static readonly string[] EventPaths = [AvTransportEventPath, TopologyEventPath];
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(8) };
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -25,14 +28,17 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
     private TcpListener? _listener;
     private int _port;
     private string? _coordinatorIp;
-    private string? _sid;
+    private readonly Dictionary<string, string> _sidByPath = []; // event path -> subscription id
     private Timer? _renewTimer;
 
-    /// <summary>Raised (on a background thread) when the coordinator pushes a state change.</summary>
+    /// <summary>Raised (background thread) when the coordinator pushes a track/state change.</summary>
     public event Action<NowPlaying>? NowPlayingChanged;
 
+    /// <summary>Raised (background thread) with the decoded ZoneGroupState XML on a topology change.</summary>
+    public event Action<string>? TopologyChanged;
+
     /// <summary>
-    /// Points the subscription at <paramref name="coordinatorIp"/>. Starts the
+    /// Points the subscriptions at <paramref name="coordinatorIp"/>. Starts the
     /// callback server on first use and re-subscribes if the coordinator changed.
     /// The speaker sends an immediate NOTIFY with current state on subscribe.
     /// </summary>
@@ -43,20 +49,25 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         {
             EnsureListenerStarted();
 
-            if (string.Equals(_coordinatorIp, coordinatorIp, StringComparison.OrdinalIgnoreCase) && _sid is not null)
+            if (string.Equals(_coordinatorIp, coordinatorIp, StringComparison.OrdinalIgnoreCase) && _sidByPath.Count > 0)
                 return; // already subscribed to this coordinator
 
-            await UnsubscribeCurrentAsync().ConfigureAwait(false);
+            await UnsubscribeAllAsync().ConfigureAwait(false);
 
             var localIp = LocalIpFor(coordinatorIp);
             var callback = $"http://{localIp}:{_port}/notify";
-            var sid = await SendSubscribeAsync(coordinatorIp, callback, ct).ConfigureAwait(false);
-            if (sid is null)
-                return;
+            foreach (var path in EventPaths)
+            {
+                var sid = await SendSubscribeAsync(coordinatorIp, path, callback, ct).ConfigureAwait(false);
+                if (sid is not null)
+                    _sidByPath[path] = sid;
+            }
 
-            _coordinatorIp = coordinatorIp;
-            _sid = sid;
-            ScheduleRenew();
+            if (_sidByPath.Count > 0)
+            {
+                _coordinatorIp = coordinatorIp;
+                ScheduleRenew();
+            }
         }
         finally
         {
@@ -101,13 +112,22 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
                 var stream = client.GetStream();
                 var request = await ReadRequestAsync(stream, ct).ConfigureAwait(false);
 
-                // Acknowledge so the speaker considers delivery successful.
                 var ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray();
                 await stream.WriteAsync(ok, ct).ConfigureAwait(false);
 
-                var nowPlaying = ParseNotify(request, _coordinatorIp);
-                if (nowPlaying is not null)
-                    NowPlayingChanged?.Invoke(nowPlaying);
+                // Route by body content: AVTransport carries <LastChange>, topology <ZoneGroupState>.
+                if (request.Contains("<LastChange>", StringComparison.Ordinal))
+                {
+                    var nowPlaying = ParseNotify(request, _coordinatorIp);
+                    if (nowPlaying is not null)
+                        NowPlayingChanged?.Invoke(nowPlaying);
+                }
+                else if (request.Contains("<ZoneGroupState>", StringComparison.Ordinal))
+                {
+                    var stateXml = ExtractTopology(request);
+                    if (stateXml is not null)
+                        TopologyChanged?.Invoke(stateXml);
+                }
             }
         }
         catch
@@ -149,7 +169,7 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
     }
 
-    /// <summary>Extracts now-playing state from a NOTIFY request body.</summary>
+    /// <summary>Extracts now-playing state from an AVTransport NOTIFY body.</summary>
     internal static NowPlaying? ParseNotify(string request, string? coordinatorIp)
     {
         var lastChangeMatch = LastChangeRegex().Match(request);
@@ -178,6 +198,13 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         };
     }
 
+    /// <summary>Pulls the (decoded) inner ZoneGroupState XML out of a topology NOTIFY body.</summary>
+    internal static string? ExtractTopology(string request)
+    {
+        var m = ZoneGroupStateRegex().Match(request);
+        return m.Success ? WebUtility.HtmlDecode(m.Groups[1].Value) : null;
+    }
+
     private static string? AttrVal(string xml, string element)
     {
         var m = Regex.Match(xml, $"<{element} val=\"([^\"]*)\"");
@@ -192,9 +219,9 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
     // ---- subscription lifecycle -------------------------------------------
 
-    private async Task<string?> SendSubscribeAsync(string coordinatorIp, string callbackUrl, CancellationToken ct)
+    private async Task<string?> SendSubscribeAsync(string coordinatorIp, string path, string callbackUrl, CancellationToken ct)
     {
-        using var req = new HttpRequestMessage(new HttpMethod("SUBSCRIBE"), $"http://{coordinatorIp}:1400{EventPath}");
+        using var req = new HttpRequestMessage(new HttpMethod("SUBSCRIBE"), $"http://{coordinatorIp}:1400{path}");
         req.Headers.TryAddWithoutValidation("CALLBACK", $"<{callbackUrl}>");
         req.Headers.TryAddWithoutValidation("NT", "upnp:event");
         req.Headers.TryAddWithoutValidation("TIMEOUT", $"Second-{SubscriptionSeconds}");
@@ -207,46 +234,55 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
     private async Task<bool> RenewAsync(CancellationToken ct)
     {
-        if (_coordinatorIp is null || _sid is null)
+        if (_coordinatorIp is null || _sidByPath.Count == 0)
             return false;
 
-        using var req = new HttpRequestMessage(new HttpMethod("SUBSCRIBE"), $"http://{_coordinatorIp}:1400{EventPath}");
-        req.Headers.TryAddWithoutValidation("SID", _sid);
-        req.Headers.TryAddWithoutValidation("TIMEOUT", $"Second-{SubscriptionSeconds}");
-        try
+        var allOk = true;
+        foreach (var (path, sid) in _sidByPath)
         {
-            using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
-            return resp.IsSuccessStatusCode;
+            using var req = new HttpRequestMessage(new HttpMethod("SUBSCRIBE"), $"http://{_coordinatorIp}:1400{path}");
+            req.Headers.TryAddWithoutValidation("SID", sid);
+            req.Headers.TryAddWithoutValidation("TIMEOUT", $"Second-{SubscriptionSeconds}");
+            try
+            {
+                using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+                allOk &= resp.IsSuccessStatusCode;
+            }
+            catch
+            {
+                allOk = false;
+            }
         }
-        catch
-        {
-            return false;
-        }
+        return allOk;
     }
 
-    private async Task UnsubscribeCurrentAsync()
+    private async Task UnsubscribeAllAsync()
     {
         _renewTimer?.Dispose();
         _renewTimer = null;
 
-        if (_coordinatorIp is null || _sid is null)
+        if (_coordinatorIp is null)
+        {
+            _sidByPath.Clear();
             return;
+        }
 
-        try
+        foreach (var (path, sid) in _sidByPath)
         {
-            using var req = new HttpRequestMessage(new HttpMethod("UNSUBSCRIBE"), $"http://{_coordinatorIp}:1400{EventPath}");
-            req.Headers.TryAddWithoutValidation("SID", _sid);
-            using var _ = await _http.SendAsync(req).ConfigureAwait(false);
+            try
+            {
+                using var req = new HttpRequestMessage(new HttpMethod("UNSUBSCRIBE"), $"http://{_coordinatorIp}:1400{path}");
+                req.Headers.TryAddWithoutValidation("SID", sid);
+                using var _ = await _http.SendAsync(req).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best-effort; the subscription lapses on its own otherwise.
+            }
         }
-        catch
-        {
-            // Best-effort; the subscription will lapse on its own otherwise.
-        }
-        finally
-        {
-            _sid = null;
-            _coordinatorIp = null;
-        }
+
+        _sidByPath.Clear();
+        _coordinatorIp = null;
     }
 
     private void ScheduleRenew()
@@ -257,11 +293,10 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         {
             if (!await RenewAsync(_cts.Token).ConfigureAwait(false))
             {
-                // Renewal failed — try a fresh subscription to the same coordinator.
                 var ip = _coordinatorIp;
                 if (ip is not null)
                 {
-                    _sid = null;
+                    await UnsubscribeAllAsync().ConfigureAwait(false);
                     await SubscribeAsync(ip).ConfigureAwait(false);
                 }
             }
@@ -280,7 +315,7 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _cts.CancelAsync().ConfigureAwait(false);
-        await UnsubscribeCurrentAsync().ConfigureAwait(false);
+        await UnsubscribeAllAsync().ConfigureAwait(false);
         _listener?.Stop();
         _http.Dispose();
         _gate.Dispose();
@@ -292,4 +327,7 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
     [GeneratedRegex(@"<LastChange>(.*?)</LastChange>", RegexOptions.Singleline)]
     private static partial Regex LastChangeRegex();
+
+    [GeneratedRegex(@"<ZoneGroupState>(.*?)</ZoneGroupState>", RegexOptions.Singleline)]
+    private static partial Regex ZoneGroupStateRegex();
 }
