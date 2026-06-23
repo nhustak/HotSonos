@@ -28,10 +28,10 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
 
       - name: Publish (self-contained win-x64)
-        run: dotnet publish src/HotSonos.App/HotSonos.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/publish
+        run: dotnet publish src/HotSonos.App/HotSonos.App.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.ver.outputs.version }} -o artifacts/publish
 
       - name: Build installer (MSI)
-        run: dotnet build installer/HotSonos.Installer.wixproj -c Release -p:ProductVersion=${{ steps.ver.outputs.version }}
+        run: dotnet build installer/HotSonos.Installer.wixproj -c Release -p:Version=${{ steps.ver.outputs.version }}
 
       - name: Name the MSI with the version
         shell: pwsh

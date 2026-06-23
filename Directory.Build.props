@@ -1,0 +1,15 @@
+<Project>
+
+  <!--
+    Single source of truth for the product version. All projects (app, core,
+    harness, and the WiX installer via $(Version)) inherit it. Local/dev builds
+    use the value below; CI release builds override it from the git tag with
+    -p:Version=x.y.z, so the app exe and the MSI always carry the same version.
+  -->
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>$(Version)</AssemblyVersion>
+    <FileVersion>$(Version)</FileVersion>
+  </PropertyGroup>
+
+</Project>

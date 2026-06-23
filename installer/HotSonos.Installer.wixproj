@@ -11,7 +11,8 @@
   <PropertyGroup>
     <!-- Overridable from the command line / CI. Defaults are for a local build. -->
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\publish\</PublishDir>
-    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.0</ProductVersion>
+    <!-- Defaults to the shared $(Version) from Directory.Build.props; CI overrides via -p:Version. -->
+    <ProductVersion Condition="'$(ProductVersion)' == ''">$(Version)</ProductVersion>
     <IconFile Condition="'$(IconFile)' == ''">$(MSBuildThisFileDirectory)..\src\HotSonos.App\hotsonos.ico</IconFile>
     <DefineConstants>PublishDir=$(PublishDir);ProductVersion=$(ProductVersion);IconFile=$(IconFile)</DefineConstants>
   </PropertyGroup>
