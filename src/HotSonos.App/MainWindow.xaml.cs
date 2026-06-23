@@ -20,9 +20,10 @@ public partial class MainWindow : Window
     private readonly AppSettings _settings;
     private readonly Func<IReadOnlyList<HotsonosAction>> _applyBindings;
     private readonly Action<string> _onRoomChanged;
-    private readonly Action _onFreshStart;
+    private readonly Action<HotsonosAction> _runAction;
 
     // Working copies edited by the UI; copied back into _settings on Save.
+    private readonly HotkeyConfig _levelVolumes;
     private readonly HotkeyConfig _freshStart;
     private readonly HotkeyConfig _shuffle;
     private readonly HotkeyConfig _playPause;
@@ -47,15 +48,16 @@ public partial class MainWindow : Window
         AppSettings settings,
         Func<IReadOnlyList<HotsonosAction>> applyBindings,
         Action<string> onRoomChanged,
-        Action onFreshStart)
+        Action<HotsonosAction> runAction)
     {
         _sonos = sonos;
         _store = store;
         _settings = settings.EnsureShape();
         _applyBindings = applyBindings;
         _onRoomChanged = onRoomChanged;
-        _onFreshStart = onFreshStart;
+        _runAction = runAction;
 
+        _levelVolumes = Clone(_settings.LevelVolumes);
         _freshStart = Clone(_settings.FreshStart);
         _shuffle = Clone(_settings.ShuffleLibrary);
         _playPause = Clone(_settings.PlayPause);
@@ -75,6 +77,7 @@ public partial class MainWindow : Window
     {
         _favCombos = [Fav1NameCombo, Fav2NameCombo, Fav3NameCombo, Fav4NameCombo];
 
+        _boxToConfig[LevelVolumesHotkeyBox] = _levelVolumes;
         _boxToConfig[FreshStartHotkeyBox] = _freshStart;
         _boxToConfig[ShuffleHotkeyBox] = _shuffle;
         _boxToConfig[PlayPauseHotkeyBox] = _playPause;
@@ -88,6 +91,7 @@ public partial class MainWindow : Window
         _boxToConfig[Fav3HotkeyBox] = _favHotkeys[2];
         _boxToConfig[Fav4HotkeyBox] = _favHotkeys[3];
 
+        _byTag["LevelVolumes"] = (LevelVolumesHotkeyBox, _levelVolumes);
         _byTag["FreshStart"] = (FreshStartHotkeyBox, _freshStart);
         _byTag["Shuffle"] = (ShuffleHotkeyBox, _shuffle);
         _byTag["PlayPause"] = (PlayPauseHotkeyBox, _playPause);
@@ -107,6 +111,7 @@ public partial class MainWindow : Window
         FlyoutOnTrackChangeCheckBox.IsChecked = _settings.ShowFlyoutOnTrackChange;
         FlyoutOnActionCheckBox.IsChecked = _settings.ShowFlyoutOnAction;
         VolumeStepBox.Text = _settings.VolumeStep.ToString();
+        LevelPercentBox.Text = _settings.LevelVolumePercent.ToString();
         NightlyResetCheckBox.IsChecked = _settings.NightlyResetEnabled;
         NightlyResetTimeBox.Text = MinutesToHhmm(_settings.NightlyResetMinutes);
         LoadStartupPreference();
@@ -240,6 +245,7 @@ public partial class MainWindow : Window
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         // Copy working values back into the live settings object.
+        _settings.LevelVolumes = _levelVolumes;
         _settings.FreshStart = _freshStart;
         _settings.ShuffleLibrary = _shuffle;
         _settings.PlayPause = _playPause;
@@ -250,6 +256,8 @@ public partial class MainWindow : Window
         _settings.Mute = _mute;
         if (int.TryParse(VolumeStepBox.Text, out var step) && step is >= 1 and <= 50)
             _settings.VolumeStep = step;
+        if (int.TryParse(LevelPercentBox.Text, out var level) && level is >= 0 and <= 100)
+            _settings.LevelVolumePercent = level;
         _settings.ShowFlyoutOnTrackChange = FlyoutOnTrackChangeCheckBox.IsChecked == true;
         _settings.ShowFlyoutOnAction = FlyoutOnActionCheckBox.IsChecked == true;
         _settings.NightlyResetEnabled = NightlyResetCheckBox.IsChecked == true;
@@ -291,7 +299,24 @@ public partial class MainWindow : Window
     private void FreshStartButton_Click(object sender, RoutedEventArgs e)
     {
         SetStatus("Re-syncing all speakers and starting a fresh shuffle…", warn: false);
-        _onFreshStart();
+        _runAction(HotsonosAction.FreshStart);
+    }
+
+    private void LevelVolumesButton_Click(object sender, RoutedEventArgs e)
+    {
+        var pct = int.TryParse(LevelPercentBox.Text, out var p) && p is >= 0 and <= 100 ? p : 20;
+        SetStatus($"Setting all speakers to {pct}%…", warn: false);
+        if (_settings.LevelVolumePercent != pct)
+        {
+            _settings.LevelVolumePercent = pct; // honor the field value even if not yet Saved
+            TrySaveLevelPercent();
+        }
+        _runAction(HotsonosAction.LevelVolumes);
+    }
+
+    private void TrySaveLevelPercent()
+    {
+        try { _store.Save(_settings); } catch { /* non-fatal */ }
     }
 
     private void StartWithWindows_Changed(object sender, RoutedEventArgs e)

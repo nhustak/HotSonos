@@ -75,6 +75,7 @@ public partial class App : System.Windows.Application
                 VolumeDown: () => _ = ExecuteActionAsync(HotsonosAction.VolumeDown),
                 Mute: () => _ = ExecuteActionAsync(HotsonosAction.Mute),
                 PlayFavoriteSlot: slot => _ = ExecuteActionAsync(HotsonosAction.Favorite1 + slot),
+                LevelVolumes: () => _ = ExecuteActionAsync(HotsonosAction.LevelVolumes),
                 SetRoom: OnTraySetRoom,
                 Exit: ExitApplication));
 
@@ -220,7 +221,7 @@ public partial class App : System.Windows.Application
         if (_mainWindow is null)
         {
             _mainWindow = new MainWindow(_sonos, _store, _settings, ApplyBindings, OnRoomChangedFromWindow,
-                () => _ = ExecuteActionAsync(HotsonosAction.FreshStart));
+                action => _ = ExecuteActionAsync(action));
             _mainWindow.HideToTrayRequested += (_, _) => _mainWindow?.Hide();
             _mainWindow.Closing += OnMainWindowClosing;
         }

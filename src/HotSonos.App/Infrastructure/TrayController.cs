@@ -22,6 +22,7 @@ public sealed class TrayController : IDisposable
         Action VolumeDown,
         Action Mute,
         Action<int> PlayFavoriteSlot,
+        Action LevelVolumes,
         Action<string> SetRoom,
         Action Exit);
 
@@ -55,6 +56,7 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add("Volume up", null, (_, _) => _callbacks.VolumeUp());
         _menu.Items.Add("Volume down", null, (_, _) => _callbacks.VolumeDown());
         _menu.Items.Add("Mute / Unmute", null, (_, _) => _callbacks.Mute());
+        _menu.Items.Add("Level all speaker volumes", null, (_, _) => _callbacks.LevelVolumes());
         _menu.Items.Add(new ToolStripSeparator());
 
         _roomMenu = new ToolStripMenuItem("Room: (discovering…)");

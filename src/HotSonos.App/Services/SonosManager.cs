@@ -176,6 +176,9 @@ public sealed class SonosManager
                 return $"🔊 Volume {await ChangeVolumeAsync(-settings.VolumeStep, ct).ConfigureAwait(false)}%";
             case HotsonosAction.Mute:
                 return await ToggleMuteAsync(ct).ConfigureAwait(false) ? "🔇 Muted" : "🔊 Unmuted";
+            case HotsonosAction.LevelVolumes:
+                var n = await LevelAllVolumesAsync(settings.LevelVolumePercent, ct).ConfigureAwait(false);
+                return $"🔉 Set {n} speaker(s) to {settings.LevelVolumePercent}%";
             default:
                 return null;
         }
@@ -208,6 +211,33 @@ public sealed class SonosManager
         catch
         {
             // Fixed-volume members (Sub/Port/Amp line-out) reject this; ignore them.
+        }
+    }
+
+    /// <summary>
+    /// Sets EVERY visible speaker (across all groups) to the same absolute volume
+    /// and unmutes them, so the whole house plays at one level. Returns the count.
+    /// </summary>
+    public async Task<int> LevelAllVolumesAsync(int percent, CancellationToken ct = default)
+    {
+        percent = Math.Clamp(percent, 0, 100);
+        var ips = _zones.Select(z => z.IpAddress).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        await Task.WhenAll(ips.Select(ip => SetMemberVolumeAsync(ip, percent, ct))).ConfigureAwait(false);
+        return ips.Count;
+    }
+
+    private async Task SetMemberVolumeAsync(string ip, int percent, CancellationToken ct)
+    {
+        try
+        {
+            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetVolume",
+                [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredVolume", percent.ToString())], ct).ConfigureAwait(false);
+            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetMute",
+                [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredMute", "0")], ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Fixed-volume members (Sub/Port/Amp line-out) reject volume changes; ignore them.
         }
     }
 

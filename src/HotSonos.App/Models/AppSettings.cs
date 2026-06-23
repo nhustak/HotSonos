@@ -50,6 +50,12 @@ public sealed class AppSettings
     /// <summary>Percent the group volume changes per Volume Up/Down press.</summary>
     public int VolumeStep { get; set; } = 5;
 
+    /// <summary>Set every speaker to this absolute volume when "level all volumes" runs.</summary>
+    public int LevelVolumePercent { get; set; } = 20;
+
+    /// <summary>Hotkey to set all speakers to <see cref="LevelVolumePercent"/>.</summary>
+    public HotkeyConfig LevelVolumes { get; set; } = new();
+
     /// <summary>Silently regroup all speakers once a night (skipped if anything is playing).</summary>
     public bool NightlyResetEnabled { get; set; } = true;
 
@@ -77,6 +83,7 @@ public sealed class AppSettings
             HotsonosAction.VolumeUp => VolumeUp,
             HotsonosAction.VolumeDown => VolumeDown,
             HotsonosAction.Mute => Mute,
+            HotsonosAction.LevelVolumes => LevelVolumes,
             HotsonosAction.FreshStart => FreshStart,
             _ => new HotkeyConfig(),
         };
@@ -92,8 +99,10 @@ public sealed class AppSettings
         VolumeUp ??= new HotkeyConfig();
         VolumeDown ??= new HotkeyConfig();
         Mute ??= new HotkeyConfig();
+        LevelVolumes ??= new HotkeyConfig();
         FreshStart ??= new HotkeyConfig();
         if (VolumeStep < 1) VolumeStep = 5;
+        if (LevelVolumePercent is < 0 or > 100) LevelVolumePercent = 20;
         if (NightlyResetMinutes is < 0 or > 1439) NightlyResetMinutes = 180;
         FavoriteSlots ??= [];
         while (FavoriteSlots.Count < FavoriteSlotCount)
