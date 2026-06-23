@@ -1,8 +1,9 @@
 # HotSonos
 
 [![build](https://github.com/nhustak/HotSonos/actions/workflows/build.yml/badge.svg)](https://github.com/nhustak/HotSonos/actions/workflows/build.yml)
+[![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 
-**Version 1.0.0** · Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts.
+Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts.
 
 HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/SOAP) — no cloud, no Sonos account, no internet round-trips. It lives in the system tray and gives you instant, global hotkeys for the things the Sonos apps make you click through: shuffle your whole library to every speaker, play/pause, skip, and whole-house volume — plus a live now-playing flyout and automatic speaker re-sync.
 
