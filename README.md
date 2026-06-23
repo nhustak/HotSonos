@@ -24,6 +24,9 @@ Global play/pause, next track, and previous track — from any app, anywhere.
 ### 🔊 Whole-house volume hotkeys
 Volume up, volume down, and mute/unmute across the entire group, with a configurable step size.
 
+### 🔉 Level all speakers
+One click (or hotkey) sets **every** speaker in the house to the same absolute volume — default 20%, configurable — and unmutes them. Great for resetting after someone cranked one room. Unlike the proportional volume hotkeys, this slams every player to the exact level. Fixed-volume devices (Sub, Port/Amp on line-out) are skipped.
+
 ### 🎴 Live Now-Playing flyout
 A custom, lightweight flyout (not the Windows toast) showing **album art + title + artist + state**, updated in real time via Sonos push events — so it reflects track changes even when you change songs from the phone app. It's **draggable** (position is remembered), **pinnable** (keep it on screen), and has independent toggles for "show on every track change" and "show when I trigger an action."
 
@@ -57,7 +60,7 @@ Targets are shown as Sonos groups (e.g. a group containing every player shows as
 | Volume up | `Ctrl + Alt + ↑` |
 | Volume down | `Ctrl + Alt + ↓` |
 | Mute / Unmute | `Ctrl + Alt + M` |
-| Restart fresh / favorite slots | unassigned (set your own) |
+| Level all speakers / Restart fresh / favorite slots | unassigned (set your own) |
 
 All shortcuts are re-bindable in **Settings** (right-click the tray icon → *Open HotSonos*).
 
