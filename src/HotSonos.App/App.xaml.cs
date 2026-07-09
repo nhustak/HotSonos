@@ -170,8 +170,17 @@ public partial class App : System.Windows.Application
         Dispatcher.InvokeAsync(UpdateTrayDynamic);
 
     private void OnSpeakerAvailabilityChanged(string room, bool isOnline) =>
-        Dispatcher.InvokeAsync(() =>
-            _tray.ShowBalloon("HotSonos", isOnline ? $"✓ {room} reconnected" : $"⚠️ {room} dropped off the network"));
+        Dispatcher.InvokeAsync(async () =>
+        {
+            if (isOnline)
+            {
+                try { await _sonos.GroupAllSpeakersAsync(); }
+                catch { /* best-effort rejoin; still confirm it's back via balloon */ }
+            }
+            var message = isOnline ? $"✓ {room} rejoined the group" : $"⚠️ {room} dropped off the network";
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                EnsureFlyout().ShowAction(message);
+        });
 
     private void OnNowPlayingChanged(NowPlaying nowPlaying)
     {

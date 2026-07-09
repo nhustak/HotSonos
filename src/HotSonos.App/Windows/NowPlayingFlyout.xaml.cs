@@ -126,10 +126,13 @@ public partial class NowPlayingFlyout : Window
         if (e.ButtonState != MouseButtonState.Pressed)
             return;
 
+        _dismissTimer.Stop(); // don't let a slow drag get auto-dismissed mid-move
         DragMove(); // blocks until the mouse is released
         _settings.FlyoutLeft = Left;
         _settings.FlyoutTop = Top;
         _persist();
+        if (!_settings.FlyoutPinned)
+            _dismissTimer.Start();
     }
 
     private void PinButton_Changed(object sender, RoutedEventArgs e)
