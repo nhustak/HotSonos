@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -70,7 +71,42 @@ public partial class MainWindow : Window
 
         InitializeComponent();
         Title = $"{AppVersion.DisplayName} Settings";
+        RestoreWindowGeometry();
         Loaded += OnLoaded;
+    }
+
+    /// <summary>Applies the last saved position/size, if any; otherwise keeps the XAML defaults.</summary>
+    private void RestoreWindowGeometry()
+    {
+        if (_settings.MainWindowWidth is double w && w > 300)
+            Width = w;
+        if (_settings.MainWindowHeight is double h && h > 300)
+            Height = h;
+        if (_settings.MainWindowLeft is { } left && _settings.MainWindowTop is { } top)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = left;
+            Top = top;
+        }
+    }
+
+    /// <summary>Captures the current position/size (while not minimized/maximized) for next launch.</summary>
+    private void CaptureWindowGeometry()
+    {
+        if (WindowState != WindowState.Normal)
+            return;
+
+        _settings.MainWindowLeft = Left;
+        _settings.MainWindowTop = Top;
+        _settings.MainWindowWidth = Width;
+        _settings.MainWindowHeight = Height;
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        CaptureWindowGeometry();
+        try { _store.Save(_settings); } catch { /* non-fatal */ }
+        base.OnClosing(e);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -118,6 +154,83 @@ public partial class MainWindow : Window
 
         PopulateRooms();
         _ = LoadFavoritesAsync();
+        _ = LoadSpeakerVolumesAsync();
+    }
+
+    private async Task LoadSpeakerVolumesAsync()
+    {
+        SpeakersPanel.Children.Clear();
+
+        IReadOnlyList<SpeakerVolume> volumes;
+        try
+        {
+            volumes = await _sonos.GetSpeakerVolumesAsync();
+        }
+        catch
+        {
+            return; // Non-fatal: the user can Refresh once a speaker is reachable.
+        }
+
+        foreach (var speaker in volumes)
+            SpeakersPanel.Children.Add(BuildSpeakerRow(speaker));
+    }
+
+    private UIElement BuildSpeakerRow(SpeakerVolume speaker)
+    {
+        var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
+
+        row.Children.Add(new TextBlock
+        {
+            Text = speaker.Reachable ? speaker.RoomName : $"{speaker.RoomName} (offline)",
+            Width = 90,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = speaker.Reachable
+                ? System.Windows.Media.Brushes.Black
+                : System.Windows.Media.Brushes.Gray,
+        });
+
+        var valueLabel = new TextBlock
+        {
+            Text = $"{speaker.Volume}%",
+            Width = 32,
+            Margin = new Thickness(6, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var slider = new Slider
+        {
+            Minimum = 0,
+            Maximum = 100,
+            Value = speaker.Volume,
+            Width = 110,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = speaker.Reachable,
+        };
+        slider.ValueChanged += (_, e) => valueLabel.Text = $"{(int)e.NewValue}%";
+        slider.PreviewMouseLeftButtonUp += async (_, _) => await CommitSpeakerVolumeAsync(speaker.IpAddress, (int)slider.Value);
+        slider.LostKeyboardFocus += async (_, _) => await CommitSpeakerVolumeAsync(speaker.IpAddress, (int)slider.Value);
+
+        var muteCheck = new System.Windows.Controls.CheckBox
+        {
+            Content = "Mute",
+            IsChecked = speaker.Muted,
+            IsEnabled = speaker.Reachable,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(10, 0, 0, 0),
+        };
+        muteCheck.Checked += async (_, _) => await _sonos.SetSpeakerMuteAsync(speaker.IpAddress, true);
+        muteCheck.Unchecked += async (_, _) => await _sonos.SetSpeakerMuteAsync(speaker.IpAddress, false);
+
+        row.Children.Add(slider);
+        row.Children.Add(valueLabel);
+        row.Children.Add(muteCheck);
+        return row;
+    }
+
+    private async Task CommitSpeakerVolumeAsync(string ip, int percent)
+    {
+        try { await _sonos.SetSpeakerVolumeAsync(ip, percent); } catch { /* non-fatal; next Refresh will show the true value */ }
     }
 
     private void PopulateRooms()
@@ -179,6 +292,7 @@ public partial class MainWindow : Window
             await _sonos.RefreshAsync(preferred);
             PopulateRooms();
             await LoadFavoritesAsync();
+            await LoadSpeakerVolumesAsync();
             SetStatus($"Found {_sonos.Groups.Count} group(s).", warn: false);
         }
         catch (Exception ex)
@@ -244,6 +358,8 @@ public partial class MainWindow : Window
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
+        CaptureWindowGeometry();
+
         // Copy working values back into the live settings object.
         _settings.LevelVolumes = _levelVolumes;
         _settings.FreshStart = _freshStart;
@@ -293,8 +409,12 @@ public partial class MainWindow : Window
         SetStatus("Saved. Hotkeys are active.", warn: false);
     }
 
-    private void HideButton_Click(object sender, RoutedEventArgs e) =>
+    private void HideButton_Click(object sender, RoutedEventArgs e)
+    {
+        CaptureWindowGeometry();
+        try { _store.Save(_settings); } catch { /* non-fatal */ }
         HideToTrayRequested?.Invoke(this, EventArgs.Empty);
+    }
 
     private void FreshStartButton_Click(object sender, RoutedEventArgs e)
     {

@@ -83,7 +83,7 @@ public partial class App : System.Windows.Application
 
         var launchedFromAutorun = e.Args.Any(a => string.Equals(a, WindowsStartupManager.AutorunArgument, StringComparison.OrdinalIgnoreCase));
         if (!launchedFromAutorun)
-            _tray.ShowBalloon("HotSonos", "Running in the tray. Double-click to shuffle your library to all speakers; right-click for settings.");
+            ShowMainWindow(); // manual launches open Settings directly; Windows autorun stays silent in the tray
 
         _ = InitialDiscoveryAsync();
     }

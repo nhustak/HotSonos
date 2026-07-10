@@ -139,15 +139,121 @@ public sealed class SonosController
     }
 
     /// <summary>
-    /// Shuffles the entire local Music Library across the group: replaces the
-    /// queue with the "all tracks" container (one call; the server expands it),
-    /// sets shuffle mode, and plays.
+    /// Number of tracks sent per <c>AddMultipleURIsToQueue</c> call. Sonos'
+    /// UPnP implementation silently truncates much larger batches, so this
+    /// stays well under the commonly-cited safe limit.
     /// </summary>
+    private const int EnqueueBatchSize = 16;
+
+    /// <summary>
+    /// Shuffles the entire local Music Library across the group.
+    /// </summary>
+    /// <remarks>
+    /// The device's own <c>SetPlayMode SHUFFLE</c> derives its play order
+    /// deterministically from the queue's content, so re-enqueuing the same
+    /// "all tracks" container and flipping to SHUFFLE produces the *same*
+    /// shuffled order every time. To get a genuinely different order per
+    /// invocation, the shuffle happens here on the client: the full track
+    /// list is browsed, randomized, and enqueued pre-shuffled with plain
+    /// NORMAL play mode.
+    /// </remarks>
     public async Task ShuffleMusicLibraryAsync(CancellationToken ct = default)
     {
-        await ReplaceQueueWithContainerAsync("A:TRACKS", ct);
-        await InvokeAvTransport("SetPlayMode", ct, ("InstanceID", "0"), ("NewPlayMode", "SHUFFLE"));
+        var tracks = (await BrowseAllTracksAsync(ct).ConfigureAwait(false)).ToList();
+        if (tracks.Count == 0)
+            throw new InvalidOperationException("No tracks found in the local Music Library.");
+
+        Shuffle(tracks);
+
+        await InvokeAvTransport("RemoveAllTracksFromQueue", ct, ("InstanceID", "0"));
+
+        foreach (var batch in tracks.Chunk(EnqueueBatchSize))
+        {
+            await InvokeAvTransport("AddMultipleURIsToQueue", ct,
+                ("InstanceID", "0"),
+                ("UpdateID", "0"),
+                ("NumberOfURIs", batch.Length.ToString()),
+                ("EnqueuedURIs", string.Join(' ', batch.Select(t => t.Uri))),
+                ("EnqueuedURIsMetaData", string.Join(' ', batch.Select(t => BuildItemMetadata(t.Item)))),
+                ("ContainerURI", ""),
+                ("ContainerMetaData", ""),
+                ("DesiredFirstTrackNumberEnqueued", "0"),
+                ("EnqueueAsNext", "0")).ConfigureAwait(false);
+        }
+
+        await InvokeAvTransport("SetAVTransportURI", ct,
+            ("InstanceID", "0"),
+            ("CurrentURI", $"x-rincon-queue:{CoordinatorUuid}#0"),
+            ("CurrentURIMetaData", "")).ConfigureAwait(false);
+
+        await InvokeAvTransport("SetPlayMode", ct, ("InstanceID", "0"), ("NewPlayMode", "NORMAL")).ConfigureAwait(false);
         await PlayAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Browses every track under the local Music Library ("A:TRACKS"), paginating as needed.</summary>
+    private async Task<IReadOnlyList<(string Uri, XElement Item)>> BrowseAllTracksAsync(CancellationToken ct)
+    {
+        var tracks = new List<(string Uri, XElement Item)>();
+        var startingIndex = 0;
+
+        while (true)
+        {
+            var response = await _soap.InvokeAsync(
+                CoordinatorIp, SonosService.ContentDirectory, "Browse",
+                [
+                    new("ObjectID", "A:TRACKS"),
+                    new("BrowseFlag", "BrowseDirectChildren"),
+                    new("Filter", "*"),
+                    new("StartingIndex", startingIndex.ToString()),
+                    new("RequestedCount", "200"),
+                    new("SortCriteria", ""),
+                ], ct).ConfigureAwait(false);
+
+            var didl = SonosSoapClient.ReadValue(response, "Result");
+            var numberReturned = int.Parse(SonosSoapClient.ReadValue(response, "NumberReturned") ?? "0");
+            var totalMatches = int.Parse(SonosSoapClient.ReadValue(response, "TotalMatches") ?? "0");
+
+            if (!string.IsNullOrWhiteSpace(didl))
+            {
+                var doc = XDocument.Parse(didl);
+                foreach (var item in doc.Descendants().Where(e => e.Name.LocalName == "item"))
+                {
+                    var uri = item.Descendants().FirstOrDefault(e => e.Name.LocalName == "res")?.Value;
+                    if (!string.IsNullOrEmpty(uri))
+                        tracks.Add((uri, item));
+                }
+            }
+
+            startingIndex += numberReturned;
+            if (numberReturned == 0 || startingIndex >= totalMatches)
+                break;
+        }
+
+        return tracks;
+    }
+
+    /// <summary>
+    /// Wraps one browsed track &lt;item&gt; element in its own standalone
+    /// DIDL-Lite document. <c>EnqueuedURIsMetaData</c> takes one such
+    /// document per track, space-joined in the same order as the space-joined
+    /// <c>EnqueuedURIs</c> list.
+    /// </summary>
+    private static string BuildItemMetadata(XElement item) =>
+        "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" " +
+        "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" " +
+        "xmlns:r=\"urn:schemas-rinconnetworks-com:metadata-1-0/\" " +
+        "xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\">" +
+        item.ToString(SaveOptions.DisableFormatting) +
+        "</DIDL-Lite>";
+
+    /// <summary>Fisher-Yates shuffle in place, using a fresh random sequence each call.</summary>
+    private static void Shuffle<T>(IList<T> list)
+    {
+        for (var i = list.Count - 1; i > 0; i--)
+        {
+            var j = Random.Shared.Next(i + 1);
+            (list[i], list[j]) = (list[j], list[i]);
+        }
     }
 
     /// <summary>

@@ -33,6 +33,12 @@ public sealed class AppSettings
     public double? FlyoutLeft { get; set; }
     public double? FlyoutTop { get; set; }
 
+    /// <summary>Persisted Settings-window geometry; null until the user moves/resizes it.</summary>
+    public double? MainWindowLeft { get; set; }
+    public double? MainWindowTop { get; set; }
+    public double? MainWindowWidth { get; set; }
+    public double? MainWindowHeight { get; set; }
+
     public HotkeyConfig PlayPause { get; set; } = new();
     public HotkeyConfig Next { get; set; } = new();
     public HotkeyConfig Previous { get; set; } = new();

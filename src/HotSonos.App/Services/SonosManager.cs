@@ -15,6 +15,14 @@ public sealed record SonosGroup(
     public override string ToString() => DisplayName;
 }
 
+/// <summary>A single speaker's current volume/mute, for the per-speaker settings list.</summary>
+public sealed record SpeakerVolume(
+    string RoomName,
+    string IpAddress,
+    int Volume,
+    bool Muted,
+    bool Reachable = true);
+
 /// <summary>
 /// App-facing wrapper over the Core UPnP client. Holds the discovered topology
 /// as groups and turns <see cref="HotsonosAction"/> into Sonos commands. Cheap
@@ -238,6 +246,61 @@ public sealed class SonosManager
         catch
         {
             // Fixed-volume members (Sub/Port/Amp line-out) reject volume changes; ignore them.
+        }
+    }
+
+    /// <summary>Reads every visible speaker's current volume/mute, for the settings-window list.</summary>
+    public async Task<IReadOnlyList<SpeakerVolume>> GetSpeakerVolumesAsync(CancellationToken ct = default) =>
+        await Task.WhenAll(_zones
+                .DistinctBy(z => z.IpAddress, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(z => z.RoomName, StringComparer.OrdinalIgnoreCase)
+                .Select(z => GetSpeakerVolumeAsync(z.RoomName, z.IpAddress, ct)))
+            .ConfigureAwait(false);
+
+    private async Task<SpeakerVolume> GetSpeakerVolumeAsync(string roomName, string ip, CancellationToken ct)
+    {
+        try
+        {
+            var volumeResponse = await _soap.InvokeAsync(ip, SonosService.RenderingControl, "GetVolume",
+                [new("InstanceID", "0"), new("Channel", "Master")], ct).ConfigureAwait(false);
+            var muteResponse = await _soap.InvokeAsync(ip, SonosService.RenderingControl, "GetMute",
+                [new("InstanceID", "0"), new("Channel", "Master")], ct).ConfigureAwait(false);
+            var volume = int.TryParse(SonosSoapClient.ReadValue(volumeResponse, "CurrentVolume"), out var v) ? v : 0;
+            var muted = SonosSoapClient.ReadValue(muteResponse, "CurrentMute") == "1";
+            return new SpeakerVolume(roomName, ip, volume, muted);
+        }
+        catch
+        {
+            return new SpeakerVolume(roomName, ip, 0, false, Reachable: false);
+        }
+    }
+
+    /// <summary>Sets one speaker's absolute volume (leaves its mute state untouched).</summary>
+    public async Task SetSpeakerVolumeAsync(string ip, int percent, CancellationToken ct = default)
+    {
+        percent = Math.Clamp(percent, 0, 100);
+        try
+        {
+            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetVolume",
+                [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredVolume", percent.ToString())], ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Fixed-volume members (Sub/Port/Amp line-out) reject volume changes; ignore them.
+        }
+    }
+
+    /// <summary>Mutes/unmutes one speaker.</summary>
+    public async Task SetSpeakerMuteAsync(string ip, bool mute, CancellationToken ct = default)
+    {
+        try
+        {
+            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetMute",
+                [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredMute", mute ? "1" : "0")], ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Tolerate members that reject mute.
         }
     }
 

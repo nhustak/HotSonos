@@ -14,7 +14,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 ## Features
 
 ### 🔀 Shuffle your entire Music Library to all speakers
-The headline feature. One action groups **every** speaker under a single coordinator and shuffle-plays your whole local Music Library — the entire library is enqueued in a single call (the speaker expands it server-side, so it's instant even for thousands of tracks). Trigger it by **double-clicking the tray icon** or with a hotkey.
+The headline feature. One action groups **every** speaker under a single coordinator and shuffle-plays your whole local Music Library. The shuffle order is randomized **client-side** (Sonos' own on-speaker shuffle mode reuses the same order for a given queue, so it never actually felt random) — HotSonos browses the full library, shuffles it fresh every time, and enqueues it pre-shuffled, so you get a genuinely different order on every trigger. Trigger it by **double-clicking the tray icon** or with a hotkey.
 
 ### 🔄 Restart fresh (re-sync + reshuffle)
 Re-discovers your speakers, force-regroups them all (which clears an out-of-sync state), and starts a brand-new shuffle. Use it when speakers drift apart. Available as a button in Settings, a tray item, and an optional hotkey.
@@ -34,8 +34,12 @@ A custom, lightweight flyout (not the Windows toast) showing **album art + title
 ### 📡 Live speaker monitoring
 HotSonos subscribes to Sonos topology events, so it knows the instant a speaker drops off or rejoins:
 - A tray indicator shows **"All speakers online"** or **"⚠ Offline: <room>"**
-- Balloon alerts on drop (**"⚠️ Kitchen dropped off"**) and reconnect (**"✓ Kitchen reconnected"**)
+- Connectivity toasts on drop (**"⚠️ Kitchen dropped off"**) and reconnect (**"✓ Kitchen reconnected"**) surface through the draggable now-playing flyout instead of an OS balloon
+- A speaker that reconnects is **automatically rejoined** to the currently active group
 - The room/group picker auto-refreshes on any grouping change
+
+### 🎚️ Per-speaker volume in Settings
+Settings shows every discovered speaker with its own volume slider and mute checkbox, so you can see and adjust exact levels room-by-room instead of only the whole-house step hotkeys.
 
 ### 🌙 Nightly silent re-sync
 Optionally, once a night (default 3:00 AM), HotSonos silently regroups every speaker so you wake up to a synced system. **It never starts playback** — if anything is playing at that time, it skips entirely.
@@ -47,6 +51,8 @@ Targets are shown as Sonos groups (e.g. a group containing every player shows as
 - System-tray app, single-instance, optional **Start with Windows**
 - Plain-JSON config at `%LocalAppData%\HotSonos\settings.json`
 - Four assignable "play a favorite/playlist" hotkey slots
+- Launching HotSonos manually opens **Settings** directly; launching via Windows autorun stays silent in the tray
+- The Settings window remembers its position and size between launches
 
 ---
 
@@ -108,7 +114,7 @@ dotnet run --project src/HotSonos.Harness -- --ip 192.168.1.50 playpause
 
 - **Discovery** — SSDP `M-SEARCH` across every active network interface (important on multi-homed PCs where a single probe goes out the wrong adapter), then the full zone/group topology is resolved from any one responding player.
 - **Control** — SOAP calls to each speaker on TCP port `1400` (`AVTransport`, `RenderingControl`/`GroupRenderingControl`, `ContentDirectory`, `ZoneGroupTopology`). Commands are routed to the group **coordinator**.
-- **Library shuffle** — the `A:TRACKS` container is enqueued via `x-rincon-playlist:{coordinator}#A:TRACKS` in one call, then `SHUFFLE` mode + play-from-queue.
+- **Library shuffle** — the full `A:TRACKS` container is browsed client-side, shuffled fresh on every trigger, and enqueued pre-shuffled in batches via `AddMultipleURIsToQueue`, then played in `NORMAL` mode (the device's own `SHUFFLE` mode reuses the same order for a given queue, so it's not used).
 - **Live updates** — UPnP **GENA** event subscriptions (a local TCP HTTP listener receives `NOTIFY` callbacks; subscriptions auto-renew) for AVTransport (now-playing) and ZoneGroupTopology (grouping/drops).
 
 ### Project layout
@@ -124,7 +130,8 @@ dotnet run --project src/HotSonos.Harness -- --ip 192.168.1.50 playpause
 
 - HotSonos only **sends commands** — it can't cause speakers to fall out of sync. Persistent out-of-sync or a speaker repeatedly dropping is almost always a **wireless/signal issue** on that unit; wiring one nearby Sonos to ethernet (forming SonosNet) usually steadies the area. The "Restart fresh" and nightly re-sync features are the practical cure for a drifted group.
 - The nightly re-sync only fires while the **PC is awake and HotSonos is running**; if the machine is asleep at the scheduled time it simply runs the next night.
-- Playing a saved **Sonos Playlist** uses the same container-enqueue method as the library shuffle. (Empty playlists have nothing to play.)
+- Playing a saved **Sonos Playlist** uses the same single-call container-enqueue method the library shuffle used to use. (Empty playlists have nothing to play.)
+- Because library shuffle now browses and re-enqueues the whole library client-side for a genuinely fresh order, it takes a bit longer to start than a plain "play" action on very large libraries (thousands of tracks) — a one-time cost per trigger, not a hang.
 
 ---
 
