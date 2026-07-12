@@ -143,6 +143,11 @@ public partial class App : System.Windows.Application
 
     private async Task ExecuteActionAsync(HotsonosAction action)
     {
+        // FreshStart re-discovers (SSDP) then regroups then shuffles, which can take
+        // several seconds; acknowledge the keypress immediately so it doesn't look ignored.
+        if (action == HotsonosAction.FreshStart && (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned))
+            EnsureFlyout().ShowAction("🔄 Fresh start: re-syncing…");
+
         try
         {
             var toast = await _sonos.ExecuteAsync(action, _settings);
@@ -236,7 +241,10 @@ public partial class App : System.Windows.Application
         }
 
         if (!_mainWindow.IsVisible)
+        {
             _mainWindow.Show();
+            _mainWindow.RefreshSpeakers();
+        }
         if (_mainWindow.WindowState == WindowState.Minimized)
             _mainWindow.WindowState = WindowState.Normal;
         _mainWindow.Activate();

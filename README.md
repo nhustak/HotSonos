@@ -17,7 +17,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 The headline feature. One action groups **every** speaker under a single coordinator and shuffle-plays your whole local Music Library. The shuffle order is randomized **client-side** (Sonos' own on-speaker shuffle mode reuses the same order for a given queue, so it never actually felt random) — HotSonos browses the full library, shuffles it fresh every time, and enqueues it pre-shuffled, so you get a genuinely different order on every trigger. Trigger it by **double-clicking the tray icon** or with a hotkey.
 
 ### 🔄 Restart fresh (re-sync + reshuffle)
-Re-discovers your speakers, force-regroups them all (which clears an out-of-sync state), and starts a brand-new shuffle. Use it when speakers drift apart. Available as a button in Settings, a tray item, and an optional hotkey.
+Re-discovers your speakers, force-regroups them all (which clears an out-of-sync state), and starts a brand-new shuffle. Use it when speakers drift apart. Available as a button in Settings, a tray item, and an optional hotkey. Since re-discovery + regroup + shuffle can take several seconds, the flyout immediately shows **"Fresh start: re-syncing…"** so the keypress never feels ignored, then updates once it's actually done.
 
 ### ⏯️ Transport hotkeys
 Global play/pause, next track, and previous track — from any app, anywhere.
@@ -39,7 +39,7 @@ HotSonos subscribes to Sonos topology events, so it knows the instant a speaker 
 - The room/group picker auto-refreshes on any grouping change
 
 ### 🎚️ Per-speaker volume in Settings
-Settings shows every discovered speaker with its own volume slider and mute checkbox, so you can see and adjust exact levels room-by-room instead of only the whole-house step hotkeys.
+Settings shows every discovered speaker with its own volume slider and mute checkbox, so you can see and adjust exact levels room-by-room instead of only the whole-house step hotkeys. The list re-reads live levels every time you reopen Settings, not just on first launch.
 
 ### 🌙 Nightly silent re-sync
 Optionally, once a night (default 3:00 AM), HotSonos silently regroups every speaker so you wake up to a synced system. **It never starts playback** — if anything is playing at that time, it skips entirely.

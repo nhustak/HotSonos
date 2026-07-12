@@ -157,6 +157,9 @@ public partial class MainWindow : Window
         _ = LoadSpeakerVolumesAsync();
     }
 
+    /// <summary>Re-reads every speaker's volume/mute; called each time the window is shown from the tray.</summary>
+    public void RefreshSpeakers() => _ = LoadSpeakerVolumesAsync();
+
     private async Task LoadSpeakerVolumesAsync()
     {
         SpeakersPanel.Children.Clear();
