@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using HotSonos.App.Infrastructure;
 using HotSonos.App.Models;
 
 namespace HotSonos.App.Services;
@@ -33,9 +34,10 @@ public sealed class ConfigStore
                     return settings.EnsureShape();
             }
         }
-        catch
+        catch (Exception ex)
         {
             // Corrupt/unreadable config falls back to defaults rather than crashing the app.
+            AppLog.Warn($"Config load failed; using defaults ({_path})", ex);
         }
 
         return AppSettings.CreateDefault();
@@ -43,11 +45,19 @@ public sealed class ConfigStore
 
     public void Save(AppSettings settings)
     {
-        var directory = System.IO.Path.GetDirectoryName(_path);
-        if (!string.IsNullOrWhiteSpace(directory))
-            Directory.CreateDirectory(directory);
+        try
+        {
+            var directory = System.IO.Path.GetDirectoryName(_path);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
 
-        var json = JsonSerializer.Serialize(settings.EnsureShape(), JsonOptions);
-        File.WriteAllText(_path, json);
+            var json = JsonSerializer.Serialize(settings.EnsureShape(), JsonOptions);
+            File.WriteAllText(_path, json);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error($"Config save failed ({_path})", ex);
+            throw;
+        }
     }
 }

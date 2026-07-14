@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using HotSonos.App.Infrastructure;
 using HotSonos.App.Models;
 using HotSonos.Core.Models;
 
@@ -114,10 +115,12 @@ public partial class NowPlayingFlyout : Window
             bmp.Freeze();
             ArtImage.Source = bmp;
         }
-        catch
+        catch (Exception ex)
         {
             if (generation == _artGeneration)
                 ArtImage.Source = null;
+            // Art is decorative; log at warn so flaky speakers do not spam ERROR.
+            AppLog.Warn($"Album art load failed ({uri})", ex);
         }
     }
 

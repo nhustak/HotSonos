@@ -1,3 +1,4 @@
+using HotSonos.App.Infrastructure;
 using HotSonos.App.Models;
 using HotSonos.Core;
 using HotSonos.Core.Models;
@@ -89,9 +90,10 @@ public sealed class SonosManager
             _topologySeen = true;
             TopologyChanged?.Invoke();
         }
-        catch
+        catch (Exception ex)
         {
             // A malformed topology push shouldn't disrupt anything.
+            AppLog.Warn("Topology event parse failed", ex);
         }
     }
 

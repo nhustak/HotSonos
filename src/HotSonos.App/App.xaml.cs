@@ -45,14 +45,22 @@ public partial class App : System.Windows.Application
         // (same approach as HotNotify). Slightly higher CPU than hardware render.
         RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
 
+        AppLog.Info($"Starting {AppVersion.DisplayName} (args: {string.Join(' ', e.Args)})");
+
         // A tray utility must survive stray errors (e.g. flaky album-art loads or
-        // event-callback hiccups) rather than vanish. Swallow + surface instead.
+        // event-callback hiccups) rather than vanish. Log + surface instead.
         DispatcherUnhandledException += (_, ex) =>
         {
             ex.Handled = true;
-            try { _tray?.ShowBalloon("HotSonos", $"Recovered from an error: {ex.Exception.Message}"); } catch { }
+            AppLog.Error("Dispatcher unhandled exception", ex.Exception);
+            try { _tray?.ShowBalloon("HotSonos", $"Recovered from an error: {ex.Exception.Message}"); }
+            catch (Exception balloonEx) { AppLog.Warn("Balloon after dispatcher error failed", balloonEx); }
         };
-        TaskScheduler.UnobservedTaskException += (_, ex) => ex.SetObserved();
+        TaskScheduler.UnobservedTaskException += (_, ex) =>
+        {
+            AppLog.Error("Unobserved task exception", ex.Exception);
+            ex.SetObserved();
+        };
 
         _store = new ConfigStore();
         _settings = _store.Load();
@@ -81,15 +89,32 @@ public partial class App : System.Windows.Application
                 PlayFavoriteSlot: slot => _ = ExecuteActionAsync(HotsonosAction.Favorite1 + slot),
                 LevelVolumes: () => _ = ExecuteActionAsync(HotsonosAction.LevelVolumes),
                 SetRoom: OnTraySetRoom,
+                OpenLogFolder: () => AppLog.OpenLogFolder(),
+                CopyDiagnostics: OnCopyDiagnostics,
                 Exit: ExitApplication));
 
-        ApplyBindings();
+        var failures = ApplyBindings();
+        if (failures.Count > 0)
+            AppLog.Warn($"Hotkey registration failed for: {string.Join(", ", failures)}");
 
         var launchedFromAutorun = e.Args.Any(a => string.Equals(a, WindowsStartupManager.AutorunArgument, StringComparison.OrdinalIgnoreCase));
         if (!launchedFromAutorun)
             ShowMainWindow(); // manual launches open Settings directly; Windows autorun stays silent in the tray
 
         _ = InitialDiscoveryAsync();
+    }
+
+    private void OnCopyDiagnostics()
+    {
+        if (AppLog.TryCopyRecentToClipboard())
+        {
+            AppLog.Info("Diagnostics copied to clipboard");
+            _tray.ShowBalloon("HotSonos", "Recent log copied to clipboard.");
+        }
+        else
+        {
+            _tray.ShowBalloon("HotSonos", "Could not copy diagnostics — open the log folder instead.");
+        }
     }
 
     private async Task InitialDiscoveryAsync()
@@ -99,10 +124,12 @@ public partial class App : System.Windows.Application
             await _sonos.RefreshAsync(_settings.ActiveRoom);
             _settings.ActiveRoom ??= _sonos.ActiveRoom;
             UpdateTrayDynamic();
+            AppLog.Info($"Initial discovery: {_sonos.Groups.Count} group(s), active={_settings.ActiveRoom ?? "(none)"}");
         }
-        catch
+        catch (Exception ex)
         {
             // Discovery failures are non-fatal; the user can Refresh from the tray.
+            AppLog.Warn("Initial discovery failed", ex);
         }
     }
 
@@ -128,9 +155,18 @@ public partial class App : System.Windows.Application
         if (target <= now)
             target = target.AddDays(1);
 
+        AppLog.Info($"Nightly reset scheduled for {target:yyyy-MM-dd HH:mm} (reshuffle={_settings.NightlyResetReshuffle})");
         _nightlyTimer = new System.Threading.Timer(async _ =>
         {
-            try { await _sonos.NightlyResetAsync(_settings.NightlyResetReshuffle); } catch { }
+            try
+            {
+                var status = await _sonos.NightlyResetAsync(_settings.NightlyResetReshuffle);
+                AppLog.Info($"Nightly reset: {status}");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Nightly reset failed", ex);
+            }
             await Dispatcher.InvokeAsync(ScheduleNightlyReset); // re-arm for tomorrow
         }, null, target - now, System.Threading.Timeout.InfiniteTimeSpan);
     }
@@ -160,6 +196,7 @@ public partial class App : System.Windows.Application
         {
             if (!await _actionGate.WaitAsync(0))
             {
+                AppLog.Info($"Ignored concurrent exclusive action: {action}");
                 if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                     EnsureFlyout().ShowAction("Busy — already re-syncing / shuffling…");
                 return;
@@ -179,12 +216,18 @@ public partial class App : System.Windows.Application
 
             try
             {
+                AppLog.Info($"Action {action}");
                 var toast = await _sonos.ExecuteAsync(action, _settings);
-                if (!string.IsNullOrEmpty(toast) && (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned))
-                    EnsureFlyout().ShowAction(toast!);
+                if (!string.IsNullOrEmpty(toast))
+                {
+                    AppLog.Info($"Action {action} → {toast}");
+                    if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                        EnsureFlyout().ShowAction(toast!);
+                }
             }
             catch (Exception ex)
             {
+                AppLog.Error($"Action {action} failed", ex);
                 EnsureFlyout().ShowAction($"Sonos error: {ex.Message}"); // errors always surface
             }
         }
@@ -214,9 +257,14 @@ public partial class App : System.Windows.Application
             if (isOnline)
             {
                 try { await _sonos.GroupAllSpeakersAsync(); }
-                catch { /* best-effort rejoin; still confirm it's back via balloon */ }
+                catch (Exception ex)
+                {
+                    // Best-effort rejoin; still confirm it's back via flyout.
+                    AppLog.Warn($"Rejoin after reconnect failed for {room}", ex);
+                }
             }
             var message = isOnline ? $"✓ {room} rejoined the group" : $"⚠️ {room} dropped off the network";
+            AppLog.Info(isOnline ? $"Speaker online: {room}" : $"Speaker offline: {room}");
             if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                 EnsureFlyout().ShowAction(message);
         });
@@ -246,6 +294,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
+            AppLog.Error("Tray refresh discovery failed", ex);
             _tray.ShowBalloon("HotSonos", $"Discovery failed: {ex.Message}");
         }
     }
@@ -299,15 +348,17 @@ public partial class App : System.Windows.Application
         {
             _store.Save(_settings);
         }
-        catch
+        catch (Exception ex)
         {
             // Non-fatal: a failed save just means the room choice isn't persisted.
+            AppLog.Error("Settings save failed", ex);
         }
     }
 
     private void ExitApplication()
     {
         _isExiting = true;
+        AppLog.Info("Exit requested");
 
         _nightlyTimer?.Dispose();
         _hotkeys?.Dispose();
@@ -320,13 +371,11 @@ public partial class App : System.Windows.Application
             {
                 var dispose = _sonos.DisposeEventsAsync().AsTask();
                 if (!dispose.Wait(TimeSpan.FromSeconds(2)))
-                {
-                    // Speaker unreachable or renew mid-flight; OS teardown finishes the rest.
-                }
+                    AppLog.Warn("Event dispose timed out after 2s on exit");
             }
-            catch
+            catch (Exception ex)
             {
-                // Non-fatal on exit.
+                AppLog.Warn("Event dispose on exit failed", ex);
             }
         }
 

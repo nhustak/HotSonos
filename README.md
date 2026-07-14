@@ -53,6 +53,7 @@ Targets are shown as Sonos groups (e.g. a group containing every player shows as
 - Four assignable "play a favorite/playlist" hotkey slots
 - Launching HotSonos manually opens **Settings** directly; launching via Windows autorun stays silent in the tray
 - The Settings window remembers its position and size between launches
+- **Diagnostics**: rolling logs under `%LocalAppData%\HotSonos\logs`; tray menu **Open log folder** / **Copy diagnostics**
 
 ---
 

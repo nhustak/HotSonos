@@ -112,7 +112,10 @@ public partial class MainWindow : Window
             _store.Save(_settings);
             _ = _applyBindings();
         }
-        catch { /* non-fatal */ }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Settings window close save failed", ex);
+        }
         base.OnClosing(e);
     }
 
@@ -177,8 +180,9 @@ public partial class MainWindow : Window
         {
             volumes = await _sonos.GetSpeakerVolumesAsync();
         }
-        catch
+        catch (Exception ex)
         {
+            AppLog.Warn("Speaker volume list load failed", ex);
             return; // Non-fatal: the user can Refresh once a speaker is reachable.
         }
 
@@ -241,7 +245,15 @@ public partial class MainWindow : Window
 
     private async Task CommitSpeakerVolumeAsync(string ip, int percent)
     {
-        try { await _sonos.SetSpeakerVolumeAsync(ip, percent); } catch { /* non-fatal; next Refresh will show the true value */ }
+        try
+        {
+            await _sonos.SetSpeakerVolumeAsync(ip, percent);
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal; next Refresh will show the true value.
+            AppLog.Warn($"Set speaker volume failed ({ip} → {percent}%)", ex);
+        }
     }
 
     private void PopulateRooms()
@@ -269,9 +281,10 @@ public partial class MainWindow : Window
             var favorites = await _sonos.GetFavoritesAsync();
             titles = favorites.Where(f => f.IsPlayable).Select(f => f.Title).ToList();
         }
-        catch
+        catch (Exception ex)
         {
             // Leave titles empty; the user can Refresh once a room is reachable.
+            AppLog.Warn("Favorites load failed", ex);
         }
 
         for (var i = 0; i < _favCombos.Length; i++)
@@ -308,6 +321,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            AppLog.Error("Settings refresh discovery failed", ex);
             SetStatus($"Discovery failed: {ex.Message}", warn: true);
         }
         finally
@@ -471,7 +485,14 @@ public partial class MainWindow : Window
 
     private void TrySaveLevelPercent()
     {
-        try { _store.Save(_settings); } catch { /* non-fatal */ }
+        try
+        {
+            _store.Save(_settings);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Level-percent save failed", ex);
+        }
     }
 
     private void StartWithWindows_Changed(object sender, RoutedEventArgs e)

@@ -44,7 +44,7 @@ Official Sonos **cloud Control API** was evaluated and rejected (OAuth + interne
 
 ### App shell
 - `App.xaml.cs` — single-instance mutex, tray bootstrap, exclusive gate for long actions
-- `Infrastructure/` — `TrayController`, `GlobalHotkeyManager`, `WindowsStartupManager`, `AppVersion`
+- `Infrastructure/` — `TrayController`, `GlobalHotkeyManager`, `WindowsStartupManager`, `AppVersion`, `AppLog`
 - `Services/` — `SonosManager`, `ConfigStore`
 - `Windows/` — Settings (`MainWindow`), `NowPlayingFlyout`
 
@@ -114,6 +114,12 @@ Device `SHUFFLE` mode is intentionally **not** used — it reuses a deterministi
 - Favorites list is **not** stored (read live from speakers)
 - Version single-sourced from `Directory.Build.props`
 
+### Diagnostics
+- Rolling daily logs at `%LocalAppData%\HotSonos\logs\hotsonos-yyyyMMdd.log` (7-day retention)
+- In-memory ring (last 500 lines) for **Copy diagnostics** tray action
+- Tray: **Open log folder** / **Copy diagnostics**
+- App still swallows non-fatal errors (must not vanish) but records them via `AppLog`
+
 ### Packaging
 - Per-user WiX MSI (no admin) → `%LocalAppData%\Programs\HotSonos`
 - Self-contained win-x64 publish; .NET runtime bundled
@@ -130,6 +136,7 @@ Device `SHUFFLE` mode is intentionally **not** used — it reuses a deterministi
 ## Engineering notes
 - **Action concurrency**: shuffle / fresh start use a non-blocking exclusive gate; other actions wait for the gate so they do not interleave with queue rebuilds
 - **GENA callback** listens on a local ephemeral port (`IPAddress.Any`); intended for trusted home LAN only
+- **Diagnostics**: file + ring buffer (`AppLog`); no third-party logging package
 - **Tests**: offline Core parser tests under `tests/`; live proof via Harness
 
 ## Decisions

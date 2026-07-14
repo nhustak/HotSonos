@@ -24,6 +24,8 @@ public sealed class TrayController : IDisposable
         Action<int> PlayFavoriteSlot,
         Action LevelVolumes,
         Action<string> SetRoom,
+        Action OpenLogFolder,
+        Action CopyDiagnostics,
         Action Exit);
 
     private readonly NotifyIcon _notifyIcon;
@@ -66,6 +68,9 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add(new ToolStripSeparator());
         _offlineItem = new ToolStripMenuItem("All speakers online") { Enabled = false };
         _menu.Items.Add(_offlineItem);
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add("Open log folder", null, (_, _) => _callbacks.OpenLogFolder());
+        _menu.Items.Add("Copy diagnostics", null, (_, _) => _callbacks.CopyDiagnostics());
         _menu.Items.Add("Exit", null, (_, _) => _callbacks.Exit());
 
         _trayIcon = TrayIconFactory.Create();
