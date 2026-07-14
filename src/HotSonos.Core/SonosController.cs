@@ -81,19 +81,35 @@ public sealed class SonosController
 
     private async Task<IReadOnlyList<SonosFavorite>> BrowseAsync(string objectId, SonosFavoriteKind kind, CancellationToken ct)
     {
-        var response = await _soap.InvokeAsync(
-            CoordinatorIp, SonosService.ContentDirectory, "Browse",
-            [
-                new("ObjectID", objectId),
-                new("BrowseFlag", "BrowseDirectChildren"),
-                new("Filter", "*"),
-                new("StartingIndex", "0"),
-                new("RequestedCount", "200"),
-                new("SortCriteria", ""),
-            ], ct).ConfigureAwait(false);
+        var favorites = new List<SonosFavorite>();
+        var startingIndex = 0;
 
-        var didl = SonosSoapClient.ReadValue(response, "Result");
-        return string.IsNullOrWhiteSpace(didl) ? [] : ParseFavorites(didl, kind);
+        while (true)
+        {
+            var response = await _soap.InvokeAsync(
+                CoordinatorIp, SonosService.ContentDirectory, "Browse",
+                [
+                    new("ObjectID", objectId),
+                    new("BrowseFlag", "BrowseDirectChildren"),
+                    new("Filter", "*"),
+                    new("StartingIndex", startingIndex.ToString()),
+                    new("RequestedCount", "200"),
+                    new("SortCriteria", ""),
+                ], ct).ConfigureAwait(false);
+
+            var didl = SonosSoapClient.ReadValue(response, "Result");
+            var numberReturned = int.Parse(SonosSoapClient.ReadValue(response, "NumberReturned") ?? "0");
+            var totalMatches = int.Parse(SonosSoapClient.ReadValue(response, "TotalMatches") ?? "0");
+
+            if (!string.IsNullOrWhiteSpace(didl))
+                favorites.AddRange(ParseFavorites(didl, kind));
+
+            startingIndex += numberReturned;
+            if (numberReturned == 0 || startingIndex >= totalMatches)
+                break;
+        }
+
+        return favorites;
     }
 
     /// <summary>Plays a favorite by its (case-insensitive) title. Throws if not found.</summary>

@@ -26,6 +26,9 @@ jobs:
       - name: Build
         run: dotnet build HotSonos.slnx --configuration Release --no-restore
 
+      - name: Test
+        run: dotnet test HotSonos.slnx --configuration Release --no-build --verbosity normal
+
       - name: Publish (self-contained win-x64)
         run: dotnet publish src/HotSonos.App/HotSonos.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/publish
 

@@ -104,8 +104,15 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        // Window is usually cancelled into a Hide-to-tray; still persist edits.
         CaptureWindowGeometry();
-        try { _store.Save(_settings); } catch { /* non-fatal */ }
+        try
+        {
+            CommitWorkingValuesToSettings();
+            _store.Save(_settings);
+            _ = _applyBindings();
+        }
+        catch { /* non-fatal */ }
         base.OnClosing(e);
     }
 
@@ -150,6 +157,7 @@ public partial class MainWindow : Window
         LevelPercentBox.Text = _settings.LevelVolumePercent.ToString();
         NightlyResetCheckBox.IsChecked = _settings.NightlyResetEnabled;
         NightlyResetTimeBox.Text = MinutesToHhmm(_settings.NightlyResetMinutes);
+        NightlyResetReshuffleCheckBox.IsChecked = _settings.NightlyResetReshuffle;
         LoadStartupPreference();
 
         PopulateRooms();
@@ -361,9 +369,57 @@ public partial class MainWindow : Window
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        CaptureWindowGeometry();
+        if (!CommitAndPersist(out var error, out var failures))
+        {
+            SetStatus(error!, warn: true);
+            return;
+        }
 
-        // Copy working values back into the live settings object.
+        if (failures.Count > 0)
+        {
+            SetStatus($"Saved, but these hotkeys are in use elsewhere: {string.Join(", ", failures)}", warn: true);
+            return;
+        }
+
+        SetStatus("Saved. Hotkeys are active.", warn: false);
+    }
+
+    private void HideButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Apply working hotkeys/checkboxes the same way as Save so Hide does not drop edits.
+        if (!CommitAndPersist(out var error, out _))
+            SetStatus(error!, warn: true);
+
+        HideToTrayRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Copies UI working state into <see cref="_settings"/>, writes JSON, and re-registers hotkeys.
+    /// </summary>
+    private bool CommitAndPersist(out string? error, out IReadOnlyList<HotsonosAction> failures)
+    {
+        error = null;
+        failures = [];
+        CaptureWindowGeometry();
+        CommitWorkingValuesToSettings();
+
+        try
+        {
+            _store.Save(_settings);
+        }
+        catch (Exception ex)
+        {
+            error = $"Could not save settings: {ex.Message}";
+            return false;
+        }
+
+        failures = _applyBindings();
+        return true;
+    }
+
+    /// <summary>Copies hotkey boxes, checkboxes, and combos into the live settings object.</summary>
+    private void CommitWorkingValuesToSettings()
+    {
         _settings.LevelVolumes = _levelVolumes;
         _settings.FreshStart = _freshStart;
         _settings.ShuffleLibrary = _shuffle;
@@ -382,6 +438,7 @@ public partial class MainWindow : Window
         _settings.NightlyResetEnabled = NightlyResetCheckBox.IsChecked == true;
         if (TryParseHhmm(NightlyResetTimeBox.Text, out var minutes))
             _settings.NightlyResetMinutes = minutes;
+        _settings.NightlyResetReshuffle = NightlyResetReshuffleCheckBox.IsChecked == true;
         if (RoomComboBox.SelectedItem is SonosGroup group)
             _settings.ActiveRoom = group.CoordinatorRoom;
 
@@ -389,34 +446,9 @@ public partial class MainWindow : Window
         {
             _settings.FavoriteSlots[i].Hotkey = _favHotkeys[i];
             var name = _favCombos[i].SelectedItem as string;
-            _settings.FavoriteSlots[i].FavoriteName = string.Equals(name, NoneLabel, StringComparison.Ordinal) ? null : name;
+            _settings.FavoriteSlots[i].FavoriteName =
+                string.Equals(name, NoneLabel, StringComparison.Ordinal) ? null : name;
         }
-
-        try
-        {
-            _store.Save(_settings);
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Could not save settings: {ex.Message}", warn: true);
-            return;
-        }
-
-        var failures = _applyBindings();
-        if (failures.Count > 0)
-        {
-            SetStatus($"Saved, but these hotkeys are in use elsewhere: {string.Join(", ", failures)}", warn: true);
-            return;
-        }
-
-        SetStatus("Saved. Hotkeys are active.", warn: false);
-    }
-
-    private void HideButton_Click(object sender, RoutedEventArgs e)
-    {
-        CaptureWindowGeometry();
-        try { _store.Save(_settings); } catch { /* non-fatal */ }
-        HideToTrayRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void FreshStartButton_Click(object sender, RoutedEventArgs e)

@@ -24,6 +24,7 @@ public partial class App : System.Windows.Application
     private NowPlaying? _lastNowPlaying;
     private MainWindow? _mainWindow;
     private System.Threading.Timer? _nightlyTimer;
+    private readonly SemaphoreSlim _actionGate = new(1, 1);
     private bool _isExiting;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -39,6 +40,9 @@ public partial class App : System.Windows.Application
         }
 
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        // Software rendering avoids GPU/driver glitches that can freeze or blank
+        // always-on tray utilities on some multi-monitor / hybrid-GPU setups
+        // (same approach as HotNotify). Slightly higher CPU than hardware render.
         RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
 
         // A tray utility must survive stray errors (e.g. flaky album-art loads or
@@ -126,7 +130,7 @@ public partial class App : System.Windows.Application
 
         _nightlyTimer = new System.Threading.Timer(async _ =>
         {
-            try { await _sonos.NightlyResetAsync(); } catch { }
+            try { await _sonos.NightlyResetAsync(_settings.NightlyResetReshuffle); } catch { }
             await Dispatcher.InvokeAsync(ScheduleNightlyReset); // re-arm for tomorrow
         }, null, target - now, System.Threading.Timeout.InfiniteTimeSpan);
     }
@@ -141,22 +145,52 @@ public partial class App : System.Windows.Application
 
     private async void OnHotkeyPressed(HotsonosAction action) => await ExecuteActionAsync(action);
 
+    /// <summary>
+    /// True for multi-second library work that must not stack (queue clear/enqueue races).
+    /// </summary>
+    private static bool IsExclusiveAction(HotsonosAction action) =>
+        action is HotsonosAction.ShuffleLibrary or HotsonosAction.FreshStart;
+
     private async Task ExecuteActionAsync(HotsonosAction action)
     {
-        // FreshStart re-discovers (SSDP) then regroups then shuffles, which can take
-        // several seconds; acknowledge the keypress immediately so it doesn't look ignored.
-        if (action == HotsonosAction.FreshStart && (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned))
-            EnsureFlyout().ShowAction("🔄 Fresh start: re-syncing…");
+        // Exclusive actions refuse re-entry immediately so a double hotkey cannot
+        // interleave two shuffles. Other actions wait their turn so volume/skip
+        // still run after a long shuffle finishes.
+        if (IsExclusiveAction(action))
+        {
+            if (!await _actionGate.WaitAsync(0))
+            {
+                if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                    EnsureFlyout().ShowAction("Busy — already re-syncing / shuffling…");
+                return;
+            }
+        }
+        else
+        {
+            await _actionGate.WaitAsync();
+        }
 
         try
         {
-            var toast = await _sonos.ExecuteAsync(action, _settings);
-            if (!string.IsNullOrEmpty(toast) && (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned))
-                EnsureFlyout().ShowAction(toast!);
+            // FreshStart re-discovers (SSDP) then regroups then shuffles, which can take
+            // several seconds; acknowledge the keypress immediately so it doesn't look ignored.
+            if (action == HotsonosAction.FreshStart && (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned))
+                EnsureFlyout().ShowAction("🔄 Fresh start: re-syncing…");
+
+            try
+            {
+                var toast = await _sonos.ExecuteAsync(action, _settings);
+                if (!string.IsNullOrEmpty(toast) && (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned))
+                    EnsureFlyout().ShowAction(toast!);
+            }
+            catch (Exception ex)
+            {
+                EnsureFlyout().ShowAction($"Sonos error: {ex.Message}"); // errors always surface
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            EnsureFlyout().ShowAction($"Sonos error: {ex.Message}"); // errors always surface
+            _actionGate.Release();
         }
     }
 
@@ -277,8 +311,27 @@ public partial class App : System.Windows.Application
 
         _nightlyTimer?.Dispose();
         _hotkeys?.Dispose();
-        _ = _sonos?.DisposeEventsAsync();
+
+        // Best-effort unsubscribe so speakers do not hold dead SIDs until timeout.
+        // Block briefly at process exit; do not hang forever if a speaker is offline.
+        if (_sonos is not null)
+        {
+            try
+            {
+                var dispose = _sonos.DisposeEventsAsync().AsTask();
+                if (!dispose.Wait(TimeSpan.FromSeconds(2)))
+                {
+                    // Speaker unreachable or renew mid-flight; OS teardown finishes the rest.
+                }
+            }
+            catch
+            {
+                // Non-fatal on exit.
+            }
+        }
+
         _flyout?.HardClose();
+        _actionGate.Dispose();
 
         if (_mainWindow is not null)
         {

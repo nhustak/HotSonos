@@ -123,6 +123,11 @@ dotnet run --project src/HotSonos.Harness -- --ip 192.168.1.50 playpause
 | `HotSonos.Core` | Platform-agnostic Sonos UPnP client (discovery, control, favorites, events) |
 | `HotSonos.App` | WPF tray app: hotkeys, settings, flyout, scheduler |
 | `HotSonos.Harness` | Console tester for the core library |
+| `HotSonos.Core.Tests` | Offline unit tests for topology/DIDL/notify parsers |
+
+```powershell
+dotnet test HotSonos.slnx
+```
 
 ---
 

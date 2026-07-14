@@ -17,9 +17,6 @@ public sealed class AppSettings
     /// <summary>Room/group the hotkeys target. Null until first discovery resolves one.</summary>
     public string? ActiveRoom { get; set; }
 
-    /// <summary>Show a brief now-playing toast when an action fires.</summary>
-    public bool ShowToast { get; set; } = true;
-
     /// <summary>Pop the Now-Playing flyout on every track change.</summary>
     public bool ShowFlyoutOnTrackChange { get; set; } = true;
 
@@ -67,6 +64,9 @@ public sealed class AppSettings
 
     /// <summary>Time of the nightly reset, as minutes since midnight (default 180 = 3:00 AM).</summary>
     public int NightlyResetMinutes { get; set; } = 180;
+
+    /// <summary>Also reshuffle (starts playback) after the nightly regroup, instead of only regrouping silently.</summary>
+    public bool NightlyResetReshuffle { get; set; }
 
     /// <summary>Exactly four favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
@@ -121,7 +121,6 @@ public sealed class AppSettings
     /// <summary>Sensible first-run defaults: Ctrl+Alt chords that rarely collide.</summary>
     public static AppSettings CreateDefault() => new AppSettings
     {
-        ShowToast = true,
         VolumeStep = 5,
         ShuffleLibrary = new HotkeyConfig { Control = true, Alt = true, Key = "F8" },
         PlayPause = new HotkeyConfig { Control = true, Alt = true, Key = "F9" },

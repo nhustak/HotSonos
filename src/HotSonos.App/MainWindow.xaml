@@ -177,7 +177,8 @@
                         <TextBlock Text="(24-hour, e.g. 03:00)" VerticalAlignment="Center" Margin="8,0,0,0"
                                    Foreground="#FF60707F" FontSize="11" />
                     </StackPanel>
-                    <TextBlock Text="Silently regroups every speaker so they start the day in sync. Skipped automatically if anything is playing — it will never start music on its own."
+                    <CheckBox x:Name="NightlyResetReshuffleCheckBox" Content="Also reshuffle the library (starts playback)" Margin="20,4,0,0" />
+                    <TextBlock Text="Regroups every speaker so they start the day in sync. Skipped automatically if anything is playing. Reshuffle is opt-in since it starts music on its own."
                                Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
                 </StackPanel>
 

@@ -23,13 +23,15 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(8) };
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly CancellationTokenSource _cts = new();
+    private readonly CancellationTokenSource _lifetimeCts = new();
 
     private TcpListener? _listener;
     private int _port;
     private string? _coordinatorIp;
     private readonly Dictionary<string, string> _sidByPath = []; // event path -> subscription id
-    private Timer? _renewTimer;
+    private CancellationTokenSource? _renewCts;
+    private Task? _renewLoop;
+    private bool _disposed;
 
     /// <summary>Raised (background thread) when the coordinator pushes a track/state change.</summary>
     public event Action<NowPlaying>? NowPlayingChanged;
@@ -44,34 +46,50 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
     /// </summary>
     public async Task SubscribeAsync(string coordinatorIp, CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            EnsureListenerStarted();
-
-            if (string.Equals(_coordinatorIp, coordinatorIp, StringComparison.OrdinalIgnoreCase) && _sidByPath.Count > 0)
-                return; // already subscribed to this coordinator
-
-            await UnsubscribeAllAsync().ConfigureAwait(false);
-
-            var localIp = LocalIpFor(coordinatorIp);
-            var callback = $"http://{localIp}:{_port}/notify";
-            foreach (var path in EventPaths)
-            {
-                var sid = await SendSubscribeAsync(coordinatorIp, path, callback, ct).ConfigureAwait(false);
-                if (sid is not null)
-                    _sidByPath[path] = sid;
-            }
-
-            if (_sidByPath.Count > 0)
-            {
-                _coordinatorIp = coordinatorIp;
-                ScheduleRenew();
-            }
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            await SubscribeCoreAsync(coordinatorIp, ct).ConfigureAwait(false);
         }
         finally
         {
             _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Must be called while holding <see cref="_gate"/>.
+    /// When <paramref name="manageRenewLoop"/> is false, the caller already owns
+    /// the renew loop (used from inside the loop after a failed renew) so we must
+    /// not stop/restart it — that would await the current task and deadlock.
+    /// </summary>
+    private async Task SubscribeCoreAsync(string coordinatorIp, CancellationToken ct, bool manageRenewLoop = true)
+    {
+        EnsureListenerStarted();
+
+        if (string.Equals(_coordinatorIp, coordinatorIp, StringComparison.OrdinalIgnoreCase) && _sidByPath.Count > 0)
+            return; // already subscribed to this coordinator
+
+        await ClearSubscriptionAsync(stopRenewLoop: manageRenewLoop).ConfigureAwait(false);
+
+        var localIp = LocalIpFor(coordinatorIp);
+        var callback = $"http://{localIp}:{_port}/notify";
+        foreach (var path in EventPaths)
+        {
+            ct.ThrowIfCancellationRequested();
+            var sid = await SendSubscribeAsync(coordinatorIp, path, callback, ct).ConfigureAwait(false);
+            if (sid is not null)
+                _sidByPath[path] = sid;
+        }
+
+        if (_sidByPath.Count > 0)
+        {
+            _coordinatorIp = coordinatorIp;
+            if (manageRenewLoop)
+                StartRenewLoop();
         }
     }
 
@@ -83,7 +101,7 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         _listener = new TcpListener(IPAddress.Any, 0);
         _listener.Start();
         _port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        _ = AcceptLoopAsync(_cts.Token);
+        _ = AcceptLoopAsync(_lifetimeCts.Token);
     }
 
     private async Task AcceptLoopAsync(CancellationToken ct)
@@ -237,8 +255,10 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         if (_coordinatorIp is null || _sidByPath.Count == 0)
             return false;
 
+        // Snapshot so we don't mutate while enumerating if something else races.
+        var snapshot = _sidByPath.ToArray();
         var allOk = true;
-        foreach (var (path, sid) in _sidByPath)
+        foreach (var (path, sid) in snapshot)
         {
             using var req = new HttpRequestMessage(new HttpMethod("SUBSCRIBE"), $"http://{_coordinatorIp}:1400{path}");
             req.Headers.TryAddWithoutValidation("SID", sid);
@@ -256,10 +276,11 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         return allOk;
     }
 
-    private async Task UnsubscribeAllAsync()
+    /// <summary>Must be called while holding <see cref="_gate"/> (or during dispose after cancel).</summary>
+    private async Task ClearSubscriptionAsync(bool stopRenewLoop)
     {
-        _renewTimer?.Dispose();
-        _renewTimer = null;
+        if (stopRenewLoop)
+            await StopRenewLoopAsync().ConfigureAwait(false);
 
         if (_coordinatorIp is null)
         {
@@ -267,7 +288,7 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
             return;
         }
 
-        foreach (var (path, sid) in _sidByPath)
+        foreach (var (path, sid) in _sidByPath.ToArray())
         {
             try
             {
@@ -285,22 +306,77 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         _coordinatorIp = null;
     }
 
-    private void ScheduleRenew()
+    /// <summary>
+    /// Starts a cancellable renew loop. Prefer this over <see cref="Timer"/> + async
+    /// callbacks: dispose can cancel cleanly and work always runs under <see cref="_gate"/>.
+    /// </summary>
+    private void StartRenewLoop()
     {
-        _renewTimer?.Dispose();
+        // Caller holds _gate; prior loop was stopped by ClearSubscriptionAsync(stopRenewLoop: true).
+        _renewCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        var ct = _renewCts.Token;
+        _renewLoop = RenewLoopAsync(ct);
+    }
+
+    private async Task RenewLoopAsync(CancellationToken ct)
+    {
         var half = TimeSpan.FromSeconds(SubscriptionSeconds / 2.0);
-        _renewTimer = new Timer(async _ =>
+        try
         {
-            if (!await RenewAsync(_cts.Token).ConfigureAwait(false))
+            using var timer = new PeriodicTimer(half);
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
-                var ip = _coordinatorIp;
-                if (ip is not null)
+                await _gate.WaitAsync(ct).ConfigureAwait(false);
+                try
                 {
-                    await UnsubscribeAllAsync().ConfigureAwait(false);
-                    await SubscribeAsync(ip).ConfigureAwait(false);
+                    if (_disposed || _coordinatorIp is null || _sidByPath.Count == 0)
+                        continue;
+
+                    if (await RenewAsync(ct).ConfigureAwait(false))
+                        continue;
+
+                    // Renew failed — re-subscribe without stopping this loop (manageRenewLoop: false).
+                    var ip = _coordinatorIp;
+                    await ClearSubscriptionAsync(stopRenewLoop: false).ConfigureAwait(false);
+                    if (!_disposed && ip is not null && !ct.IsCancellationRequested)
+                        await SubscribeCoreAsync(ip, ct, manageRenewLoop: false).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _gate.Release();
                 }
             }
-        }, null, half, half);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on dispose or coordinator change.
+        }
+        catch
+        {
+            // Keep the process alive; a later SubscribeAsync or restart recovers.
+        }
+    }
+
+    private async Task StopRenewLoopAsync()
+    {
+        var cts = _renewCts;
+        var loop = _renewLoop;
+        _renewCts = null;
+        _renewLoop = null;
+
+        if (cts is not null)
+        {
+            try { await cts.CancelAsync().ConfigureAwait(false); } catch { /* already disposed */ }
+        }
+
+        if (loop is not null)
+        {
+            try { await loop.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch { /* already observed in the loop */ }
+        }
+
+        cts?.Dispose();
     }
 
     private static IPAddress LocalIpFor(string coordinatorIp)
@@ -314,12 +390,27 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await _cts.CancelAsync().ConfigureAwait(false);
-        await UnsubscribeAllAsync().ConfigureAwait(false);
-        _listener?.Stop();
+        if (_disposed)
+            return;
+        _disposed = true;
+
+        await _lifetimeCts.CancelAsync().ConfigureAwait(false);
+
+        // Stop renew first (may be mid-tick waiting on gate), then unsubscribe.
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await ClearSubscriptionAsync(stopRenewLoop: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        try { _listener?.Stop(); } catch { /* ignore */ }
         _http.Dispose();
         _gate.Dispose();
-        _cts.Dispose();
+        _lifetimeCts.Dispose();
     }
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]

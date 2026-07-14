@@ -1,103 +1,141 @@
 # HotSonos — Specification
 
-> Status: **DRAFT / design** (2026-06-14). No code yet. Open questions at the bottom.
+> Status: **Implemented (v1.0+)** — kept in sync with the shipped app. Prefer this file and `README.md` over chat history when requirements conflict.
 
 ## Overview
-- **Platform**: Windows desktop only
-- **Framework**: .NET 10 (WPF + WinForms tray), mirrors the HotNotify utility
+- **Platform**: Windows desktop only (Windows 10/11 x64)
+- **Framework**: .NET 10 (WPF + WinForms tray)
 - **Purpose**: Control a Sonos system from global keyboard shortcuts — something the Sonos desktop/mobile apps do not offer
-- **Primary use case**: Hit a hotkey from anywhere (any app focused) to play/pause, skip, and launch a specific playlist/favorite, without alt-tabbing to the Sonos app
+- **Primary use case**: Hit a hotkey from anywhere to play/pause, skip, volume, and shuffle the whole local Music Library to every speaker, without alt-tabbing to the Sonos app
 - **Philosophy**: Tray-resident, local-only (no cloud, no account), instant response, practical over feature-complete
 
 ## Feasibility (confirmed)
-Sonos speakers expose a local UPnP/SOAP control server on **TCP port 1400**, discoverable via SSDP multicast (UDP 1900). This is the long-standing, undocumented-but-stable interface used by SoCo, node-sonos, and the official apps. No internet, OAuth, or developer registration required. Everything in scope maps to it:
+Sonos speakers expose a local UPnP/SOAP control server on **TCP port 1400**, discoverable via SSDP multicast (UDP 1900). No internet, OAuth, or developer registration required.
 
 | Feature | Local mechanism |
 |---|---|
 | Play / Pause | `AVTransport` SOAP action `Play` / `Pause` |
 | Next / Previous | `AVTransport` `Next` / `Previous` |
-| Play a Sonos Favorite | `ContentDirectory.Browse` of `FV:2` → `SetAVTransportURI` (with the favorite's resMD DIDL) → `Play` |
-| Play a Sonos Playlist (saved queue) | Separate container `SQ:`. The `file://` res is NOT playable on current firmware (returns 804/714). Correct method: enqueue the container via `x-rincon-playlist:{uuid}#SQ:N` (server expands), then play the queue — same pattern as the library shuffle. |
-| Shuffle whole Music Library | `x-rincon-playlist:{uuid}#A:TRACKS` enqueue + `SetPlayMode SHUFFLE` + play queue (see below) |
-| Volume up/down/mute (stretch) | `RenderingControl` `SetRelativeVolume` / `SetMute` |
-| Current track / state display | `AVTransport.GetTransportInfo` + `GetPositionInfo` |
+| Play a Sonos Favorite | `ContentDirectory.Browse` of `FV:2` → `SetAVTransportURI` + `Play` |
+| Play a Sonos Playlist (saved queue) | Browse `SQ:` → enqueue via `x-rincon-playlist:{uuid}#SQ:N` → play queue |
+| Shuffle whole Music Library | Browse `A:TRACKS` client-side, Fisher-Yates shuffle, batch `AddMultipleURIsToQueue`, play queue in `NORMAL` mode |
+| Volume up/down/mute | Per-member `RenderingControl` (group write actions 803 on systems with fixed-volume members) |
+| Level all speakers | Absolute `SetVolume` + unmute on every visible player |
+| Current track / state | GENA AVTransport events (`LastChange`); fallback SOAP if needed |
+| Topology / drop detection | GENA ZoneGroupTopology events |
 
-The official Sonos **cloud Control API** was evaluated and rejected: it requires OAuth + internet round-trips, adding latency and a failure mode that is unacceptable for a hotkey utility.
+Official Sonos **cloud Control API** was evaluated and rejected (OAuth + internet latency).
 
 ## Architecture
 
-### Sonos control layer (decision: roll our own thin UPnP client)
-A small, self-contained UPnP/SOAP client (~300 LOC) rather than a NuGet dependency.
-- **Rejected** `ByteDev.Sonos` (last updated 2021, .NET Standard 2.0, weak favorites support).
-- **Rejected** `Sonos.Base` / `sonos-net` (targets .NET 10, actively maintained by svrooij, but author labels it "far from complete, just an experiment").
-- Rolling our own keeps zero dependency risk and gives full control over the favorites/playlist flow, which is the headline feature. The SOAP envelopes are stable and well documented (SoCo wiki).
+### Projects
+| Project | Role |
+|---|---|
+| `src/HotSonos.Core` | Platform-agnostic UPnP/SOAP client (discovery, transport, favorites, GENA). No WPF. |
+| `src/HotSonos.App` | WPF tray app: hotkeys, settings, flyout, nightly reset |
+| `src/HotSonos.Harness` | Console harness against live speakers |
+| `tests/HotSonos.Core.Tests` | Offline unit tests for parsers / playability |
 
-Components:
-- **`SonosDiscovery`** — SSDP `M-SEARCH` to discover speakers + coordinators; parses `http://{ip}:1400/xml/device_description.xml` for room names, zone/group topology.
-- **`SonosDevice`** — wraps SOAP calls to one speaker (AVTransport, ContentDirectory, RenderingControl).
-- **`SonosController`** — high-level intents (PlayPause, Next, Previous, PlayFavorite(name)); resolves which group/coordinator to target.
-- **`SonosFavoritesService`** — browses `FV:2`, caches the list of favorites/playlists for the picker and for hotkey binding by name.
+### Core components
+- **`SonosDiscovery`** — SSDP `M-SEARCH` **per usable IPv4 interface** (multi-homed safe), then full topology via `GetZoneGroupState`
+- **`SonosSoapClient`** — thin SOAP envelope POST to `http://{ip}:1400{controlPath}`
+- **`SonosController`** — high-level intents against one group coordinator
+- **`SonosEventSubscriber`** — GENA SUBSCRIBE + local TCP callback listener; renew loop via `PeriodicTimer`
 
-### App shell (mirrors HotNotify layout)
-- `App.xaml` / `App.xaml.cs` — single-instance, tray bootstrap
-- `Infrastructure/` — `TrayController`, `AppVersion`, `WindowsStartupManager`, **`GlobalHotkeyManager`**
-- `Services/` — `SonosController`, `SonosDiscovery`, `SonosFavoritesService`, `ConfigStore`
-- `Models/` — `SonosZone`, `SonosFavorite`, `HotkeyBinding`, `AppSettings`
-- `Windows/` — main settings window (hotkey editor + zone picker), optional now-playing toast
+### App shell
+- `App.xaml.cs` — single-instance mutex, tray bootstrap, exclusive gate for long actions
+- `Infrastructure/` — `TrayController`, `GlobalHotkeyManager`, `WindowsStartupManager`, `AppVersion`
+- `Services/` — `SonosManager`, `ConfigStore`
+- `Windows/` — Settings (`MainWindow`), `NowPlayingFlyout`
 
 ### Global hotkeys
-Win32 `RegisterHotKey` / `WM_HOTKEY` via a message-only `HwndSource` (standard WPF approach, same process model as HotNotify's tray hooks). Each binding = modifier mask + virtual key + an action (PlayPause / Next / Previous / PlayFavorite[favoriteName]). Conflicts surfaced in the editor when registration fails.
+Win32 `RegisterHotKey` / `WM_HOTKEY` via a message-only `HwndSource`. Conflicts surface when registration fails.
 
-## Core features
+## Core features (shipped)
 
-### System tray application
-- Runs in the system tray with a custom HotSonos icon
-- Shows app version in tooltip and at top of context menu
-- Right-click menu: Open HotSonos · Play/Pause · Next · Previous · (target room submenu) · Exit
-- Optionally launches at Windows startup
+### System tray
+- Custom icon; version in tooltip and menu
+- Right-click: Open HotSonos, refresh, transport, volume, room submenu, favorites, offline indicator, Exit
+- Double-click tray = shuffle library to all speakers
+- Optional Start with Windows (`HKCU\...\Run` with `--autorun`; autorun stays silent in tray)
 
-### Hotkeys
-- Default bindings (user-editable):
-  - **🔀 Shuffle Music Library (Ctrl+Alt+F8) — the primary action.** Shuffle-plays the entire local Music Library on the active group. This is what the user wants ~99.9% of the time.
-  - Play/Pause (Ctrl+Alt+F9), Previous (F10), Next (F11) — global media-style shortcuts
-  - **4 "Play favorite" slots** (decided), each bound to a chosen Sonos Favorite/Playlist, all targeting the single active room/group
+### Hotkeys (defaults)
+| Action | Default |
+|---|---|
+| Shuffle Music Library → all speakers | Ctrl+Alt+F8 |
+| Play / Pause | Ctrl+Alt+F9 |
+| Previous / Next | Ctrl+Alt+F10 / F11 |
+| Volume up / down / mute | Ctrl+Alt+↑ / ↓ / M |
+| Level all / Fresh start / 4 favorite slots | Unassigned |
 
-### Music Library shuffle (primary feature)
-- **The shuffle key first groups ALL speakers** under the active coordinator (each visible player gets `SetAVTransportURI` `x-rincon:{coordinatorUuid}`), then shuffles — guaranteeing whole-house playback even if a room was ungrouped. The user wants "all speakers" ~99.9% of the time.
-- The Music Library (`A:` containers) "all tracks" container is `A:TRACKS`, enqueued in a **single** `AddURIToQueue` call via `x-rincon-playlist:{coordinatorUuid}#A:TRACKS` (server expands it — no track-by-track). Then `SetPlayMode SHUFFLE`, point transport at `x-rincon-queue:{uuid}#0`, and Play.
-- Verified live: enqueued 1,719 tracks in one call and shuffle-played; group-join command verified.
-- Play/Pause and Next then control the whole grouped house (commands route to the coordinator).
-- Editor lets the user capture a key chord, pick an action, and (for favorites) pick from the discovered favorites list
-- Registration conflicts reported inline
+### Music Library shuffle (primary)
+1. Group **all** visible players under the active coordinator (`SetAVTransportURI` `x-rincon:{uuid}`)
+2. Browse full `A:TRACKS` (paginated), client-side Fisher-Yates shuffle
+3. Clear queue; enqueue pre-shuffled tracks in batches of 16 via `AddMultipleURIsToQueue`
+4. Point transport at `x-rincon-queue:{uuid}#0`, `SetPlayMode NORMAL`, Play
 
-### Target zone selection
-- Sonos is multi-room; commands must target a **group coordinator**
-- User picks a default "active room/group"; tray submenu allows quick switching
-- Transport commands route to that group's coordinator
+Device `SHUFFLE` mode is intentionally **not** used — it reuses a deterministic order for a given queue content.
 
-### Now-playing feedback (v1 — decided in)
-- Brief topmost toast on action ("▶ Playing: <track>" / "Playlist: <name>"), auto-dismiss
-- Reuses HotNotify's popup styling
+**Fresh start**: re-discover + regroup + shuffle. Immediate flyout “re-syncing…” feedback. Exclusive with concurrent shuffle (second press shows Busy).
 
-### Configuration / data storage
-- **JSON file** at `%LocalAppData%\HotSonos\settings.json` (decided — simpler than HotNotify's SQLite for this small config), holding:
-  - Default zone (room name + UUID; re-resolve IP on launch since DHCP)
-  - Hotkey bindings (modifier, key, action, favorite name)
-  - **4 "play favorite" slots** (decided)
-  - Launch-at-startup flag, toast on/off
-- Favorites are read live from the speaker, not stored
+### Favorites / playlists
+- Four hotkey slots, all targeting the active room/group
+- Favorites (`FV:2`): require a non-empty playable `<res>` URI
+- Playlists (`SQ:`): playable by **container id** even when `<res>` is empty or `file://`
+- Browse is paginated (200/page)
+
+### Target zone
+- Commands route to the group **coordinator**
+- Groups labeled like the Sonos app (“All Speakers”, “Kitchen + 2”, …)
+- Tray submenu switches active group; room name persisted in settings
+
+### Now-playing flyout
+- Custom topmost card (not OS toast): art + title + artist + state/action line
+- Draggable (position saved), pinnable, independent toggles for track-change vs action
+- Connectivity messages (drop / rejoin) also use the flyout
+
+### Live speaker monitoring
+- Topology GENA: offline indicator, drop/rejoin messages
+- Reconnected speakers auto-rejoined to the active group
+- First topology snapshot does not fire “just dropped” alerts for already-offline rooms
+
+### Volume
+- Whole-group relative step + mute (per-member writes)
+- Level-all to configurable absolute % (skips/fails fixed-volume devices; toast counts successes)
+- Per-speaker sliders in Settings (refreshed when Settings reopens)
+
+### Nightly silent re-sync
+- Optional (default 3:00 AM local): re-discover + regroup if **nothing** is playing
+- Optional reshuffle (starts playback) — off by default
+- Only while PC is awake and HotSonos is running
+
+### Configuration
+- JSON at `%LocalAppData%\HotSonos\settings.json`
+- Favorites list is **not** stored (read live from speakers)
+- Version single-sourced from `Directory.Build.props`
+
+### Packaging
+- Per-user WiX MSI (no admin) → `%LocalAppData%\Programs\HotSonos`
+- Self-contained win-x64 publish; .NET runtime bundled
+- CI: build + MSI artifact; release workflow tags MSI as `HotSonos-x.y.z.msi`
 
 ## Out of scope (v1)
-- Grouping/ungrouping rooms, stereo pairing
-- Volume EQ, sleep timers, alarms
-- Streaming-service auth or search (we only launch existing favorites/playlists)
+- Manual multi-room grouping UI / stereo pairing editor
+- EQ, sleep timers, alarms
+- Streaming-service auth or search
 - Cloud Control API
 - Non-Windows platforms
+- Code-signed MSI (SmartScreen may warn)
 
-## Decisions (2026-06-14)
-- **Config store**: JSON file at `%LocalAppData%\HotSonos\settings.json`.
-- **Favorite hotkey slots**: 4, all targeting a single configured active room/group (tray menu can switch the active room).
-- **Now-playing toast**: in for v1 (reuse HotNotify popup styling).
+## Engineering notes
+- **Action concurrency**: shuffle / fresh start use a non-blocking exclusive gate; other actions wait for the gate so they do not interleave with queue rebuilds
+- **GENA callback** listens on a local ephemeral port (`IPAddress.Any`); intended for trusted home LAN only
+- **Tests**: offline Core parser tests under `tests/`; live proof via Harness
 
-## Remaining open question
-- **Speaker generation**: confirm units are Sonos S2 (current app). Local UPnP works across S1/S2; just worth confirming no newer-firmware unit behaves differently before Phase 1 testing.
+## Decisions
+- Config: JSON file (not SQLite)
+- Four favorite slots, one active room/group
+- Client-side library shuffle (not device SHUFFLE)
+- Now-playing custom flyout (not Windows toast balloons for track feedback)
+- Hand-rolled UPnP client (no third-party Sonos NuGet)
+- No cloud dependency

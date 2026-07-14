@@ -4,4 +4,7 @@
     <Project Path="src/HotSonos.Core/HotSonos.Core.csproj" />
     <Project Path="src/HotSonos.Harness/HotSonos.Harness.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HotSonos.Core.Tests/HotSonos.Core.Tests.csproj" />
+  </Folder>
 </Solution>

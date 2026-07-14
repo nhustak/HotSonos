@@ -38,8 +38,12 @@ public sealed record SonosFavorite
     public required string Metadata { get; init; }
 
     /// <summary>
-    /// True when this favorite can be started directly via SetAVTransportURI.
-    /// Shortcut/container favorites with no &lt;res&gt; are not directly playable.
+    /// True when HotSonos can start this entry. Favorites need a playable &lt;res&gt;
+    /// URI (SetAVTransportURI). Playlists are started by container id
+    /// (x-rincon-playlist), so they only need a non-empty <see cref="Id"/> —
+    /// their &lt;res&gt; is often empty or a non-playable file:// path.
     /// </summary>
-    public bool IsPlayable => !string.IsNullOrWhiteSpace(Uri);
+    public bool IsPlayable => Kind == SonosFavoriteKind.Playlist
+        ? !string.IsNullOrWhiteSpace(Id)
+        : !string.IsNullOrWhiteSpace(Uri);
 }

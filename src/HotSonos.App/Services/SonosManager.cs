@@ -224,17 +224,19 @@ public sealed class SonosManager
 
     /// <summary>
     /// Sets EVERY visible speaker (across all groups) to the same absolute volume
-    /// and unmutes them, so the whole house plays at one level. Returns the count.
+    /// and unmutes them, so the whole house plays at one level. Returns the count
+    /// of speakers that accepted the change (fixed-volume members are not counted).
     /// </summary>
     public async Task<int> LevelAllVolumesAsync(int percent, CancellationToken ct = default)
     {
         percent = Math.Clamp(percent, 0, 100);
         var ips = _zones.Select(z => z.IpAddress).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        await Task.WhenAll(ips.Select(ip => SetMemberVolumeAsync(ip, percent, ct))).ConfigureAwait(false);
-        return ips.Count;
+        var results = await Task.WhenAll(ips.Select(ip => SetMemberVolumeAsync(ip, percent, ct))).ConfigureAwait(false);
+        return results.Count(ok => ok);
     }
 
-    private async Task SetMemberVolumeAsync(string ip, int percent, CancellationToken ct)
+    /// <returns>True when the speaker accepted the volume (and unmute) change.</returns>
+    private async Task<bool> SetMemberVolumeAsync(string ip, int percent, CancellationToken ct)
     {
         try
         {
@@ -242,10 +244,12 @@ public sealed class SonosManager
                 [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredVolume", percent.ToString())], ct).ConfigureAwait(false);
             await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetMute",
                 [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredMute", "0")], ct).ConfigureAwait(false);
+            return true;
         }
         catch
         {
             // Fixed-volume members (Sub/Port/Amp line-out) reject volume changes; ignore them.
+            return false;
         }
     }
 
@@ -409,10 +413,12 @@ public sealed class SonosManager
 
     /// <summary>
     /// Nightly maintenance: re-discover, and if NOTHING is playing anywhere,
-    /// silently regroup every speaker under one coordinator (no playback).
-    /// Returns a short status describing what happened.
+    /// silently regroup every speaker under one coordinator. With
+    /// <paramref name="reshuffle"/>, also starts a fresh library shuffle
+    /// afterward (this is the one case where the nightly reset starts
+    /// playback — opt-in only). Returns a short status describing what happened.
     /// </summary>
-    public async Task<string> NightlyResetAsync(CancellationToken ct = default)
+    public async Task<string> NightlyResetAsync(bool reshuffle, CancellationToken ct = default)
     {
         await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
         if (_controller is null)
@@ -422,7 +428,12 @@ public sealed class SonosManager
             return "skipped — music is playing";
 
         await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
-        return "regrouped all speakers";
+
+        if (!reshuffle)
+            return "regrouped all speakers";
+
+        await _controller.ShuffleMusicLibraryAsync(ct).ConfigureAwait(false);
+        return "regrouped + reshuffled all speakers";
     }
 
     /// <summary>True if any group coordinator is currently playing or mid-transition.</summary>
