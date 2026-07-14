@@ -2,8 +2,11 @@
 
 [![build](https://github.com/nhustak/HotSonos/actions/workflows/build.yml/badge.svg)](https://github.com/nhustak/HotSonos/actions/workflows/build.yml)
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
+[![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts.
+**Version 1.0.0.5** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml)
+
+Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
 HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/SOAP) — no cloud, no Sonos account, no internet round-trips. It lives in the system tray and gives you instant, global hotkeys for the things the Sonos apps make you click through: shuffle your whole library to every speaker, play/pause, skip, and whole-house volume — plus a live now-playing flyout and automatic speaker re-sync.
 
@@ -76,15 +79,18 @@ All shortcuts are re-bindable in **Settings** (right-click the tray icon → *Op
 
 ## Install
 
-Download the latest **`HotSonos-x.y.z.msi`** from the [Releases page](https://github.com/nhustak/HotSonos/releases) and run it. It's a **per-user** install (no admin/UAC) to `%LocalAppData%\Programs\HotSonos`, with a Start Menu shortcut, and the .NET runtime is bundled — nothing else to install. Uninstall any time from **Settings → Apps**.
+Download the latest **`HotSonos-x.y.z.msi`** from the [Releases page](https://github.com/nhustak/HotSonos/releases/latest) and run it. It's a **per-user** install (no admin/UAC) to `%LocalAppData%\Programs\HotSonos`, with a Start Menu shortcut, and the .NET runtime is bundled — nothing else to install. Uninstall any time from **Settings → Apps**.
 
 > The MSI is **unsigned**, so Windows SmartScreen may show an "unknown publisher" prompt on first run — choose **More info → Run anyway**. (Code signing requires a paid certificate.)
+
+Each [GitHub Release](https://github.com/nhustak/HotSonos/releases) is produced by CI when a version tag (`v*`) is pushed. Pushes to `master` run [build + test + MSI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) and upload the MSI as a workflow artifact.
 
 ## Requirements
 
 - Windows 10 or 11
-- [.NET 10 SDK](https://dotnet.microsoft.com/download) (to build) or the .NET 10 Desktop Runtime (to run)
 - One or more Sonos players (S1 or S2) on the same local network
+- To **install** from Releases: nothing else (self-contained MSI)
+- To **build** from source: [.NET 10 SDK](https://dotnet.microsoft.com/download)
 
 ---
 
@@ -94,6 +100,7 @@ Download the latest **`HotSonos-x.y.z.msi`** from the [Releases page](https://gi
 git clone https://github.com/nhustak/HotSonos.git
 cd HotSonos
 dotnet build HotSonos.slnx
+dotnet test HotSonos.slnx
 dotnet run --project src/HotSonos.App
 ```
 
@@ -109,15 +116,6 @@ dotnet run --project src/HotSonos.Harness -- --room "Living Room" shuffle
 dotnet run --project src/HotSonos.Harness -- --ip 192.168.1.50 playpause
 ```
 
----
-
-## How it works
-
-- **Discovery** — SSDP `M-SEARCH` across every active network interface (important on multi-homed PCs where a single probe goes out the wrong adapter), then the full zone/group topology is resolved from any one responding player.
-- **Control** — SOAP calls to each speaker on TCP port `1400` (`AVTransport`, `RenderingControl`/`GroupRenderingControl`, `ContentDirectory`, `ZoneGroupTopology`). Commands are routed to the group **coordinator**.
-- **Library shuffle** — the full `A:TRACKS` container is browsed client-side, shuffled fresh on every trigger, and enqueued pre-shuffled in batches via `AddMultipleURIsToQueue`, then played in `NORMAL` mode (the device's own `SHUFFLE` mode reuses the same order for a given queue, so it's not used).
-- **Live updates** — UPnP **GENA** event subscriptions (a local TCP HTTP listener receives `NOTIFY` callbacks; subscriptions auto-renew) for AVTransport (now-playing) and ZoneGroupTopology (grouping/drops).
-
 ### Project layout
 | Project | Purpose |
 |---|---|
@@ -126,9 +124,17 @@ dotnet run --project src/HotSonos.Harness -- --ip 192.168.1.50 playpause
 | `HotSonos.Harness` | Console tester for the core library |
 | `HotSonos.Core.Tests` | Offline unit tests for topology/DIDL/notify parsers |
 
-```powershell
-dotnet test HotSonos.slnx
-```
+Product version is single-sourced in `Directory.Build.props` (app, tests, and MSI share it). Release tags override it with `-p:Version=…` so the published MSI matches the tag.
+
+---
+
+## How it works
+
+- **Discovery** — SSDP `M-SEARCH` across every active network interface (important on multi-homed PCs where a single probe goes out the wrong adapter), then the full zone/group topology is resolved from any one responding player.
+- **Control** — SOAP calls to each speaker on TCP port `1400` (`AVTransport`, `RenderingControl`/`GroupRenderingControl`, `ContentDirectory`, `ZoneGroupTopology`). Commands are routed to the group **coordinator**.
+- **Library shuffle** — the full `A:TRACKS` container is browsed client-side, shuffled fresh on every trigger, and enqueued pre-shuffled in batches via `AddMultipleURIsToQueue`, then played in `NORMAL` mode (the device's own `SHUFFLE` mode reuses the same order for a given queue, so it's not used).
+- **Live updates** — UPnP **GENA** event subscriptions (a local TCP HTTP listener receives `NOTIFY` callbacks; subscriptions auto-renew) for AVTransport (now-playing) and ZoneGroupTopology (grouping/drops).
+- **Diagnostics** — rolling daily logs under `%LocalAppData%\HotSonos\logs` (7-day retention); tray **Open log folder** / **Copy diagnostics**.
 
 ---
 
@@ -136,8 +142,24 @@ dotnet test HotSonos.slnx
 
 - HotSonos only **sends commands** — it can't cause speakers to fall out of sync. Persistent out-of-sync or a speaker repeatedly dropping is almost always a **wireless/signal issue** on that unit; wiring one nearby Sonos to ethernet (forming SonosNet) usually steadies the area. The "Restart fresh" and nightly re-sync features are the practical cure for a drifted group.
 - The nightly re-sync only fires while the **PC is awake and HotSonos is running**; if the machine is asleep at the scheduled time it simply runs the next night.
-- Playing a saved **Sonos Playlist** uses the same single-call container-enqueue method the library shuffle used to use. (Empty playlists have nothing to play.)
-- Because library shuffle now browses and re-enqueues the whole library client-side for a genuinely fresh order, it takes a bit longer to start than a plain "play" action on very large libraries (thousands of tracks) — a one-time cost per trigger, not a hang.
+- Playing a saved **Sonos Playlist** uses container enqueue (`x-rincon-playlist`) by playlist id — playable even when Sonos leaves `<res>` empty or as a non-playable `file://` path. (Empty playlists have nothing to play.)
+- Because library shuffle browses and re-enqueues the whole library client-side for a genuinely fresh order, it takes a bit longer to start than a plain "play" action on very large libraries (thousands of tracks) — a one-time cost per trigger, not a hang. Overlapping shuffle / Fresh Start is rejected with a busy notice so two queue rebuilds never interleave.
+- The GENA callback listener is for a **trusted home LAN** only (local ephemeral port).
+
+---
+
+## Changelog
+
+### 1.0.0.5
+- **Diagnostics**: rolling logs + tray **Open log folder** / **Copy diagnostics**
+- Playlist hotkeys: playlists bind/play by container id (not only `<res>` URI)
+- Safer long actions: exclusive gate for shuffle / Fresh Start
+- Hardened GENA subscription renew/dispose; paginated favorites browse
+- Settings Hide/close persists hotkey edits; level-all reports successful speaker count
+- Core unit tests + CI test step; shipped `spec.md` brought in line with the app
+
+### 1.0.0.4
+- Immediate Fresh Start flyout feedback; live-refreshing per-speaker volume list in Settings
 
 ---
 
