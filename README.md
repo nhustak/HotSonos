@@ -4,7 +4,7 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.5** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml)
+**Version 1.0.0.6** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
@@ -46,6 +46,9 @@ Settings shows every discovered speaker with its own volume slider and mute chec
 
 ### 🌙 Nightly silent re-sync
 Optionally, once a night (default 3:00 AM), HotSonos silently regroups every speaker so you wake up to a synced system. **It never starts playback** — if anything is playing at that time, it skips entirely.
+
+### ☀️ Wake to music
+A gentle alarm clock for Sonos. On the days you choose, at a set time, HotSonos starts music on a **selected room** at a low volume and **steps the volume up** on an interval until a target. Play source is either a **library shuffle** or a **favorite/playlist**. Optionally, when the ramp finishes, it **expands to every speaker** and starts a **full library shuffle**. Requires the PC to be awake with HotSonos running. Cancel mid-ramp from the tray (**Stop wake / volume ramp**) or by using a volume hotkey.
 
 ### 🎚️ Group-aware room picker
 Targets are shown as Sonos groups (e.g. a group containing every player shows as **"All Speakers"**). Commands route to the group coordinator automatically.
@@ -149,6 +152,10 @@ Product version is single-sourced in `Directory.Build.props` (app, tests, and MS
 ---
 
 ## Changelog
+
+### 1.0.0.6
+- **Wake to music**: day/time schedule, per-room start, volume ramp (start/end/step/interval), favorite or shuffle, optional whole-house expand + full library shuffle at end of ramp
+- Tray **Stop wake / volume ramp**; volume hotkeys cancel an in-progress ramp
 
 ### 1.0.0.5
 - **Diagnostics**: rolling logs + tray **Open log folder** / **Copy diagnostics**

@@ -180,6 +180,64 @@
                     <CheckBox x:Name="NightlyResetReshuffleCheckBox" Content="Also reshuffle the library (starts playback)" Margin="20,4,0,0" />
                     <TextBlock Text="Regroups every speaker so they start the day in sync. Skipped automatically if anything is playing. Reshuffle is opt-in since it starts music on its own."
                                Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+
+                    <TextBlock Text="Wake to music" Style="{StaticResource SectionHeader}" />
+                    <CheckBox x:Name="WakeEnabledCheckBox" Content="Enable wake to music" Margin="0,2" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6">
+                        <TextBlock Text="Time" VerticalAlignment="Center" Width="70" />
+                        <TextBox x:Name="WakeTimeBox" Width="60" Padding="6,2" VerticalContentAlignment="Center" />
+                        <TextBlock Text="(24-hour, e.g. 07:00)" VerticalAlignment="Center" Margin="8,0,0,0"
+                                   Foreground="#FF60707F" FontSize="11" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock Text="Days" VerticalAlignment="Center" Width="70" />
+                        <CheckBox x:Name="WakeDaySu" Content="Su" Margin="0,0,8,0" />
+                        <CheckBox x:Name="WakeDayMo" Content="Mo" Margin="0,0,8,0" />
+                        <CheckBox x:Name="WakeDayTu" Content="Tu" Margin="0,0,8,0" />
+                        <CheckBox x:Name="WakeDayWe" Content="We" Margin="0,0,8,0" />
+                        <CheckBox x:Name="WakeDayTh" Content="Th" Margin="0,0,8,0" />
+                        <CheckBox x:Name="WakeDayFr" Content="Fr" Margin="0,0,8,0" />
+                        <CheckBox x:Name="WakeDaySa" Content="Sa" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6">
+                        <TextBlock Text="Room" VerticalAlignment="Center" Width="70" />
+                        <ComboBox x:Name="WakeRoomComboBox" Width="220" Height="28" VerticalContentAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6">
+                        <TextBlock Text="Play" VerticalAlignment="Center" Width="70" />
+                        <ComboBox x:Name="WakeSourceComboBox" Width="220" Height="28" VerticalContentAlignment="Center"
+                                  SelectionChanged="WakeSourceComboBox_SelectionChanged" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6">
+                        <TextBlock Text="Favorite" VerticalAlignment="Center" Width="70" />
+                        <ComboBox x:Name="WakeFavoriteComboBox" Width="220" Height="28" VerticalContentAlignment="Center" />
+                    </StackPanel>
+                    <Grid Margin="0,6,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="70" />
+                            <ColumnDefinition Width="60" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="70" />
+                            <ColumnDefinition Width="60" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Start %" VerticalAlignment="Center" Margin="0,4" />
+                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="WakeStartVolumeBox" Padding="6,2" Margin="0,4" />
+                        <TextBlock Grid.Row="0" Grid.Column="3" Text="End %" VerticalAlignment="Center" Margin="0,4" />
+                        <TextBox Grid.Row="0" Grid.Column="4" x:Name="WakeEndVolumeBox" Padding="6,2" Margin="0,4" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Step %" VerticalAlignment="Center" Margin="0,4" />
+                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="WakeStepBox" Padding="6,2" Margin="0,4" />
+                        <TextBlock Grid.Row="1" Grid.Column="3" Text="Every min" VerticalAlignment="Center" Margin="0,4" />
+                        <TextBox Grid.Row="1" Grid.Column="4" x:Name="WakeIntervalBox" Padding="6,2" Margin="0,4" />
+                    </Grid>
+                    <CheckBox x:Name="WakeExpandCheckBox"
+                              Content="After ramp: expand to all speakers and shuffle full library"
+                              Margin="0,8,0,0" />
+                    <TextBlock Text="Starts on the selected room only, ramps volume, then optionally joins the whole house. PC must be awake with HotSonos running. Tray: Stop wake / volume ramp. Volume hotkeys cancel the ramp."
+                               Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
                 </StackPanel>
 
                 <!-- Column divider -->

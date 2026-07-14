@@ -372,11 +372,46 @@ public sealed class SonosManager
     {
         if (_controller is null)
             return [];
-        return _zones
-            .Where(z => string.Equals(z.CoordinatorUuid, _controller.CoordinatorUuid, StringComparison.OrdinalIgnoreCase))
+        return MemberIpsForCoordinator(_controller.CoordinatorUuid);
+    }
+
+    /// <summary>Resolves a group by coordinator room name or any member room name.</summary>
+    public SonosGroup? TryGetGroup(string? room)
+    {
+        if (string.IsNullOrWhiteSpace(room))
+            return null;
+        return Groups.FirstOrDefault(g => string.Equals(g.CoordinatorRoom, room, StringComparison.OrdinalIgnoreCase))
+            ?? Groups.FirstOrDefault(g => ContainsRoom(g, room));
+    }
+
+    /// <summary>Builds a controller for a room/group without changing <see cref="ActiveRoom"/>.</summary>
+    public SonosController? CreateControllerForRoom(string? room)
+    {
+        var group = TryGetGroup(room);
+        if (group is not null)
+            return new SonosController(group.CoordinatorIp, group.CoordinatorUuid, _soap);
+
+        var zone = _zones.FirstOrDefault(z => string.Equals(z.RoomName, room, StringComparison.OrdinalIgnoreCase));
+        return zone is null ? null : SonosController.ForZone(zone, _soap);
+    }
+
+    /// <summary>Visible member IPs for the group coordinated by <paramref name="coordinatorUuid"/>.</summary>
+    public IReadOnlyList<string> MemberIpsForCoordinator(string coordinatorUuid) =>
+        _zones
+            .Where(z => string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
             .Select(z => z.IpAddress)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+    /// <summary>All visible speaker IPs (any group).</summary>
+    public IReadOnlyList<string> AllVisibleIps() =>
+        _zones.Select(z => z.IpAddress).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>Sets absolute volume and unmutes every IP in <paramref name="ips"/>.</summary>
+    public async Task SetVolumesAbsoluteAsync(IReadOnlyList<string> ips, int percent, CancellationToken ct = default)
+    {
+        percent = Math.Clamp(percent, 0, 100);
+        await Task.WhenAll(ips.Select(ip => SetMemberVolumeAsync(ip, percent, ct))).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -385,12 +420,17 @@ public sealed class SonosManager
     /// join failures. The coordinator's IP/UUID are unchanged, so the cached
     /// controller stays valid.
     /// </summary>
-    public async Task GroupAllSpeakersAsync(CancellationToken ct = default)
+    public Task GroupAllSpeakersAsync(CancellationToken ct = default) =>
+        _controller is null
+            ? Task.CompletedTask
+            : GroupAllSpeakersToAsync(_controller.CoordinatorUuid, ct);
+
+    /// <summary>Joins every visible player to the given coordinator UUID (whole-house).</summary>
+    public async Task GroupAllSpeakersToAsync(string coordinatorUuid, CancellationToken ct = default)
     {
-        if (_controller is null || _zones.Count == 0)
+        if (_zones.Count == 0 || string.IsNullOrWhiteSpace(coordinatorUuid))
             return;
 
-        var coordinatorUuid = _controller.CoordinatorUuid;
         foreach (var zone in _zones)
         {
             if (string.Equals(zone.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))

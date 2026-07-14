@@ -161,11 +161,48 @@ public partial class MainWindow : Window
         NightlyResetCheckBox.IsChecked = _settings.NightlyResetEnabled;
         NightlyResetTimeBox.Text = MinutesToHhmm(_settings.NightlyResetMinutes);
         NightlyResetReshuffleCheckBox.IsChecked = _settings.NightlyResetReshuffle;
+        LoadWakeUiFromSettings();
         LoadStartupPreference();
 
         PopulateRooms();
         _ = LoadFavoritesAsync();
         _ = LoadSpeakerVolumesAsync();
+    }
+
+    private void LoadWakeUiFromSettings()
+    {
+        WakeEnabledCheckBox.IsChecked = _settings.WakeEnabled;
+        WakeTimeBox.Text = MinutesToHhmm(_settings.WakeMinutes);
+        WakeDaySu.IsChecked = _settings.WakeIncludesDay(DayOfWeek.Sunday);
+        WakeDayMo.IsChecked = _settings.WakeIncludesDay(DayOfWeek.Monday);
+        WakeDayTu.IsChecked = _settings.WakeIncludesDay(DayOfWeek.Tuesday);
+        WakeDayWe.IsChecked = _settings.WakeIncludesDay(DayOfWeek.Wednesday);
+        WakeDayTh.IsChecked = _settings.WakeIncludesDay(DayOfWeek.Thursday);
+        WakeDayFr.IsChecked = _settings.WakeIncludesDay(DayOfWeek.Friday);
+        WakeDaySa.IsChecked = _settings.WakeIncludesDay(DayOfWeek.Saturday);
+        WakeStartVolumeBox.Text = _settings.WakeStartVolume.ToString();
+        WakeEndVolumeBox.Text = _settings.WakeEndVolume.ToString();
+        WakeStepBox.Text = _settings.WakeVolumeStep.ToString();
+        WakeIntervalBox.Text = _settings.WakeStepIntervalMinutes.ToString();
+        WakeExpandCheckBox.IsChecked = _settings.WakeExpandToHouse;
+
+        WakeSourceComboBox.Items.Clear();
+        WakeSourceComboBox.Items.Add("Shuffle Music Library");
+        WakeSourceComboBox.Items.Add("Favorite / playlist");
+        WakeSourceComboBox.SelectedIndex =
+            string.Equals(_settings.WakeSource, AppSettings.WakeSourceFavorite, StringComparison.OrdinalIgnoreCase)
+                ? 1
+                : 0;
+        UpdateWakeFavoriteEnabled();
+    }
+
+    private void WakeSourceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UpdateWakeFavoriteEnabled();
+
+    private void UpdateWakeFavoriteEnabled()
+    {
+        var fav = WakeSourceComboBox.SelectedIndex == 1;
+        WakeFavoriteComboBox.IsEnabled = fav;
     }
 
     /// <summary>Re-reads every speaker's volume/mute; called each time the window is shown from the tray.</summary>
@@ -260,8 +297,12 @@ public partial class MainWindow : Window
     {
         _suppressRoomChange = true;
         RoomComboBox.Items.Clear();
+        WakeRoomComboBox.Items.Clear();
         foreach (var group in _sonos.Groups)
+        {
             RoomComboBox.Items.Add(group);
+            WakeRoomComboBox.Items.Add(group);
+        }
 
         var active = _settings.ActiveRoom ?? _sonos.ActiveRoom;
         var match = _sonos.Groups.FirstOrDefault(g =>
@@ -270,6 +311,15 @@ public partial class MainWindow : Window
             RoomComboBox.SelectedItem = match;
         else if (RoomComboBox.Items.Count > 0)
             RoomComboBox.SelectedIndex = 0;
+
+        var wakeRoom = _settings.WakeRoom ?? active;
+        var wakeMatch = _sonos.Groups.FirstOrDefault(g =>
+            string.Equals(g.CoordinatorRoom, wakeRoom, StringComparison.OrdinalIgnoreCase));
+        if (wakeMatch is not null)
+            WakeRoomComboBox.SelectedItem = wakeMatch;
+        else if (WakeRoomComboBox.Items.Count > 0)
+            WakeRoomComboBox.SelectedIndex = 0;
+
         _suppressRoomChange = false;
     }
 
@@ -289,6 +339,8 @@ public partial class MainWindow : Window
 
         for (var i = 0; i < _favCombos.Length; i++)
             PopulateFavoriteCombo(_favCombos[i], titles, _settings.FavoriteSlots[i].FavoriteName);
+
+        PopulateFavoriteCombo(WakeFavoriteComboBox, titles, _settings.WakeFavoriteName);
 
         if (titles.Count == 0)
             SetStatus("No playable favorites found. Add a Sonos favorite/playlist, then Refresh.", warn: true);
@@ -463,6 +515,39 @@ public partial class MainWindow : Window
             _settings.FavoriteSlots[i].FavoriteName =
                 string.Equals(name, NoneLabel, StringComparison.Ordinal) ? null : name;
         }
+
+        CommitWakeUiToSettings();
+    }
+
+    private void CommitWakeUiToSettings()
+    {
+        _settings.WakeEnabled = WakeEnabledCheckBox.IsChecked == true;
+        if (TryParseHhmm(WakeTimeBox.Text, out var wakeMinutes))
+            _settings.WakeMinutes = wakeMinutes;
+        _settings.SetWakeDay(DayOfWeek.Sunday, WakeDaySu.IsChecked == true);
+        _settings.SetWakeDay(DayOfWeek.Monday, WakeDayMo.IsChecked == true);
+        _settings.SetWakeDay(DayOfWeek.Tuesday, WakeDayTu.IsChecked == true);
+        _settings.SetWakeDay(DayOfWeek.Wednesday, WakeDayWe.IsChecked == true);
+        _settings.SetWakeDay(DayOfWeek.Thursday, WakeDayTh.IsChecked == true);
+        _settings.SetWakeDay(DayOfWeek.Friday, WakeDayFr.IsChecked == true);
+        _settings.SetWakeDay(DayOfWeek.Saturday, WakeDaySa.IsChecked == true);
+        if (WakeRoomComboBox.SelectedItem is SonosGroup wakeRoom)
+            _settings.WakeRoom = wakeRoom.CoordinatorRoom;
+        _settings.WakeSource = WakeSourceComboBox.SelectedIndex == 1
+            ? AppSettings.WakeSourceFavorite
+            : AppSettings.WakeSourceShuffle;
+        var wakeFav = WakeFavoriteComboBox.SelectedItem as string;
+        _settings.WakeFavoriteName =
+            string.Equals(wakeFav, NoneLabel, StringComparison.Ordinal) ? null : wakeFav;
+        if (int.TryParse(WakeStartVolumeBox.Text, out var start) && start is >= 0 and <= 100)
+            _settings.WakeStartVolume = start;
+        if (int.TryParse(WakeEndVolumeBox.Text, out var end) && end is >= 0 and <= 100)
+            _settings.WakeEndVolume = end;
+        if (int.TryParse(WakeStepBox.Text, out var wstep) && wstep is >= 1 and <= 100)
+            _settings.WakeVolumeStep = wstep;
+        if (int.TryParse(WakeIntervalBox.Text, out var interval) && interval is >= 1 and <= 120)
+            _settings.WakeStepIntervalMinutes = interval;
+        _settings.WakeExpandToHouse = WakeExpandCheckBox.IsChecked == true;
     }
 
     private void FreshStartButton_Click(object sender, RoutedEventArgs e)

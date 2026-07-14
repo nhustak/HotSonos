@@ -24,6 +24,7 @@ public partial class App : System.Windows.Application
     private NowPlaying? _lastNowPlaying;
     private MainWindow? _mainWindow;
     private System.Threading.Timer? _nightlyTimer;
+    private WakeMusicService? _wake;
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private bool _isExiting;
 
@@ -73,6 +74,17 @@ public partial class App : System.Windows.Application
         _hotkeys = new GlobalHotkeyManager();
         _hotkeys.HotkeyPressed += OnHotkeyPressed;
 
+        _wake = new WakeMusicService(
+            _sonos,
+            () => _settings,
+            status => Dispatcher.InvokeAsync(() =>
+            {
+                if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                    EnsureFlyout().ShowAction(status);
+            }),
+            () => Dispatcher.InvokeAsync(() => _tray?.SetWakeActive(_wake?.IsActive == true)),
+            _actionGate);
+
         _tray = new TrayController(
             AppVersion.DisplayName,
             new TrayController.Callbacks(
@@ -91,6 +103,7 @@ public partial class App : System.Windows.Application
                 SetRoom: OnTraySetRoom,
                 OpenLogFolder: () => AppLog.OpenLogFolder(),
                 CopyDiagnostics: OnCopyDiagnostics,
+                StopWake: () => _wake?.Cancel(),
                 Exit: ExitApplication));
 
         var failures = ApplyBindings();
@@ -139,6 +152,7 @@ public partial class App : System.Windows.Application
         var failures = _hotkeys.ApplyBindings(_settings);
         UpdateTrayDynamic();
         ScheduleNightlyReset();
+        _wake?.Schedule();
         return failures;
     }
 
@@ -187,8 +201,16 @@ public partial class App : System.Windows.Application
     private static bool IsExclusiveAction(HotsonosAction action) =>
         action is HotsonosAction.ShuffleLibrary or HotsonosAction.FreshStart;
 
+    private static bool IsVolumeAction(HotsonosAction action) =>
+        action is HotsonosAction.VolumeUp or HotsonosAction.VolumeDown
+            or HotsonosAction.Mute or HotsonosAction.LevelVolumes;
+
     private async Task ExecuteActionAsync(HotsonosAction action)
     {
+        // User volume control cancels an in-progress wake ramp (they take over).
+        if (IsVolumeAction(action) && _wake?.IsActive == true)
+            _wake.Cancel();
+
         // Exclusive actions refuse re-entry immediately so a double hotkey cannot
         // interleave two shuffles. Other actions wait their turn so volume/skip
         // still run after a long shuffle finishes.
@@ -361,6 +383,7 @@ public partial class App : System.Windows.Application
         AppLog.Info("Exit requested");
 
         _nightlyTimer?.Dispose();
+        _wake?.Dispose();
         _hotkeys?.Dispose();
 
         // Best-effort unsubscribe so speakers do not hold dead SIDs until timeout.

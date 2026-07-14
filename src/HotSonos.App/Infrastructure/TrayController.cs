@@ -26,6 +26,7 @@ public sealed class TrayController : IDisposable
         Action<string> SetRoom,
         Action OpenLogFolder,
         Action CopyDiagnostics,
+        Action StopWake,
         Action Exit);
 
     private readonly NotifyIcon _notifyIcon;
@@ -37,6 +38,7 @@ public sealed class TrayController : IDisposable
     private readonly ToolStripMenuItem _roomMenu;
     private readonly ToolStripMenuItem _favoritesMenu;
     private readonly ToolStripMenuItem _offlineItem;
+    private readonly ToolStripMenuItem _stopWakeItem;
 
     public TrayController(string versionLabel, Callbacks callbacks)
     {
@@ -69,6 +71,11 @@ public sealed class TrayController : IDisposable
         _offlineItem = new ToolStripMenuItem("All speakers online") { Enabled = false };
         _menu.Items.Add(_offlineItem);
         _menu.Items.Add(new ToolStripSeparator());
+        _stopWakeItem = new ToolStripMenuItem("Stop wake / volume ramp", null, (_, _) => _callbacks.StopWake())
+        {
+            Enabled = false,
+        };
+        _menu.Items.Add(_stopWakeItem);
         _menu.Items.Add("Open log folder", null, (_, _) => _callbacks.OpenLogFolder());
         _menu.Items.Add("Copy diagnostics", null, (_, _) => _callbacks.CopyDiagnostics());
         _menu.Items.Add("Exit", null, (_, _) => _callbacks.Exit());
@@ -138,6 +145,9 @@ public sealed class TrayController : IDisposable
             ? "All speakers online"
             : $"⚠ Offline: {string.Join(", ", offline)}";
     }
+
+    /// <summary>Enables the stop-wake tray item while a wake ramp/expand is active.</summary>
+    public void SetWakeActive(bool active) => _stopWakeItem.Enabled = active;
 
     /// <summary>Sets the tray hover tooltip to the current track (truncated to fit).</summary>
     public void UpdateNowPlaying(string? line)

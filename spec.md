@@ -45,7 +45,7 @@ Official Sonos **cloud Control API** was evaluated and rejected (OAuth + interne
 ### App shell
 - `App.xaml.cs` — single-instance mutex, tray bootstrap, exclusive gate for long actions
 - `Infrastructure/` — `TrayController`, `GlobalHotkeyManager`, `WindowsStartupManager`, `AppVersion`, `AppLog`
-- `Services/` — `SonosManager`, `ConfigStore`
+- `Services/` — `SonosManager`, `ConfigStore`, `WakeMusicService`
 - `Windows/` — Settings (`MainWindow`), `NowPlayingFlyout`
 
 ### Global hotkeys
@@ -109,6 +109,15 @@ Device `SHUFFLE` mode is intentionally **not** used — it reuses a deterministi
 - Optional reshuffle (starts playback) — off by default
 - Only while PC is awake and HotSonos is running
 
+### Wake to music
+- Optional alarm: selected **days of week** + clock time
+- Starts on a **chosen room/group** only (does not change hotkey active room permanently)
+- Start volume, end volume, step %, interval minutes — absolute volume steps on that group
+- Play source: **shuffle library** or a **favorite/playlist**
+- Optional after ramp: **expand to all speakers** + **full library shuffle** at end volume
+- Tray **Stop wake / volume ramp**; volume hotkeys cancel the ramp (skip expand)
+- Only while PC is awake and HotSonos is running
+
 ### Configuration
 - JSON at `%LocalAppData%\HotSonos\settings.json`
 - Favorites list is **not** stored (read live from speakers)
@@ -127,7 +136,7 @@ Device `SHUFFLE` mode is intentionally **not** used — it reuses a deterministi
 
 ## Out of scope (v1)
 - Manual multi-room grouping UI / stereo pairing editor
-- EQ, sleep timers, alarms
+- EQ, multi-alarm, snooze, fade-out sleep timer, wake PC from sleep
 - Streaming-service auth or search
 - Cloud Control API
 - Non-Windows platforms
