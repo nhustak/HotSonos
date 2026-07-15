@@ -4,13 +4,18 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.6** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml)
+**Version 1.0.0.7** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
 HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/SOAP) — no cloud, no Sonos account, no internet round-trips. It lives in the system tray and gives you instant, global hotkeys for the things the Sonos apps make you click through: shuffle your whole library to every speaker, play/pause, skip, and whole-house volume — plus a live now-playing flyout and automatic speaker re-sync.
 
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
+
+### Product direction
+- **Today:** daily whole-library shuffle, transport/volume hotkeys, playlists/favorites, wake-to-music, live topology.
+- **Next:** stronger playlist / mood workflows without polluting daily shuffle (jazz, soundtracks, etc.).
+- **Later:** local library tags (e.g. tempo on FLAC/MP3), optional master-library tag mirror, loopback **MCP** for agents, playlist build-from-filter, and more — see **[spec.md](spec.md)** (Shipped / Next / Later).
 
 ---
 
@@ -58,7 +63,7 @@ Targets are shown as Sonos groups (e.g. a group containing every player shows as
 - Plain-JSON config at `%LocalAppData%\HotSonos\settings.json`
 - Four assignable "play a favorite/playlist" hotkey slots
 - Launching HotSonos manually opens **Settings** directly; launching via Windows autorun stays silent in the tray
-- The Settings window remembers its position and size between launches
+- The Settings window remembers its position and size between launches; **devices auto-discover** when Settings opens
 - **Diagnostics**: rolling logs under `%LocalAppData%\HotSonos\logs`; tray menu **Open log folder** / **Copy diagnostics**
 
 ---
@@ -153,9 +158,14 @@ Product version is single-sourced in `Directory.Build.props` (app, tests, and MS
 
 ## Changelog
 
+### 1.0.0.7
+- Living **[spec.md](spec.md)** with Shipped / Next / Later roadmap (daily vs mood libraries, file tags, master mirror, MCP, backlog ideas)
+- README product-direction summary linking to the full spec
+
 ### 1.0.0.6
 - **Wake to music**: day/time schedule, per-room start, volume ramp (start/end/step/interval), favorite or shuffle, optional whole-house expand + full library shuffle at end of ramp
 - Tray **Stop wake / volume ramp**; volume hotkeys cancel an in-progress ramp
+- Wake **skips** if Sonos is already playing; Settings **auto-refreshes** devices on open
 
 ### 1.0.0.5
 - **Diagnostics**: rolling logs + tray **Open log folder** / **Copy diagnostics**
