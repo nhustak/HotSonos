@@ -16,6 +16,14 @@ public sealed class HotSonosMcpState
     public Func<NowPlaying?> GetLastNowPlaying { get; set; } = () => null;
     public Func<Task<string>> RefreshDevicesAsync { get; set; } =
         () => Task.FromResult("Refresh not wired.");
+
+    /// <summary>Runs a tray/hotkey action through the app gate (flyout + exclusive shuffle).</summary>
+    public Func<HotsonosAction, Task<string?>> ExecuteActionAsync { get; set; } =
+        _ => Task.FromResult<string?>("Action not wired.");
+
+    /// <summary>Set active room by coordinator room name (same as tray room picker).</summary>
+    public Action<string>? SetActiveRoom { get; set; }
+
     public string Endpoint { get; set; } = "";
     public bool IsRunning { get; set; }
 }

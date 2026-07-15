@@ -95,6 +95,8 @@ public partial class App : System.Windows.Application
             Wake = _wake,
             GetLastNowPlaying = () => _lastNowPlaying,
             RefreshDevicesAsync = McpRefreshDevicesAsync,
+            ExecuteActionAsync = McpExecuteActionAsync,
+            SetActiveRoom = OnTraySetRoom,
         };
         _mcpHost = new HotSonosMcpHost();
 
@@ -169,6 +171,26 @@ public partial class App : System.Windows.Application
                 _mainWindow.RefreshDevicesInBackground();
         });
         return $"OK: {_sonos.Groups.Count} group(s), active={_sonos.ActiveRoom ?? "(none)"}, offline=[{string.Join(", ", _sonos.OfflineSpeakers)}]";
+    }
+
+    /// <summary>MCP control path: same gate/flyout behavior as hotkeys (marshaled to UI thread).</summary>
+    private Task<string?> McpExecuteActionAsync(HotsonosAction action)
+    {
+        var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            try
+            {
+                // Capture toast via Execute without duplicating gate logic: call the real path.
+                await ExecuteActionAsync(action);
+                tcs.TrySetResult($"OK:{action}");
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+        });
+        return tcs.Task;
     }
 
     private void OnCopyMcpEndpoint()

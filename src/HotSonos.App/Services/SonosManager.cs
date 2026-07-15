@@ -53,9 +53,13 @@ public sealed class SonosManager
     /// <summary>Rooms currently reported as vanished/offline by Sonos.</summary>
     public IReadOnlyList<string> OfflineSpeakers => _offline;
 
+    /// <summary>Number of visible zones in the last topology snapshot.</summary>
+    public int GetZoneCount() => _zones.Count;
+
     /// <summary>Diagnostic snapshot of cached topology (for MCP / Settings debug).</summary>
     public object GetTopologySnapshot() => new
     {
+        deviceListPopulated = Groups.Count > 0,
         zoneCount = _zones.Count,
         groupCount = Groups.Count,
         activeRoom = ActiveRoom,

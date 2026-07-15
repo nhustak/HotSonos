@@ -28,6 +28,6 @@
 
 ## Loopback MCP (debug / agent tools)
 - While the tray app is running with MCP enabled: `http://127.0.0.1:42341/mcp`
-- Tools: status, groups, zones, offline, refresh_devices, volumes, now_playing, favorites, settings summary, logs
+- Tools: discovery status (`deviceListPopulated`), groups/zones/offline, refresh_devices, volumes, now_playing, favorites, settings, logs; **control**: play_pause, next/previous, volume_up/down, mute, level_volumes, shuffle_library, fresh_start, play_favorite_slot, set_active_room, wake_now, wake_cancel
 - Register in `C:\Project\_mcp\mcp-servers.json` as `hotsonos`, then run `sync-mcp.ps1`
 - Product roadmap (library tags, full MCP library phase): `spec.md`

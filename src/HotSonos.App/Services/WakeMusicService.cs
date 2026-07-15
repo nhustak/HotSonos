@@ -79,6 +79,18 @@ public sealed class WakeMusicService : IDisposable
         _status("Wake cancelled");
     }
 
+    /// <summary>Fire wake immediately (MCP / tests). Still skips if music is already playing.</summary>
+    public Task TriggerNowAsync() => RunWakeAsync();
+
+    /// <summary>Next scheduled local fire time, or null if disabled / no days.</summary>
+    public DateTime? GetNextFireLocal()
+    {
+        var s = _settings().EnsureShape();
+        if (!s.WakeEnabled || s.WakeDaysMask == 0)
+            return null;
+        return ComputeNextFire(DateTime.Now, s.WakeMinutes, s.WakeDaysMask);
+    }
+
     private async Task OnScheduleFiredAsync()
     {
         try

@@ -169,7 +169,8 @@ Concurrent shuffle / Fresh Start: exclusive gate + Busy feedback.
 - Hosted **inside** the tray process (not a separate executable)
 - Default: **enabled**, `http://127.0.0.1:42341/mcp` (port configurable; restart after change)
 - Settings: enable + port; tray menu copies the endpoint
-- Tools: `get_status`, `list_groups`, `list_zones`, `list_offline`, `refresh_devices`, `get_speaker_volumes`, `get_now_playing`, `list_favorites`, `get_settings_summary`, `get_logs`, `get_log_directory`
+- **Discovery / debug:** `get_status` (includes `deviceListPopulated`), `get_discovery_state`, `list_groups`, `list_zones`, `list_offline`, `refresh_devices`, `get_speaker_volumes`, `get_now_playing`, `list_favorites`, `get_settings_summary`, `get_logs`, `get_log_directory`
+- **Control:** `play_pause`, `next_track`, `previous_track`, `volume_up`, `volume_down`, `mute_toggle`, `level_volumes`, `shuffle_library`, `fresh_start`, `play_favorite_slot`, `set_active_room`, `wake_now`, `wake_cancel`
 - Library tag/playlist MCP remains **Later** (§7)
 
 ### Engineering constraints (shipped)
