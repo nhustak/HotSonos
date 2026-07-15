@@ -102,6 +102,14 @@ public sealed class AppSettings
     /// <summary>After ramp completes: join all speakers and shuffle the full library.</summary>
     public bool WakeExpandToHouse { get; set; } = true;
 
+    // ---- MCP (loopback agent access while the app is running) -------------
+
+    /// <summary>Host an HTTP MCP server on 127.0.0.1 for AI debug/control tools.</summary>
+    public bool McpEnabled { get; set; } = true;
+
+    /// <summary>Loopback port for MCP (default 42341). Endpoint: http://127.0.0.1:{port}/mcp</summary>
+    public int McpPort { get; set; } = 42341;
+
     /// <summary>Exactly four favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
 
@@ -162,6 +170,7 @@ public sealed class AppSettings
         if (WakeVolumeStep > 100) WakeVolumeStep = 100;
         if (WakeStepIntervalMinutes < 1) WakeStepIntervalMinutes = 1;
         if (WakeStepIntervalMinutes > 120) WakeStepIntervalMinutes = 120;
+        if (McpPort is < 1024 or > 65535) McpPort = 42341;
         if (!string.Equals(WakeSource, WakeSourceFavorite, StringComparison.OrdinalIgnoreCase))
             WakeSource = WakeSourceShuffle;
         else

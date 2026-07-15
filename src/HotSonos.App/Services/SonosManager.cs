@@ -53,6 +53,33 @@ public sealed class SonosManager
     /// <summary>Rooms currently reported as vanished/offline by Sonos.</summary>
     public IReadOnlyList<string> OfflineSpeakers => _offline;
 
+    /// <summary>Diagnostic snapshot of cached topology (for MCP / Settings debug).</summary>
+    public object GetTopologySnapshot() => new
+    {
+        zoneCount = _zones.Count,
+        groupCount = Groups.Count,
+        activeRoom = ActiveRoom,
+        offline = OfflineSpeakers,
+        zones = _zones.Select(z => new
+        {
+            z.RoomName,
+            z.IpAddress,
+            z.Uuid,
+            z.CoordinatorUuid,
+            z.CoordinatorIpAddress,
+            z.GroupId,
+            z.IsCoordinator,
+        }).ToList(),
+        groups = Groups.Select(g => new
+        {
+            g.DisplayName,
+            g.CoordinatorRoom,
+            g.CoordinatorUuid,
+            g.CoordinatorIp,
+            g.MemberCount,
+        }).ToList(),
+    };
+
     public SonosManager()
     {
         _discovery = new SonosDiscovery(_soap);

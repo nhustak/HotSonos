@@ -181,6 +181,17 @@
                     <TextBlock Text="Regroups every speaker so they start the day in sync. Skipped automatically if anything is playing. Reshuffle is opt-in since it starts music on its own."
                                Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
 
+                    <TextBlock Text="Agent MCP (loopback)" Style="{StaticResource SectionHeader}" />
+                    <CheckBox x:Name="McpEnabledCheckBox" Content="Enable MCP server while HotSonos is running" Margin="0,2" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6">
+                        <TextBlock Text="Port" VerticalAlignment="Center" Width="70" />
+                        <TextBox x:Name="McpPortBox" Width="80" Padding="6,2" VerticalContentAlignment="Center" />
+                        <TextBlock Text="(http://127.0.0.1:port/mcp — requires app restart after change)"
+                                   VerticalAlignment="Center" Margin="8,0,0,0" Foreground="#FF60707F" FontSize="11" />
+                    </StackPanel>
+                    <TextBlock Text="Lets AI tools inspect devices, logs, and force refresh while the tray app is running. Loopback only."
+                               Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+
                     <TextBlock Text="Wake to music" Style="{StaticResource SectionHeader}" />
                     <CheckBox x:Name="WakeEnabledCheckBox" Content="Enable wake to music" Margin="0,2" />
                     <StackPanel Orientation="Horizontal" Margin="0,6">

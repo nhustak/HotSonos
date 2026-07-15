@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using HotSonos.App.Infrastructure;
+using HotSonos.App.Mcp;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
 using HotSonos.App.Windows;
@@ -25,6 +26,8 @@ public partial class App : System.Windows.Application
     private MainWindow? _mainWindow;
     private System.Threading.Timer? _nightlyTimer;
     private WakeMusicService? _wake;
+    private HotSonosMcpHost? _mcpHost;
+    private HotSonosMcpState? _mcpState;
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private bool _isExiting;
 
@@ -85,6 +88,16 @@ public partial class App : System.Windows.Application
             () => Dispatcher.InvokeAsync(() => _tray?.SetWakeActive(_wake?.IsActive == true)),
             _actionGate);
 
+        _mcpState = new HotSonosMcpState
+        {
+            Sonos = _sonos,
+            Settings = () => _settings,
+            Wake = _wake,
+            GetLastNowPlaying = () => _lastNowPlaying,
+            RefreshDevicesAsync = McpRefreshDevicesAsync,
+        };
+        _mcpHost = new HotSonosMcpHost();
+
         _tray = new TrayController(
             AppVersion.DisplayName,
             new TrayController.Callbacks(
@@ -104,6 +117,7 @@ public partial class App : System.Windows.Application
                 OpenLogFolder: () => AppLog.OpenLogFolder(),
                 CopyDiagnostics: OnCopyDiagnostics,
                 StopWake: () => _wake?.Cancel(),
+                CopyMcpEndpoint: OnCopyMcpEndpoint,
                 Exit: ExitApplication));
 
         var failures = ApplyBindings();
@@ -115,6 +129,63 @@ public partial class App : System.Windows.Application
             ShowMainWindow(); // manual launches open Settings directly; Windows autorun stays silent in the tray
 
         _ = InitialDiscoveryAsync();
+        _ = StartMcpIfEnabledAsync();
+    }
+
+    private async Task StartMcpIfEnabledAsync()
+    {
+        if (_mcpHost is null || _mcpState is null || !_settings.McpEnabled)
+        {
+            AppLog.Info("MCP disabled in settings");
+            return;
+        }
+
+        try
+        {
+            await _mcpHost.StartAsync(_mcpState, _settings.McpPort).ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(() =>
+                _tray?.SetMcpEndpoint(_mcpHost.Endpoint));
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("MCP server failed to start (is the port in use?)", ex);
+            try
+            {
+                _tray?.ShowBalloon("HotSonos", $"MCP failed to start on port {_settings.McpPort}: {ex.Message}");
+            }
+            catch { /* ignore */ }
+        }
+    }
+
+    private async Task<string> McpRefreshDevicesAsync()
+    {
+        await _sonos.RefreshAsync(_settings.ActiveRoom).ConfigureAwait(false);
+        _settings.ActiveRoom ??= _sonos.ActiveRoom;
+        await Dispatcher.InvokeAsync(() =>
+        {
+            UpdateTrayDynamic();
+            // Settings window re-populates from the same manager when open.
+            if (_mainWindow is { IsVisible: true })
+                _mainWindow.RefreshDevicesInBackground();
+        });
+        return $"OK: {_sonos.Groups.Count} group(s), active={_sonos.ActiveRoom ?? "(none)"}, offline=[{string.Join(", ", _sonos.OfflineSpeakers)}]";
+    }
+
+    private void OnCopyMcpEndpoint()
+    {
+        var ep = _mcpHost?.Endpoint ?? $"http://127.0.0.1:{_settings.McpPort}/mcp (not running)";
+        try
+        {
+            System.Windows.Clipboard.SetText(ep);
+            _tray.ShowBalloon("HotSonos", _mcpHost?.IsRunning == true
+                ? $"MCP endpoint copied:\n{ep}"
+                : "MCP is not running — endpoint pattern copied.");
+            AppLog.Info($"MCP endpoint copied: {ep}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Copy MCP endpoint failed", ex);
+        }
     }
 
     private void OnCopyDiagnostics()
@@ -384,6 +455,7 @@ public partial class App : System.Windows.Application
 
         _nightlyTimer?.Dispose();
         _wake?.Dispose();
+        try { _mcpHost?.StopAsync().Wait(TimeSpan.FromSeconds(2)); } catch { /* exit */ }
         _hotkeys?.Dispose();
 
         // Best-effort unsubscribe so speakers do not hold dead SIDs until timeout.

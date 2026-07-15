@@ -33,7 +33,8 @@ Control a **local** Sonos system from global hotkeys and the system tray — no 
 | **P0 (shipped)** | Play Sonos favorites / saved playlists by hotkey or menu |
 | **P0 (shipped)** | Wake-to-music, nightly re-sync, live topology / now-playing |
 | **P1 (next)** | Stronger **playlist** workflow; daily vs mood library boundaries |
-| **P2 (later)** | Local library index, file tags (tempo), MCP for agents |
+| **P1 (partial)** | Loopback **MCP** for debug/ops (devices, logs, refresh) — **shipped baseline** |
+| **P2 (later)** | Local library index, file tags (tempo), full library MCP |
 | **P3 (later)** | Library management, recipes, health, creative filters |
 
 ---
@@ -164,6 +165,13 @@ Concurrent shuffle / Fresh Start: exclusive gate + Busy feedback.
 ### Diagnostics
 - File + ring buffer; tray open log folder / copy diagnostics  
 
+### Loopback MCP (debug / ops) — Shipped baseline
+- Hosted **inside** the tray process (not a separate executable)
+- Default: **enabled**, `http://127.0.0.1:42341/mcp` (port configurable; restart after change)
+- Settings: enable + port; tray menu copies the endpoint
+- Tools: `get_status`, `list_groups`, `list_zones`, `list_offline`, `refresh_devices`, `get_speaker_volumes`, `get_now_playing`, `list_favorites`, `get_settings_summary`, `get_logs`, `get_log_directory`
+- Library tag/playlist MCP remains **Later** (§7)
+
 ### Engineering constraints (shipped)
 - Action gate for long library ops  
 - GENA on ephemeral port (`IPAddress.Any`) — trusted LAN  
@@ -218,9 +226,9 @@ Same NAS family is expected (e.g. `\\server\Music\Sonos\…` plus a master tree)
 
 ---
 
-## 7. Later — Library intelligence & MCP
+## 7. Later — Library intelligence (extends MCP)
 
-> Not scheduled for immediate implementation. Do not build unless the user asks for this phase.
+> Debug/ops MCP is **shipped** (see §4 Loopback MCP). This section is the **library/tag/playlist** expansion — do not build unless the user asks for this phase.
 
 ### 7.1 Goals
 - Agents (and the owner) can **see** the local music library and **metadata**  
@@ -234,8 +242,8 @@ Same NAS family is expected (e.g. `\\server\Music\Sonos\…` plus a master tree)
 ```text
 ┌──────────────────────────────────────────┐
 │ HotSonos MCP (loopback, agent-facing)    │
-│ library search · tags · playlists · ops  │
-│ thin Sonos control wrappers (optional)   │
+│ debug/ops (shipped) + library (later)    │
+│ tags · playlists · thin Sonos control    │
 └────────────┬───────────────┬─────────────┘
              │               │
              ▼               ▼

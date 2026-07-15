@@ -16,4 +16,9 @@
     <ProjectReference Include="..\HotSonos.Core\HotSonos.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.4.0-preview.1" />
+  </ItemGroup>
+
 </Project>

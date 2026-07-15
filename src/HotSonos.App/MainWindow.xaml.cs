@@ -164,6 +164,8 @@ public partial class MainWindow : Window
         NightlyResetCheckBox.IsChecked = _settings.NightlyResetEnabled;
         NightlyResetTimeBox.Text = MinutesToHhmm(_settings.NightlyResetMinutes);
         NightlyResetReshuffleCheckBox.IsChecked = _settings.NightlyResetReshuffle;
+        McpEnabledCheckBox.IsChecked = _settings.McpEnabled;
+        McpPortBox.Text = _settings.McpPort.ToString();
         LoadWakeUiFromSettings();
         LoadStartupPreference();
 
@@ -546,6 +548,10 @@ public partial class MainWindow : Window
             _settings.FavoriteSlots[i].FavoriteName =
                 string.Equals(name, NoneLabel, StringComparison.Ordinal) ? null : name;
         }
+
+        _settings.McpEnabled = McpEnabledCheckBox.IsChecked == true;
+        if (int.TryParse(McpPortBox.Text, out var mcpPort) && mcpPort is >= 1024 and <= 65535)
+            _settings.McpPort = mcpPort;
 
         CommitWakeUiToSettings();
     }

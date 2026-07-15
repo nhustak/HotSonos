@@ -4,7 +4,7 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.7** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
+**Version 1.0.0.8** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
@@ -15,7 +15,8 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 ### Product direction
 - **Today:** daily whole-library shuffle, transport/volume hotkeys, playlists/favorites, wake-to-music, live topology.
 - **Next:** stronger playlist / mood workflows without polluting daily shuffle (jazz, soundtracks, etc.).
-- **Later:** local library tags (e.g. tempo on FLAC/MP3), optional master-library tag mirror, loopback **MCP** for agents, playlist build-from-filter, and more — see **[spec.md](spec.md)** (Shipped / Next / Later).
+- **MCP (now):** with the tray app running, agents can hit `http://127.0.0.1:42341/mcp` for device list, refresh, logs, favorites, etc. (see **[spec.md](spec.md)**).
+- **Later:** local library tags (e.g. tempo on FLAC/MP3), optional master-library tag mirror, playlist build-from-filter, and more — see **[spec.md](spec.md)** (Shipped / Next / Later).
 
 ---
 
@@ -157,6 +158,11 @@ Product version is single-sourced in `Directory.Build.props` (app, tests, and MS
 ---
 
 ## Changelog
+
+### 1.0.0.8
+- **Loopback MCP** inside the tray app (`http://127.0.0.1:42341/mcp`): status, groups/zones, offline, refresh_devices, volumes, now-playing, favorites, settings summary, logs
+- Settings toggle + port; tray copies MCP endpoint
+- Spec/README: MCP debug phase documented as shipped
 
 ### 1.0.0.7
 - Living **[spec.md](spec.md)** with Shipped / Next / Later roadmap (daily vs mood libraries, file tags, master mirror, MCP, backlog ideas)

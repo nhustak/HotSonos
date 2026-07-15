@@ -20,8 +20,14 @@
 ## Architecture
 - `src/HotSonos.Core` — platform-agnostic Sonos local UPnP/SOAP client (discovery, transport, favorites). No Windows/WPF dependency so it stays console-testable.
 - `src/HotSonos.Harness` — console harness for proving Core against live speakers.
-- `src/HotSonos.App` (later) — WPF system-tray app with global hotkeys; references Core.
+- `src/HotSonos.App` — WPF system-tray app with global hotkeys + loopback MCP; references Core.
 
 ## Sonos Control Notes
 - Local-only control over UPnP/SOAP on TCP port 1400; discovery via SSDP (UDP 1900). No cloud / no account.
 - No third-party Sonos NuGet dependency — the UPnP client is hand-rolled (decided).
+
+## Loopback MCP (debug / agent tools)
+- While the tray app is running with MCP enabled: `http://127.0.0.1:42341/mcp`
+- Tools: status, groups, zones, offline, refresh_devices, volumes, now_playing, favorites, settings summary, logs
+- Register in `C:\Project\_mcp\mcp-servers.json` as `hotsonos`, then run `sync-mcp.ps1`
+- Product roadmap (library tags, full MCP library phase): `spec.md`

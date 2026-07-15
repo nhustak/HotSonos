@@ -27,6 +27,7 @@ public sealed class TrayController : IDisposable
         Action OpenLogFolder,
         Action CopyDiagnostics,
         Action StopWake,
+        Action CopyMcpEndpoint,
         Action Exit);
 
     private readonly NotifyIcon _notifyIcon;
@@ -39,6 +40,7 @@ public sealed class TrayController : IDisposable
     private readonly ToolStripMenuItem _favoritesMenu;
     private readonly ToolStripMenuItem _offlineItem;
     private readonly ToolStripMenuItem _stopWakeItem;
+    private readonly ToolStripMenuItem _mcpItem;
 
     public TrayController(string versionLabel, Callbacks callbacks)
     {
@@ -76,6 +78,8 @@ public sealed class TrayController : IDisposable
             Enabled = false,
         };
         _menu.Items.Add(_stopWakeItem);
+        _mcpItem = new ToolStripMenuItem("MCP: (not running)", null, (_, _) => _callbacks.CopyMcpEndpoint());
+        _menu.Items.Add(_mcpItem);
         _menu.Items.Add("Open log folder", null, (_, _) => _callbacks.OpenLogFolder());
         _menu.Items.Add("Copy diagnostics", null, (_, _) => _callbacks.CopyDiagnostics());
         _menu.Items.Add("Exit", null, (_, _) => _callbacks.Exit());
@@ -148,6 +152,14 @@ public sealed class TrayController : IDisposable
 
     /// <summary>Enables the stop-wake tray item while a wake ramp/expand is active.</summary>
     public void SetWakeActive(bool active) => _stopWakeItem.Enabled = active;
+
+    /// <summary>Shows the live MCP endpoint in the tray (click copies it).</summary>
+    public void SetMcpEndpoint(string? endpoint)
+    {
+        _mcpItem.Text = string.IsNullOrWhiteSpace(endpoint)
+            ? "MCP: (not running)"
+            : $"MCP: {endpoint} (copy)";
+    }
 
     /// <summary>Sets the tray hover tooltip to the current track (truncated to fit).</summary>
     public void UpdateNowPlaying(string? line)
