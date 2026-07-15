@@ -346,10 +346,10 @@ public partial class App : System.Windows.Application
         }
 
         if (!_mainWindow.IsVisible)
-        {
-            _mainWindow.Show();
-            _mainWindow.RefreshSpeakers();
-        }
+            _mainWindow.Show(); // IsVisibleChanged kicks off device discovery
+        else
+            _mainWindow.RefreshDevicesInBackground(); // already open: still re-discover
+
         if (_mainWindow.WindowState == WindowState.Minimized)
             _mainWindow.WindowState = WindowState.Normal;
         _mainWindow.Activate();

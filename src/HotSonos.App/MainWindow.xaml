@@ -236,7 +236,7 @@
                     <CheckBox x:Name="WakeExpandCheckBox"
                               Content="After ramp: expand to all speakers and shuffle full library"
                               Margin="0,8,0,0" />
-                    <TextBlock Text="Starts on the selected room only, ramps volume, then optionally joins the whole house. PC must be awake with HotSonos running. Tray: Stop wake / volume ramp. Volume hotkeys cancel the ramp."
+                    <TextBlock Text="Starts on the selected room only, ramps volume, then optionally joins the whole house. Skipped if Sonos is already playing. PC must be awake with HotSonos running. Tray: Stop wake / volume ramp. Volume hotkeys cancel the ramp."
                                Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
                 </StackPanel>
 

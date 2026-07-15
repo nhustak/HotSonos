@@ -116,6 +116,7 @@ Device `SHUFFLE` mode is intentionally **not** used — it reuses a deterministi
 - Play source: **shuffle library** or a **favorite/playlist**
 - Optional after ramp: **expand to all speakers** + **full library shuffle** at end volume
 - Tray **Stop wake / volume ramp**; volume hotkeys cancel the ramp (skip expand)
+- **Skipped entirely** if any Sonos group is already playing (or transitioning) — same idea as nightly reset
 - Only while PC is awake and HotSonos is running
 
 ### Configuration

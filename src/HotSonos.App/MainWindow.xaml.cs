@@ -40,6 +40,8 @@ public partial class MainWindow : Window
     private ComboBox[] _favCombos = [];
     private bool _loadingStartupPreference;
     private bool _suppressRoomChange;
+    private bool _refreshInProgress;
+    private bool _loaded;
 
     public event EventHandler? HideToTrayRequested;
 
@@ -73,6 +75,7 @@ public partial class MainWindow : Window
         Title = $"{AppVersion.DisplayName} Settings";
         RestoreWindowGeometry();
         Loaded += OnLoaded;
+        IsVisibleChanged += OnIsVisibleChanged;
     }
 
     /// <summary>Applies the last saved position/size, if any; otherwise keeps the XAML defaults.</summary>
@@ -167,6 +170,17 @@ public partial class MainWindow : Window
         PopulateRooms();
         _ = LoadFavoritesAsync();
         _ = LoadSpeakerVolumesAsync();
+        _loaded = true;
+
+        // First open: full discovery in the background (same as every subsequent show).
+        RefreshDevicesInBackground();
+    }
+
+    private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        // Re-discover whenever Settings becomes visible from the tray (not only volumes).
+        if (_loaded && e.NewValue is true)
+            RefreshDevicesInBackground();
     }
 
     private void LoadWakeUiFromSettings()
@@ -205,8 +219,46 @@ public partial class MainWindow : Window
         WakeFavoriteComboBox.IsEnabled = fav;
     }
 
-    /// <summary>Re-reads every speaker's volume/mute; called each time the window is shown from the tray.</summary>
-    public void RefreshSpeakers() => _ = LoadSpeakerVolumesAsync();
+    /// <summary>
+    /// Full device discovery + favorites + speaker volumes, non-blocking.
+    /// Used when Settings opens and for the manual Refresh button.
+    /// </summary>
+    public void RefreshDevicesInBackground() => _ = RefreshDevicesAsync();
+
+    /// <summary>Legacy name kept for App callers; now runs full discovery.</summary>
+    public void RefreshSpeakers() => RefreshDevicesInBackground();
+
+    private async Task RefreshDevicesAsync()
+    {
+        if (_refreshInProgress)
+            return;
+
+        _refreshInProgress = true;
+        RefreshButton.IsEnabled = false;
+        SetStatus("Discovering Sonos devices…", warn: false);
+        try
+        {
+            var preferred = (RoomComboBox.SelectedItem as SonosGroup)?.CoordinatorRoom
+                ?? _settings.ActiveRoom
+                ?? _sonos.ActiveRoom;
+            await _sonos.RefreshAsync(preferred);
+            PopulateRooms();
+            await LoadFavoritesAsync();
+            await LoadSpeakerVolumesAsync();
+            SetStatus($"Found {_sonos.Groups.Count} group(s).", warn: false);
+            AppLog.Info($"Settings auto-refresh: {_sonos.Groups.Count} group(s)");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Settings refresh discovery failed", ex);
+            SetStatus($"Discovery failed: {ex.Message}", warn: true);
+        }
+        finally
+        {
+            RefreshButton.IsEnabled = true;
+            _refreshInProgress = false;
+        }
+    }
 
     private async Task LoadSpeakerVolumesAsync()
     {
@@ -358,29 +410,8 @@ public partial class MainWindow : Window
             : NoneLabel;
     }
 
-    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
-    {
-        SetStatus("Discovering Sonos devices…", warn: false);
-        RefreshButton.IsEnabled = false;
-        try
-        {
-            var preferred = (RoomComboBox.SelectedItem as SonosGroup)?.CoordinatorRoom;
-            await _sonos.RefreshAsync(preferred);
-            PopulateRooms();
-            await LoadFavoritesAsync();
-            await LoadSpeakerVolumesAsync();
-            SetStatus($"Found {_sonos.Groups.Count} group(s).", warn: false);
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("Settings refresh discovery failed", ex);
-            SetStatus($"Discovery failed: {ex.Message}", warn: true);
-        }
-        finally
-        {
-            RefreshButton.IsEnabled = true;
-        }
-    }
+    private void RefreshButton_Click(object sender, RoutedEventArgs e) =>
+        RefreshDevicesInBackground();
 
     private async void RoomComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {

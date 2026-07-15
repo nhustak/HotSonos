@@ -120,6 +120,22 @@ public sealed class WakeMusicService : IDisposable
             return;
         }
 
+        // Refresh topology, then bail if anything is already playing (anywhere).
+        try
+        {
+            await _sonos.RefreshAsync(_sonos.ActiveRoom).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Wake pre-check refresh failed; continuing with cached topology", ex);
+        }
+
+        if (await _sonos.IsAnythingPlayingAsync().ConfigureAwait(false))
+        {
+            AppLog.Info("Wake to music: skipped — Sonos is already playing");
+            return;
+        }
+
         CancelPreviousWakeCts();
         var cts = new CancellationTokenSource();
         _wakeCts = cts;
@@ -130,9 +146,22 @@ public sealed class WakeMusicService : IDisposable
 
         try
         {
+            // Re-check after acquiring the gate in case something started just now.
+            if (await _sonos.IsAnythingPlayingAsync(ct).ConfigureAwait(false))
+            {
+                AppLog.Info("Wake to music: skipped — Sonos started playing before wake could begin");
+                return;
+            }
+
             await _actionGate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                if (await _sonos.IsAnythingPlayingAsync(ct).ConfigureAwait(false))
+                {
+                    AppLog.Info("Wake to music: skipped — Sonos is already playing");
+                    return;
+                }
+
                 await ExecutePhaseAAsync(settings, ct).ConfigureAwait(false);
             }
             finally
@@ -168,16 +197,7 @@ public sealed class WakeMusicService : IDisposable
 
     private async Task ExecutePhaseAAsync(AppSettings settings, CancellationToken ct)
     {
-        // Keep ActiveRoom for hotkeys; refresh topology without forcing preferred room swap.
-        try
-        {
-            await _sonos.RefreshAsync(_sonos.ActiveRoom, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            AppLog.Warn("Wake refresh failed; continuing with cached topology", ex);
-        }
-
+        // Topology was refreshed in RunWakeAsync; keep ActiveRoom for hotkeys.
         var room = settings.WakeRoom;
         var group = _sonos.TryGetGroup(room) ?? _sonos.TryGetGroup(_sonos.ActiveRoom);
         if (group is null)

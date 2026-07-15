@@ -48,7 +48,7 @@ Settings shows every discovered speaker with its own volume slider and mute chec
 Optionally, once a night (default 3:00 AM), HotSonos silently regroups every speaker so you wake up to a synced system. **It never starts playback** — if anything is playing at that time, it skips entirely.
 
 ### ☀️ Wake to music
-A gentle alarm clock for Sonos. On the days you choose, at a set time, HotSonos starts music on a **selected room** at a low volume and **steps the volume up** on an interval until a target. Play source is either a **library shuffle** or a **favorite/playlist**. Optionally, when the ramp finishes, it **expands to every speaker** and starts a **full library shuffle**. Requires the PC to be awake with HotSonos running. Cancel mid-ramp from the tray (**Stop wake / volume ramp**) or by using a volume hotkey.
+A gentle alarm clock for Sonos. On the days you choose, at a set time, HotSonos starts music on a **selected room** at a low volume and **steps the volume up** on an interval until a target. Play source is either a **library shuffle** or a **favorite/playlist**. Optionally, when the ramp finishes, it **expands to every speaker** and starts a **full library shuffle**. **If anything is already playing on Sonos, wake does nothing.** Requires the PC to be awake with HotSonos running. Cancel mid-ramp from the tray (**Stop wake / volume ramp**) or by using a volume hotkey.
 
 ### 🎚️ Group-aware room picker
 Targets are shown as Sonos groups (e.g. a group containing every player shows as **"All Speakers"**). Commands route to the group coordinator automatically.

@@ -479,7 +479,7 @@ public sealed class SonosManager
     }
 
     /// <summary>True if any group coordinator is currently playing or mid-transition.</summary>
-    private async Task<bool> IsAnythingPlayingAsync(CancellationToken ct)
+    public async Task<bool> IsAnythingPlayingAsync(CancellationToken ct = default)
     {
         foreach (var group in Groups)
         {
