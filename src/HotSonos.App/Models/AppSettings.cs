@@ -110,6 +110,19 @@ public sealed class AppSettings
     /// <summary>Loopback port for MCP (default 42341). Endpoint: http://127.0.0.1:{port}/mcp</summary>
     public int McpPort { get; set; } = 42341;
 
+    // ---- Music library roots (filesystem; for future scan/tags; not Sonos UPnP) ----
+
+    /// <summary>
+    /// Local or UNC folder(s) that match Sonos Music Library share(s) — FLAC/MP3 playable set.
+    /// Used by future library index/tag tools; daily shuffle still uses Sonos <c>A:TRACKS</c> until scoped.
+    /// </summary>
+    public List<string> SonosLibraryRoots { get; set; } = [];
+
+    /// <summary>
+    /// Optional full archive root (may include hi-res files not in Sonos). Tags may dual-write here later.
+    /// </summary>
+    public string? MasterLibraryRoot { get; set; }
+
     /// <summary>Exactly four favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
 
@@ -175,6 +188,15 @@ public sealed class AppSettings
             WakeSource = WakeSourceShuffle;
         else
             WakeSource = WakeSourceFavorite;
+        SonosLibraryRoots ??= [];
+        SonosLibraryRoots = SonosLibraryRoots
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        MasterLibraryRoot = string.IsNullOrWhiteSpace(MasterLibraryRoot)
+            ? null
+            : MasterLibraryRoot.Trim();
         FavoriteSlots ??= [];
         while (FavoriteSlots.Count < FavoriteSlotCount)
             FavoriteSlots.Add(new FavoriteSlot());

@@ -197,9 +197,15 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         var lastChange = WebUtility.HtmlDecode(lastChangeMatch.Groups[1].Value);
 
         var state = SonosTransportStateParser.Parse(AttrVal(lastChange, "TransportState"));
+        var transportStatus = AttrVal(lastChange, "TransportStatus");
+        var trackUri = AttrVal(lastChange, "CurrentTrackURI")
+            ?? AttrVal(lastChange, "AVTransportURI");
+        if (!string.IsNullOrEmpty(trackUri))
+            trackUri = WebUtility.HtmlDecode(trackUri);
+
         var metaEscaped = AttrVal(lastChange, "CurrentTrackMetaData");
         if (string.IsNullOrEmpty(metaEscaped))
-            return new NowPlaying { State = state };
+            return new NowPlaying { State = state, TrackUri = trackUri, TransportStatus = transportStatus };
 
         var meta = WebUtility.HtmlDecode(metaEscaped);
         var art = Tag(meta, "upnp:albumArtURI");
@@ -212,6 +218,8 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
             Artist = Tag(meta, "upnp:artist") ?? Tag(meta, "dc:creator"),
             Album = Tag(meta, "upnp:album"),
             AlbumArtUri = string.IsNullOrEmpty(art) ? null : art,
+            TrackUri = trackUri,
+            TransportStatus = transportStatus,
             State = state,
         };
     }

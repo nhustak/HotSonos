@@ -166,6 +166,20 @@ public sealed class SonosManager
         _controller is null ? [] : await _controller.GetFavoritesAsync(ct).ConfigureAwait(false);
 
     /// <summary>
+    /// Discovers Music Library filesystem roots from Sonos <c>A:TRACKS</c>
+    /// (<c>x-file-cifs</c> URIs → UNC folders). Refreshes discovery if needed.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> DiscoverMusicLibraryRootsAsync(CancellationToken ct = default)
+    {
+        if (_controller is null)
+            await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos speakers found. Refresh devices first.");
+
+        return await _controller.DiscoverMusicLibraryRootsAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Executes an action and returns a short toast string (or null to show nothing).
     /// Throws on transport/network errors so the caller can surface them.
     /// </summary>

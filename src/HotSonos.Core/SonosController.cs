@@ -206,14 +206,40 @@ public sealed class SonosController
         await PlayAsync(ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Derives filesystem UNC roots for the local Music Library by browsing
+    /// <c>A:TRACKS</c> and parsing <c>x-file-cifs://</c> track URIs (same shares
+    /// Sonos indexes — no manual path entry required).
+    /// </summary>
+    public async Task<IReadOnlyList<string>> DiscoverMusicLibraryRootsAsync(CancellationToken ct = default)
+    {
+        var uncFiles = new List<string>();
+        await foreach (var (uri, _) in BrowseTrackPagesAsync(ct).ConfigureAwait(false))
+        {
+            if (TryCifsUriToUncFile(uri, out var unc))
+                uncFiles.Add(unc);
+        }
+
+        return DeriveLibraryRoots(uncFiles);
+    }
+
     /// <summary>Browses every track under the local Music Library ("A:TRACKS"), paginating as needed.</summary>
     private async Task<IReadOnlyList<(string Uri, XElement Item)>> BrowseAllTracksAsync(CancellationToken ct)
     {
         var tracks = new List<(string Uri, XElement Item)>();
+        await foreach (var pair in BrowseTrackPagesAsync(ct).ConfigureAwait(false))
+            tracks.Add(pair);
+        return tracks;
+    }
+
+    private async IAsyncEnumerable<(string Uri, XElement Item)> BrowseTrackPagesAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
         var startingIndex = 0;
 
         while (true)
         {
+            ct.ThrowIfCancellationRequested();
             var response = await _soap.InvokeAsync(
                 CoordinatorIp, SonosService.ContentDirectory, "Browse",
                 [
@@ -236,16 +262,114 @@ public sealed class SonosController
                 {
                     var uri = item.Descendants().FirstOrDefault(e => e.Name.LocalName == "res")?.Value;
                     if (!string.IsNullOrEmpty(uri))
-                        tracks.Add((uri, item));
+                        yield return (uri, item);
                 }
             }
 
             startingIndex += numberReturned;
             if (numberReturned == 0 || startingIndex >= totalMatches)
-                break;
+                yield break;
+        }
+    }
+
+    /// <summary>
+    /// <c>x-file-cifs://host/share/path/file.flac</c> → <c>\\host\share\path\file.flac</c>.
+    /// </summary>
+    internal static bool TryCifsUriToUncFile(string uri, out string uncFile)
+    {
+        uncFile = "";
+        const string prefix = "x-file-cifs://";
+        if (string.IsNullOrWhiteSpace(uri)
+            || !uri.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string decoded;
+        try
+        {
+            decoded = Uri.UnescapeDataString(uri[prefix.Length..]);
+        }
+        catch
+        {
+            return false;
         }
 
-        return tracks;
+        decoded = decoded.Replace('/', '\\').TrimStart('\\');
+        if (string.IsNullOrWhiteSpace(decoded))
+            return false;
+
+        uncFile = @"\\" + decoded;
+        return true;
+    }
+
+    /// <summary>
+    /// Groups by <c>\\host\share</c>, then takes the longest common directory prefix
+    /// of files in that share — that folder is the Sonos Music Library root.
+    /// </summary>
+    internal static IReadOnlyList<string> DeriveLibraryRoots(IReadOnlyList<string> uncFiles)
+    {
+        if (uncFiles.Count == 0)
+            return [];
+
+        var byShare = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in uncFiles)
+        {
+            var shareKey = ShareKey(file);
+            if (shareKey is null) continue;
+            if (!byShare.TryGetValue(shareKey, out var list))
+            {
+                list = [];
+                byShare[shareKey] = list;
+            }
+            list.Add(file);
+        }
+
+        var roots = new List<string>();
+        foreach (var (_, files) in byShare)
+        {
+            var dirs = files
+                .Select(f => System.IO.Path.GetDirectoryName(f))
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Cast<string>()
+                .ToList();
+            if (dirs.Count == 0) continue;
+            var root = LongestCommonPathPrefix(dirs);
+            if (!string.IsNullOrWhiteSpace(root))
+                roots.Add(root.TrimEnd('\\'));
+        }
+
+        return roots
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string? ShareKey(string uncFile)
+    {
+        // \\host\share\...
+        var parts = uncFile.TrimStart('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2) return null;
+        return $@"\\{parts[0]}\{parts[1]}";
+    }
+
+    private static string LongestCommonPathPrefix(IReadOnlyList<string> paths)
+    {
+        if (paths.Count == 0) return "";
+        if (paths.Count == 1) return paths[0];
+
+        var split = paths
+            .Select(p => p.TrimEnd('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries))
+            .ToList();
+        var minLen = split.Min(p => p.Length);
+        var common = new List<string>();
+        for (var i = 0; i < minLen; i++)
+        {
+            var part = split[0][i];
+            if (split.Any(p => !string.Equals(p[i], part, StringComparison.OrdinalIgnoreCase)))
+                break;
+            common.Add(part);
+        }
+
+        return common.Count == 0 ? "" : @"\\" + string.Join(@"\", common);
     }
 
     /// <summary>

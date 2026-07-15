@@ -12,6 +12,8 @@ public sealed class TrayController : IDisposable
 {
     public sealed record Callbacks(
         Action OpenSettings,
+        Action OpenMcpDebug,
+        Action OpenLibrary,
         Action Refresh,
         Action FreshStart,
         Action ShuffleLibrary,
@@ -51,6 +53,8 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add(new ToolStripMenuItem(versionLabel) { Enabled = false });
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Open HotSonos", null, (_, _) => _callbacks.OpenSettings());
+        _menu.Items.Add("Library…", null, (_, _) => _callbacks.OpenLibrary());
+        _menu.Items.Add("MCP Debug…", null, (_, _) => _callbacks.OpenMcpDebug());
         _menu.Items.Add("Refresh devices", null, (_, _) => _callbacks.Refresh());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("🔄 Restart fresh (re-sync all + shuffle)", null, (_, _) => _callbacks.FreshStart());

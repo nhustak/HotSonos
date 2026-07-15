@@ -1,8 +1,12 @@
 using System.ComponentModel;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using HotSonos.App.Infrastructure;
+using HotSonos.App.Library;
+using HotSonos.App.Mcp;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
 using TextBox = System.Windows.Controls.TextBox;
@@ -19,9 +23,13 @@ public partial class MainWindow : Window
     private readonly SonosManager _sonos;
     private readonly ConfigStore _store;
     private readonly AppSettings _settings;
+    private readonly LibraryService? _library;
     private readonly Func<IReadOnlyList<HotsonosAction>> _applyBindings;
     private readonly Action<string> _onRoomChanged;
     private readonly Action<HotsonosAction> _runAction;
+    private readonly Func<string?> _mcpEndpoint;
+    private DispatcherTimer? _libraryStatusTimer;
+    private bool _mcpUiHooked;
 
     // Working copies edited by the UI; copied back into _settings on Save.
     private readonly HotkeyConfig _levelVolumes;
@@ -49,16 +57,20 @@ public partial class MainWindow : Window
         SonosManager sonos,
         ConfigStore store,
         AppSettings settings,
+        LibraryService? library,
         Func<IReadOnlyList<HotsonosAction>> applyBindings,
         Action<string> onRoomChanged,
-        Action<HotsonosAction> runAction)
+        Action<HotsonosAction> runAction,
+        Func<string?>? mcpEndpoint = null)
     {
         _sonos = sonos;
         _store = store;
         _settings = settings.EnsureShape();
+        _library = library;
         _applyBindings = applyBindings;
         _onRoomChanged = onRoomChanged;
         _runAction = runAction;
+        _mcpEndpoint = mcpEndpoint ?? (() => null);
 
         _levelVolumes = Clone(_settings.LevelVolumes);
         _freshStart = Clone(_settings.FreshStart);
@@ -72,10 +84,23 @@ public partial class MainWindow : Window
         _favHotkeys = _settings.FavoriteSlots.Select(s => Clone(s.Hotkey)).ToArray();
 
         InitializeComponent();
-        Title = $"{AppVersion.DisplayName} Settings";
+        Title = AppVersion.DisplayName;
         RestoreWindowGeometry();
         Loaded += OnLoaded;
         IsVisibleChanged += OnIsVisibleChanged;
+        Closed += OnClosed;
+    }
+
+    /// <summary>Select Settings, Library, or MCP Debug tab by name.</summary>
+    public void SelectTab(string tab)
+    {
+        if (string.Equals(tab, "library", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedItem = LibraryTab;
+        else if (string.Equals(tab, "mcp", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "mcp debug", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedItem = McpTab;
+        else
+            MainTabs.SelectedIndex = 0;
     }
 
     /// <summary>Applies the last saved position/size, if any; otherwise keeps the XAML defaults.</summary>
@@ -166,8 +191,15 @@ public partial class MainWindow : Window
         NightlyResetReshuffleCheckBox.IsChecked = _settings.NightlyResetReshuffle;
         McpEnabledCheckBox.IsChecked = _settings.McpEnabled;
         McpPortBox.Text = _settings.McpPort.ToString();
+        SonosLibraryRootsBox.Text = string.Join(Environment.NewLine, _settings.SonosLibraryRoots);
+        MasterLibraryRootBox.Text = _settings.MasterLibraryRoot ?? string.Empty;
         LoadWakeUiFromSettings();
         LoadStartupPreference();
+        RefreshLibraryStatusUi();
+        StartLibraryStatusTimer();
+        HookMcpActivityUi();
+        RefreshMcpEndpointUi();
+        RefreshMcpActivityList(scrollToEnd: true);
 
         PopulateRooms();
         _ = LoadFavoritesAsync();
@@ -176,6 +208,339 @@ public partial class MainWindow : Window
 
         // First open: full discovery in the background (same as every subsequent show).
         RefreshDevicesInBackground();
+    }
+
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        if (_mcpUiHooked)
+        {
+            McpActivityLog.Changed -= OnMcpActivityChanged;
+            McpActivityLog.LibrarySearchPublished -= OnLibrarySearchFromMcp;
+            _mcpUiHooked = false;
+        }
+        _libraryStatusTimer?.Stop();
+    }
+
+    private void HookMcpActivityUi()
+    {
+        if (_mcpUiHooked) return;
+        McpActivityLog.BindDispatcher(Dispatcher);
+        McpActivityLog.Changed += OnMcpActivityChanged;
+        McpActivityLog.LibrarySearchPublished += OnLibrarySearchFromMcp;
+        _mcpUiHooked = true;
+    }
+
+    private void OnMcpActivityChanged(object? sender, EventArgs e) =>
+        Dispatcher.BeginInvoke(() =>
+        {
+            RefreshMcpActivityList(scrollToEnd: McpAutoScrollCheck.IsChecked == true);
+            RefreshMcpEndpointUi();
+        });
+
+    private void OnLibrarySearchFromMcp(object? sender, LibrarySearchPublishedEventArgs e) =>
+        Dispatcher.BeginInvoke(() => ApplyMcpLibraryPayload(e.Tool, e.ResultJson));
+
+    private void StartLibraryStatusTimer()
+    {
+        _libraryStatusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _libraryStatusTimer.Tick += (_, _) =>
+        {
+            RefreshLibraryStatusUi();
+            if (MainTabs.SelectedItem == McpTab)
+                RefreshMcpEndpointUi();
+        };
+        _libraryStatusTimer.Start();
+    }
+
+    private void RefreshLibraryStatusUi()
+    {
+        if (_library is null)
+        {
+            var missing = "Library cache: service not available.";
+            LibraryStatusText.Text = missing;
+            LibTabStatusText.Text = missing;
+            return;
+        }
+
+        var st = _library.GetStatus();
+        string line;
+        if (st.IsScanning)
+        {
+            line =
+                $"Scanning… {st.Phase ?? ""}  |  tracks in cache: {st.TrackCount}  |  last seen {st.LastScanFilesSeen}, updated {st.LastScanFilesUpdated}";
+            LibraryRescanButton.IsEnabled = false;
+        }
+        else
+        {
+            LibraryRescanButton.IsEnabled = true;
+            var last = st.LastScanFinishedUtc is { } t
+                ? t.ToLocalTime().ToString("g")
+                : "never";
+            var err = string.IsNullOrWhiteSpace(st.LastScanError) ? "" : $"  |  error: {st.LastScanError}";
+            line =
+                $"Cache: {st.TrackCount} track(s)  |  roots: {st.RootsConfigured}  |  last scan: {last}  |  updated {st.LastScanFilesUpdated}, skipped {st.LastScanFilesSkippedUnchanged}, removed {st.LastScanFilesRemoved}{err}";
+        }
+
+        if (st.SonosUnplayableCount > 0)
+            line += $"  |  ⚠ Sonos-unplayable (format): {st.SonosUnplayableCount}";
+        if (_library?.NeedsAudioPropsRescan() == true)
+            line += "  |  re-scan needed for bitrates (Force re-read tags)";
+
+        LibraryStatusText.Text = line;
+        LibTabStatusText.Text = line + (string.IsNullOrWhiteSpace(st.DatabasePath) ? "" : $"\nDB: {st.DatabasePath}");
+    }
+
+    private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loaded) return;
+        if (MainTabs.SelectedItem == McpTab)
+        {
+            RefreshMcpEndpointUi();
+            RefreshMcpActivityList(scrollToEnd: false);
+        }
+        else if (MainTabs.SelectedItem == LibraryTab)
+            RefreshLibraryStatusUi();
+    }
+
+    private void RefreshMcpEndpointUi()
+    {
+        var ep = _mcpEndpoint();
+        var enabled = _settings.McpEnabled;
+        if (!string.IsNullOrWhiteSpace(ep))
+            McpEndpointText.Text = $"Endpoint: {ep}  ·  listening";
+        else if (enabled)
+            McpEndpointText.Text = $"Endpoint: http://127.0.0.1:{_settings.McpPort}/mcp  ·  starting or not bound yet";
+        else
+            McpEndpointText.Text = "MCP disabled in Settings (enable + restart if needed).";
+    }
+
+    private void RefreshMcpActivityList(bool scrollToEnd)
+    {
+        var snap = McpActivityLog.Snapshot();
+        var selected = McpActivityList.SelectedItem as McpActivityEntry;
+        McpActivityList.ItemsSource = snap;
+        if (selected is not null)
+        {
+            var match = snap.FirstOrDefault(e =>
+                e.TimeLocal == selected.TimeLocal && e.Tool == selected.Tool && e.DurationMs == selected.DurationMs);
+            if (match is not null)
+                McpActivityList.SelectedItem = match;
+        }
+
+        if (scrollToEnd && snap.Count > 0)
+        {
+            McpActivityList.SelectedItem = snap[^1];
+            McpActivityList.ScrollIntoView(snap[^1]);
+            McpDetailBox.Text = snap[^1].DetailText;
+        }
+    }
+
+    private void McpActivityList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (McpActivityList.SelectedItem is McpActivityEntry entry)
+            McpDetailBox.Text = entry.DetailText;
+    }
+
+    private void McpClearLog_Click(object sender, RoutedEventArgs e)
+    {
+        McpActivityLog.Clear();
+        McpDetailBox.Text = "";
+        RefreshMcpActivityList(scrollToEnd: false);
+    }
+
+    private void McpCopyEndpoint_Click(object sender, RoutedEventArgs e)
+    {
+        var ep = _mcpEndpoint() ?? $"http://127.0.0.1:{_settings.McpPort}/mcp";
+        try
+        {
+            System.Windows.Clipboard.SetText(ep);
+            SetStatus($"Copied {ep}", warn: false);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Clipboard failed: {ex.Message}", warn: true);
+        }
+    }
+
+    private void LibrarySearchButton_Click(object sender, RoutedEventArgs e) =>
+        RunLibrarySearch(LibrarySearchBox.Text, browse: false);
+
+    private void LibraryBrowseButton_Click(object sender, RoutedEventArgs e) =>
+        RunLibrarySearch(null, browse: true);
+
+    private void LibrarySearchBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            RunLibrarySearch(LibrarySearchBox.Text, browse: false);
+        }
+    }
+
+    private void LibraryUnplayableButton_Click(object sender, RoutedEventArgs e)
+    {
+        LibraryUnplayableOnlyCheck.IsChecked = true;
+        RunLibrarySearch(LibrarySearchBox.Text, browse: true);
+    }
+
+    private void RunLibrarySearch(string? query, bool browse)
+    {
+        if (_library is null)
+        {
+            SetStatus("Library service not available.", warn: true);
+            return;
+        }
+
+        var q = browse || string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+        var unplayableOnly = LibraryUnplayableOnlyCheck.IsChecked == true;
+        var tracks = _library.Search(q, limit: 100, offset: 0, sonosUnplayableOnly: unplayableOnly);
+        LibraryResultsGrid.ItemsSource = tracks.Select(t => new LibraryResultRow(t)).ToList();
+        var st = _library.GetStatus();
+        var filter = unplayableOnly ? " [Sonos-unplayable only]" : "";
+        LibraryResultsMetaText.Text = q is null
+            ? $"Browse{filter}: {tracks.Count} shown · cache {st.TrackCount} · unplayable {st.SonosUnplayableCount}."
+            : $"Search “{q}”{filter}: {tracks.Count} hit(s) · cache {st.TrackCount} · unplayable {st.SonosUnplayableCount}.";
+        LibraryMcpResultBox.Visibility = Visibility.Collapsed;
+        SetStatus(LibraryResultsMetaText.Text, warn: false);
+    }
+
+    private void ApplyMcpLibraryPayload(string tool, string? json)
+    {
+        LibraryMcpResultBox.Visibility = Visibility.Visible;
+        LibraryMcpResultBox.Text = json ?? "";
+        LibraryResultsMetaText.Text = $"Last MCP library tool: {tool} @ {DateTime.Now:T}";
+
+        if (string.IsNullOrWhiteSpace(json))
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("tracks", out var tracksEl) && tracksEl.ValueKind == JsonValueKind.Array)
+            {
+                var rows = new List<LibraryResultRow>();
+                foreach (var t in tracksEl.EnumerateArray())
+                    rows.Add(LibraryResultRow.FromJson(t));
+                LibraryResultsGrid.ItemsSource = rows;
+                LibraryResultsMetaText.Text =
+                    $"MCP {tool}: {rows.Count} track row(s) · {DateTime.Now:T}";
+            }
+            else if (root.TryGetProperty("track", out var one) && one.ValueKind == JsonValueKind.Object)
+            {
+                LibraryResultsGrid.ItemsSource = new[] { LibraryResultRow.FromJson(one) };
+            }
+
+            // Soft-hint: if user is on Settings, status line still updates; switch optional.
+            if (MainTabs.SelectedItem != LibraryTab && tool is "library_search" or "library_get_track")
+                SetStatus($"MCP {tool} → see Library tab for results", warn: false);
+        }
+        catch
+        {
+            // JSON parse soft-fail; raw box still shows payload.
+        }
+    }
+
+    private static string? GetStr(JsonElement el, string name) =>
+        el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+
+    private sealed record LibraryResultRow(
+        string? Title,
+        string? Artist,
+        string? Album,
+        string? Format,
+        string SonosOk,
+        string? Issue,
+        string? Tempo,
+        string Path)
+    {
+        public LibraryResultRow(LibraryTrack t)
+            : this(
+                t.Title,
+                t.Artist,
+                t.Album,
+                t.AudioFormatLabel,
+                t.SonosPlayable ? "OK" : "NO",
+                t.SonosPlayIssue,
+                t.Tempo,
+                t.Path)
+        { }
+
+        public static LibraryResultRow FromJson(JsonElement t)
+        {
+            var playable = true;
+            if (t.TryGetProperty("SonosPlayable", out var sp) || t.TryGetProperty("sonosPlayable", out sp))
+            {
+                if (sp.ValueKind is JsonValueKind.False) playable = false;
+                else if (sp.ValueKind is JsonValueKind.True) playable = true;
+                else if (sp.ValueKind is JsonValueKind.Number) playable = sp.GetInt32() != 0;
+            }
+
+            return new LibraryResultRow(
+                GetStr(t, "Title") ?? GetStr(t, "title"),
+                GetStr(t, "Artist") ?? GetStr(t, "artist"),
+                GetStr(t, "Album") ?? GetStr(t, "album"),
+                GetStr(t, "audio") ?? GetStr(t, "Audio") ?? GetStr(t, "Codec") ?? GetStr(t, "codec"),
+                playable ? "OK" : "NO",
+                GetStr(t, "SonosPlayIssue") ?? GetStr(t, "sonosPlayIssue"),
+                GetStr(t, "Tempo") ?? GetStr(t, "tempo"),
+                GetStr(t, "Path") ?? GetStr(t, "path") ?? "");
+        }
+    }
+
+    private void LibraryRescanButton_Click(object sender, RoutedEventArgs e) => StartLibraryRescan(forceAll: false);
+
+    private void LibraryForceRescanButton_Click(object sender, RoutedEventArgs e) => StartLibraryRescan(forceAll: true);
+
+    private async void DiscoverLibraryRootsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_library is null)
+        {
+            SetStatus("Library service not available.", warn: true);
+            return;
+        }
+
+        SetStatus("Discovering Music Library roots from Sonos…", warn: false);
+        try
+        {
+            var (ok, message, roots) = await _library.DiscoverRootsFromSonosAsync().ConfigureAwait(true);
+            SonosLibraryRootsBox.Text = string.Join(Environment.NewLine, roots);
+            SetStatus(message, warn: !ok);
+            RefreshLibraryStatusUi();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Discover library roots UI failed", ex);
+            SetStatus(ex.Message, warn: true);
+        }
+    }
+
+    private void StartLibraryRescan(bool forceAll)
+    {
+        // Persist any manual path edits first (discovery also saves).
+        try
+        {
+            CommitWorkingValuesToSettings();
+            _store.Save(_settings);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Save before library rescan failed", ex);
+            SetStatus($"Could not save settings: {ex.Message}", warn: true);
+            return;
+        }
+
+        if (_library is null)
+        {
+            SetStatus("Library service not available.", warn: true);
+            return;
+        }
+
+        // Empty roots → discover from Sonos inside the scan pipeline.
+        var rediscover = _settings.SonosLibraryRoots.Count == 0;
+        var (started, message) = _library.RequestRescan(forceAll, rediscoverRoots: rediscover);
+        SetStatus(message, warn: !started);
+        RefreshLibraryStatusUi();
     }
 
     private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -553,7 +918,25 @@ public partial class MainWindow : Window
         if (int.TryParse(McpPortBox.Text, out var mcpPort) && mcpPort is >= 1024 and <= 65535)
             _settings.McpPort = mcpPort;
 
+        _settings.SonosLibraryRoots = SplitLibraryRoots(SonosLibraryRootsBox.Text);
+        _settings.MasterLibraryRoot = string.IsNullOrWhiteSpace(MasterLibraryRootBox.Text)
+            ? null
+            : MasterLibraryRootBox.Text.Trim();
+
         CommitWakeUiToSettings();
+    }
+
+    /// <summary>Parses multiline path input into distinct trimmed roots.</summary>
+    private static List<string> SplitLibraryRoots(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return [];
+
+        return text
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(p => p.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private void CommitWakeUiToSettings()

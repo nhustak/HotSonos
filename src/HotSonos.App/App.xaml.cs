@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using HotSonos.App.Infrastructure;
+using HotSonos.App.Library;
 using HotSonos.App.Mcp;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
@@ -14,8 +15,11 @@ namespace HotSonos.App;
 public partial class App : System.Windows.Application
 {
     private const string SingleInstanceMutexName = "HotSonos.SingleInstance.A0E1";
+    private const string ShowWindowEventName = "Local\\HotSonos.ShowWindow.A0E1";
 
     private Mutex? _singleInstanceMutex;
+    private EventWaitHandle? _showWindowEvent;
+    private Thread? _showWindowListener;
     private ConfigStore _store = null!;
     private AppSettings _settings = null!;
     private SonosManager _sonos = null!;
@@ -28,6 +32,7 @@ public partial class App : System.Windows.Application
     private WakeMusicService? _wake;
     private HotSonosMcpHost? _mcpHost;
     private HotSonosMcpState? _mcpState;
+    private LibraryService? _library;
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private bool _isExiting;
 
@@ -38,9 +43,51 @@ public partial class App : System.Windows.Application
         _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var isNew);
         if (!isNew)
         {
-            // Another HotSonos is already running; exit quietly.
+            // Another instance owns the tray — ask it to show the window, then exit.
+            try
+            {
+                if (EventWaitHandle.TryOpenExisting(ShowWindowEventName, out var showEvt))
+                {
+                    showEvt.Set();
+                    showEvt.Dispose();
+                }
+                else
+                {
+                    System.Windows.MessageBox.Show(
+                        "HotSonos is already running (check the system tray near the clock).\n\n" +
+                        "If you don't see the icon, open the hidden icons overflow (^).",
+                        "HotSonos",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+            }
+            catch
+            {
+                System.Windows.MessageBox.Show(
+                    "HotSonos is already running in the system tray.",
+                    "HotSonos",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+
             Shutdown();
             return;
+        }
+
+        try
+        {
+            _showWindowEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName);
+            _showWindowListener = new Thread(ShowWindowListenerLoop)
+            {
+                IsBackground = true,
+                Name = "HotSonos.ShowWindowListener",
+            };
+            _showWindowListener.Start();
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: second-instance activate just won't work.
+            System.Diagnostics.Debug.WriteLine(ex);
         }
 
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -65,7 +112,14 @@ public partial class App : System.Windows.Application
             AppLog.Error("Unobserved task exception", ex.Exception);
             ex.SetObserved();
         };
+        AppDomain.CurrentDomain.UnhandledException += (_, ex) =>
+        {
+            var err = ex.ExceptionObject as Exception;
+            AppLog.Error("AppDomain unhandled exception", err);
+        };
 
+        try
+        {
         _store = new ConfigStore();
         _settings = _store.Load();
 
@@ -88,11 +142,21 @@ public partial class App : System.Windows.Application
             () => Dispatcher.InvokeAsync(() => _tray?.SetWakeActive(_wake?.IsActive == true)),
             _actionGate);
 
+        _library = new LibraryService(
+            () => _settings,
+            discoverRootsFromSonos: ct => _sonos.DiscoverMusicLibraryRootsAsync(ct),
+            persistSettings: () =>
+            {
+                try { _store.Save(_settings); }
+                catch (Exception ex) { AppLog.Warn("Settings save after library root discovery failed", ex); }
+            });
+
         _mcpState = new HotSonosMcpState
         {
             Sonos = _sonos,
             Settings = () => _settings,
             Wake = _wake,
+            Library = _library,
             GetLastNowPlaying = () => _lastNowPlaying,
             RefreshDevicesAsync = McpRefreshDevicesAsync,
             ExecuteActionAsync = McpExecuteActionAsync,
@@ -104,6 +168,8 @@ public partial class App : System.Windows.Application
             AppVersion.DisplayName,
             new TrayController.Callbacks(
                 OpenSettings: ShowMainWindow,
+                OpenMcpDebug: () => ShowMainWindowTab("mcp"),
+                OpenLibrary: () => ShowMainWindowTab("library"),
                 Refresh: OnTrayRefresh,
                 FreshStart: () => _ = ExecuteActionAsync(HotsonosAction.FreshStart),
                 ShuffleLibrary: () => _ = ExecuteActionAsync(HotsonosAction.ShuffleLibrary),
@@ -132,6 +198,29 @@ public partial class App : System.Windows.Application
 
         _ = InitialDiscoveryAsync();
         _ = StartMcpIfEnabledAsync();
+
+        // Empty cache: discover roots from Sonos (if needed) and scan in the background.
+        if (_library.GetStatus().TrackCount == 0)
+        {
+            var (started, msg) = _library.RequestRescan(forceAll: false, rediscoverRoots: false);
+            if (started) AppLog.Info($"Library auto-scan: {msg}");
+            else AppLog.Info($"Library auto-scan skipped: {msg}");
+        }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Fatal startup failure", ex);
+            try
+            {
+                System.Windows.MessageBox.Show(
+                    $"HotSonos failed to start:\n\n{ex.Message}\n\nSee logs under %LocalAppData%\\HotSonos\\logs",
+                    "HotSonos",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch { /* ignore */ }
+            Shutdown();
+        }
     }
 
     private async Task StartMcpIfEnabledAsync()
@@ -387,6 +476,9 @@ public partial class App : System.Windows.Application
     private void OnNowPlayingChanged(NowPlaying nowPlaying)
     {
         // Raised on a background (listener) thread — marshal to the UI thread.
+        // Cross-check library cache for format flags; Sonos rarely reports "can't play".
+        TryLogUnplayableNowPlaying(nowPlaying);
+
         Dispatcher.InvokeAsync(() =>
         {
             _lastNowPlaying = nowPlaying;
@@ -394,6 +486,47 @@ public partial class App : System.Windows.Application
             if (_settings.ShowFlyoutOnTrackChange || _settings.FlyoutPinned)
                 EnsureFlyout().ShowNowPlaying(nowPlaying);
         });
+    }
+
+    /// <summary>
+    /// When GENA reports a track (or TransportStatus error), look up the file in the
+    /// library cache and log if format heuristics say Sonos should not play it.
+    /// Live "skip because unplayable" is still imperfect — speakers often just advance.
+    /// </summary>
+    private void TryLogUnplayableNowPlaying(NowPlaying nowPlaying)
+    {
+        try
+        {
+            if (_library is null)
+                return;
+
+            var status = nowPlaying.TransportStatus;
+            if (!string.IsNullOrWhiteSpace(status)
+                && status.Contains("ERROR", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Warn(
+                    $"Sonos TransportStatus={status} title={nowPlaying.Title} uri={nowPlaying.TrackUri}");
+            }
+
+            if (string.IsNullOrWhiteSpace(nowPlaying.TrackUri)
+                && string.IsNullOrWhiteSpace(nowPlaying.Title))
+                return;
+
+            var track = _library.FindBySonosUri(nowPlaying.TrackUri);
+            if (track is null)
+                return;
+
+            if (!track.SonosPlayable)
+            {
+                AppLog.Warn(
+                    $"Now playing may be Sonos-unplayable (format): {track.Title} — {track.Artist} | " +
+                    $"{track.AudioFormatLabel} | {track.SonosPlayIssue} | {track.Path}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Unplayable now-playing check failed", ex);
+        }
     }
 
     private void OnTrayRefresh() => _ = OnTrayRefreshAsync();
@@ -432,8 +565,9 @@ public partial class App : System.Windows.Application
     {
         if (_mainWindow is null)
         {
-            _mainWindow = new MainWindow(_sonos, _store, _settings, ApplyBindings, OnRoomChangedFromWindow,
-                action => _ = ExecuteActionAsync(action));
+            _mainWindow = new MainWindow(_sonos, _store, _settings, _library, ApplyBindings, OnRoomChangedFromWindow,
+                action => _ = ExecuteActionAsync(action),
+                mcpEndpoint: () => _mcpHost?.Endpoint ?? _mcpState?.Endpoint);
             _mainWindow.HideToTrayRequested += (_, _) => _mainWindow?.Hide();
             _mainWindow.Closing += OnMainWindowClosing;
         }
@@ -446,6 +580,47 @@ public partial class App : System.Windows.Application
         if (_mainWindow.WindowState == WindowState.Minimized)
             _mainWindow.WindowState = WindowState.Normal;
         _mainWindow.Activate();
+    }
+
+    /// <summary>Open main window on a specific tab (settings | library | mcp).</summary>
+    private void ShowMainWindowTab(string tab)
+    {
+        ShowMainWindow();
+        _mainWindow?.SelectTab(tab);
+    }
+
+    /// <summary>Background wait: second-instance launches set this event to surface the UI.</summary>
+    private void ShowWindowListenerLoop()
+    {
+        var evt = _showWindowEvent;
+        if (evt is null) return;
+
+        try
+        {
+            while (!_isExiting)
+            {
+                if (!evt.WaitOne(TimeSpan.FromSeconds(1)))
+                    continue;
+                if (_isExiting) break;
+                try
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        ShowMainWindow();
+                        _tray?.ShowBalloon("HotSonos", "Already running — opened Settings.");
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Show-window signal failed", ex);
+                }
+            }
+        }
+        catch (ObjectDisposedException) { /* exit */ }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Show-window listener ended", ex);
+        }
     }
 
     private void OnMainWindowClosing(object? sender, CancelEventArgs e)
@@ -475,8 +650,13 @@ public partial class App : System.Windows.Application
         _isExiting = true;
         AppLog.Info("Exit requested");
 
+        try { _showWindowEvent?.Set(); } catch { /* exit */ }
+        try { _showWindowEvent?.Dispose(); } catch { /* exit */ }
+        _showWindowEvent = null;
+
         _nightlyTimer?.Dispose();
         _wake?.Dispose();
+        try { _library?.Dispose(); } catch { /* exit */ }
         try { _mcpHost?.StopAsync().Wait(TimeSpan.FromSeconds(2)); } catch { /* exit */ }
         _hotkeys?.Dispose();
 

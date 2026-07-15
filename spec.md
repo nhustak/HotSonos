@@ -2,7 +2,88 @@
 
 > **Status**: Living product + roadmap spec (2026-07-15).  
 > Prefer this file over chat history when requirements conflict.  
-> Sections are marked **Shipped**, **Next**, or **Later** so agents do not implement the wrong phase by accident.
+> Sections are marked **Shipped**, **Next**, or **Later** so agents do not implement the wrong phase by accident.  
+> **Agents: read §0 (progress) first after any context compression.**
+
+---
+
+## 0. Implementation progress (agent handoff)
+
+> Update this section **in the same task** whenever library-plan or MCP work advances. This is the resume point after context compression.
+
+### Snapshot (2026-07-15)
+
+| Item | State |
+|------|--------|
+| **Git HEAD (last push)** | `0bb4d7a` — MCP control tools (play, volume, shuffle, wake, discovery state) |
+| **Working tree** | **Dirty / uncommitted** — library steps 1–2 + **MCP Debug / Library UI tabs**; not committed yet |
+| **App version** | `1.0.0.8` (`Directory.Build.props`) — no version bump yet |
+| **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
+| **Main window** | Tabs: **Settings** · **Library** (search/results) · **MCP Debug** (live tool command log). Tray: Library… / MCP Debug… |
+| **User paths** | Prefer **Discover from Sonos** (`A:TRACKS` → `x-file-cifs` → UNC roots). Manual override still allowed. Rescan auto-discovers when roots empty. |
+| **Library DB** | `%LocalAppData%\HotSonos\library.db` (rebuildable; not sole tag store) |
+
+### Library intelligence plan (§7.7) — checklist
+
+| Step | Status | Notes |
+|------|--------|--------|
+| **1. Config: Sonos library root(s) + optional master root** | **DONE (uncommitted)** | Settings UI, `AppSettings`, MCP `get_library_config` / settings summary. Does **not** change shuffle. |
+| **2. Scanner → SQLite cache (FLAC/MP3 tags)** | **DONE (uncommitted)** | TagLib# read; SQLite cache; Settings rescan; MCP status/rescan/search/get. Skip unchanged by size/mtime. |
+| **2b. Audio props + Sonos-unplayable flag** | **DONE (uncommitted)** | Sample rate, bit depth, bitrate, channels, codec; heuristic SonosPlayable (≤48 kHz, FLAC ≤24-bit, …). UI + MCP filter. GENA logs when now-playing matches unplayable cache row / TransportStatus ERROR. |
+| **3. Read/write `HOTSONOS_TEMPO` (+ standard fields)** | **NEXT** | Write into FLAC/MP3 on share (read of tempo already cached if present) |
+| **4. Master match + optional dual write** | Pending | Uses `MasterLibraryRoot` |
+| **5. MCP set_tags** (+ polish search) | Partial | Read search/get shipped with step 2; **set_tags** still pending |
+| **6. Playlist create from filter + play on Sonos** | Pending | |
+| **7. Optional Sonos `SQ:` create** | Pending | |
+| **8. Optional BPM analysis (suggest only)** | Pending | Never sole source of truth |
+
+### Step 1 — what landed (files)
+
+| Area | Location |
+|------|----------|
+| Model | `src/HotSonos.App/Models/AppSettings.cs` — `SonosLibraryRoots` (`List<string>`), `MasterLibraryRoot` (`string?`); cleaned in `EnsureShape()` |
+| Settings UI | `MainWindow.xaml` + `.xaml.cs` — section **Music library paths**; multiline Sonos roots; master single line; save via `SplitLibraryRoots` |
+| Persist | Existing `ConfigStore` → `%LocalAppData%\HotSonos\settings.json` (JSON property names as C# properties) |
+| MCP | `HotSonosDebugTools.cs` — `get_library_config`; `get_settings_summary` includes `sonosLibraryRoots` + `MasterLibraryRoot` |
+| Docs | this file, `Agents.md` (tool list), `README.md` (library roots bullet) |
+
+### Step 2 — what landed (files)
+
+| Area | Location |
+|------|----------|
+| Packages | `Microsoft.Data.Sqlite` 10.0.10, `TagLibSharp` 2.3.0 on `HotSonos.App` |
+| Models | `Library/LibraryTrack.cs` — track row + `LibraryStatus` |
+| DB | `Library/LibraryDb.cs` — schema, upsert, prune missing, search, meta |
+| Tags (read) | `Library/LibraryTagReader.cs` — FLAC/MP3; standard fields + `HOTSONOS_TEMPO` if present |
+| Service | `Library/LibraryService.cs` — background rescan, skip unchanged, auto-scan if roots set & empty cache |
+| App wire | `App.xaml.cs` — create/dispose `LibraryService`; inject into MCP + MainWindow |
+| Settings UI | Rescan / Force re-read tags buttons + live status line |
+| MCP | `discover_library_roots`, `get_library_status`, `library_rescan` (auto-discover if empty), `library_search`, `library_get_track` |
+| Roots source | Sonos ContentDirectory `A:TRACKS` → parse `x-file-cifs://` → UNC share roots (`SonosController.DiscoverMusicLibraryRootsAsync`) |
+
+### UI — MCP Debug + Library tabs (2026-07-15)
+
+| Area | Location |
+|------|----------|
+| Activity log | `Mcp/McpActivityLog.cs` — ring of tool calls (args/result/duration); all tools wrap `Run`/`RunAsync` |
+| Main window | `MainWindow.xaml` — enlarged; **TabControl**: Settings / Library / MCP Debug |
+| Library tab | Search/browse grid + status; fills from UI search **or** MCP `library_search` / `library_get_track` |
+| MCP tab | Live command list + detail pane; clear; copy endpoint; auto-scroll |
+| Tray | **Library…**, **MCP Debug…** open window on the right tab |
+
+### Policy reminders for next steps
+
+- **Do not** treat Sonos ContentDirectory as SoT for library intelligence — filesystem on configured roots.  
+- **Do not** add master hi-res dump as a Sonos Music Library share.  
+- Tags live in **files**; SQLite is **rebuildable cache only**.  
+- Daily shuffle remains Sonos `A:TRACKS` until §6.2 / later scoping.  
+- MCP is loopback only; register tools via `C:\Project\_mcp\mcp-servers.json` + `sync-mcp.ps1` (server list), but HotSonos tools are live from the running app.  
+- Commit only when the user asks; steps 1–2 are ready to commit when they do.  
+- NuGet audit: transitive `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 may warn NU1903 until Microsoft.Data.Sqlite ships a newer native bundle — local DB only, not network-facing.
+
+### Immediate next work (when asked)
+
+Implement **step 3**: write `HOTSONOS_TEMPO` (and useful standard fields) back to FLAC/MP3 on the Sonos roots; MCP `track_set_tags` with optional dry-run; refresh SQLite row after write.
 
 ---
 
@@ -33,8 +114,8 @@ Control a **local** Sonos system from global hotkeys and the system tray — no 
 | **P0 (shipped)** | Play Sonos favorites / saved playlists by hotkey or menu |
 | **P0 (shipped)** | Wake-to-music, nightly re-sync, live topology / now-playing |
 | **P1 (next)** | Stronger **playlist** workflow; daily vs mood library boundaries |
-| **P1 (partial)** | Loopback **MCP** for debug/ops (devices, logs, refresh) — **shipped baseline** |
-| **P2 (later)** | Local library index, file tags (tempo), full library MCP |
+| **P1 (shipped)** | Loopback **MCP** debug/ops + **control** tools (see §4); config in `C:\Project\_mcp` |
+| **P2 (in progress)** | Library intelligence: **steps 1–2 done** (uncommitted: roots + SQLite scan/search); next tag **write** (§0, §7.7) |
 | **P3 (later)** | Library management, recipes, health, creative filters |
 
 ---
@@ -171,7 +252,8 @@ Concurrent shuffle / Fresh Start: exclusive gate + Busy feedback.
 - Settings: enable + port; tray menu copies the endpoint
 - **Discovery / debug:** `get_status` (includes `deviceListPopulated`), `get_discovery_state`, `list_groups`, `list_zones`, `list_offline`, `refresh_devices`, `get_speaker_volumes`, `get_now_playing`, `list_favorites`, `get_settings_summary`, `get_logs`, `get_log_directory`
 - **Control:** `play_pause`, `next_track`, `previous_track`, `volume_up`, `volume_down`, `mute_toggle`, `level_volumes`, `shuffle_library`, `fresh_start`, `play_favorite_slot`, `set_active_room`, `wake_now`, `wake_cancel`
-- Library tag/playlist MCP remains **Later** (§7)
+- **Library config + cache (steps 1–2):** `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`; roots also on `get_settings_summary`
+- Library **tag write** / playlists remain **Later** (§7 steps 3+)
 
 ### Engineering constraints (shipped)
 - Action gate for long library ops  
@@ -195,15 +277,16 @@ Access model:
 2. **Later** — tag-built playlists (“slow jazz”) from file metadata  
 3. **Optional** — separate Sonos library folder/share for mood trees  
 
-### Library roots (planned)
+### Library roots
 
-| Root | Role |
-|------|------|
-| **Sonos library path(s)** | Share/folder(s) Sonos indexes; FLAC/MP3 playable set; HotSonos daily + playlists |
-| **Master library path** | Full archive (may include hi-res FLACs Sonos cannot play well); durable tags only |
+| Root | Role | Status |
+|------|------|--------|
+| **Sonos library path(s)** | Share/folder(s) Sonos indexes; FLAC/MP3 playable set; HotSonos daily + playlists | **Configured** in Settings + `settings.json` (`SonosLibraryRoots`) + MCP `get_library_config` / `get_settings_summary` |
+| **Master library path** | Full archive (may include hi-res FLACs Sonos cannot play well); durable tags only | **Configured** (optional) as `MasterLibraryRoot` |
 
 Same NAS family is expected (e.g. `\\server\Music\Sonos\…` plus a master tree).  
-**Do not** add master hi-res dump as a Sonos library share.
+**Do not** add master hi-res dump as a Sonos library share.  
+Paths alone do not change shuffle yet — daily spin still uses Sonos `A:TRACKS` until §6.2 / scan phase.
 
 ---
 
@@ -298,12 +381,15 @@ Expose tools roughly like:
 
 Auth: localhost only. Return small result pages — never dump the whole library into chat.
 
-### 7.7 Suggested implementation order (later)
-1. Config: Sonos library root(s) + optional master root  
-2. Scanner → SQLite cache (FLAC/MP3 tags)  
-3. Read/write `HOTSONOS_TEMPO` (+ standard fields)  
+### 7.7 Suggested implementation order
+
+> Canonical checklist with live status lives in **§0**. Keep both in sync when advancing steps.
+
+1. ~~Config: Sonos library root(s) + optional master root~~ **Done (uncommitted)**  
+2. ~~Scanner → SQLite cache (FLAC/MP3 tags)~~ **Done (uncommitted)** — TagLib read, `library.db`, rescan UI + MCP search/status  
+3. **NEXT** — Write `HOTSONOS_TEMPO` (+ standard fields) into files; MCP `track_set_tags`  
 4. Master match + optional dual write  
-5. MCP search / get / set_tags  
+5. Polish MCP search / set_tags (search/get already present from step 2)  
 6. Playlist create from filter + play on Sonos  
 7. Optional Sonos `SQ:` create  
 8. Optional BPM analysis to *suggest* tempo (never sole source of truth)  
@@ -364,8 +450,12 @@ Auth: localhost only. Return small result pages — never dump the whole library
 - **Concurrency**: exclusive gate for shuffle / fresh start / long wake play phases  
 - **GENA**: local callback; trusted LAN  
 - **Tests**: Core parsers offline; Harness for live speakers  
-- **Config today**: JSON settings; **later** library cache may be SQLite **in addition**, never as sole tag store  
+- **Config today**: JSON settings at `%LocalAppData%\HotSonos\settings.json`  
+- **Library roots (step 1)**: `SonosLibraryRoots`, `MasterLibraryRoot` in same JSON  
+- **Library cache (step 2)**: SQLite `%LocalAppData%\HotSonos\library.db` via `Microsoft.Data.Sqlite` + TagLib# — **rebuildable only**, never sole tag store  
 - **Hand-rolled UPnP**; no Sonos NuGet  
+- **Build note**: Debug/Release build fails with file lock if tray `HotSonos.exe` is running — stop process, build, restart  
+- **MCP registry**: `C:\Project\_mcp\mcp-servers.json` entry `hotsonos` → sync with `sync-mcp.ps1` (Grok included)  
 
 ---
 
@@ -378,11 +468,12 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | Mood music | Playlists first; not mixed into daily shuffle |
 | Favorites slots | 4 |
 | Config | JSON `%LocalAppData%\HotSonos\settings.json` |
+| Library roots | `SonosLibraryRoots[]` + optional `MasterLibraryRoot` |
+| Library cache | SQLite `library.db`; skip unchanged by size/mtime; FLAC/MP3 only |
 | Wake if already playing | Skip entirely |
-| Future tags | Write into FLAC/MP3 on share; custom `HOTSONOS_TEMPO` |
-| Future DB | Rebuildable index only |
+| Tags | Read into cache now; **write** `HOTSONOS_TEMPO` next (step 3) |
 | Future master | Optional dual-write when track linked |
-| MCP | Loopback, later phase |
+| MCP | Loopback debug/ops + control + library status/search; set_tags later |
 | Library management | Later; dry-run + confirm |
 
 ---
@@ -394,3 +485,9 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-06-14 | Initial draft / design |
 | 2026-07 | Shipped v1.x features documented |
 | 2026-07-15 | Roadmap: daily vs mood, library tags, master mirror, MCP, later backlog |
+| 2026-07-15 | Library plan step 1: configure Sonos + optional master roots (Settings + MCP) |
+| 2026-07-15 | Added §0 agent handoff (progress checklist, files, next=scanner); pre-compression snapshot |
+| 2026-07-15 | Library plan step 2: TagLib scanner → SQLite cache; rescan UI; MCP status/search/get |
+| 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
+| 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |
+| 2026-07-15 | Library audio props + Sonos-unplayable heuristic; GENA cross-check on track change |

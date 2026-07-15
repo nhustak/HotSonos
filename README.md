@@ -15,8 +15,9 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 ### Product direction
 - **Today:** daily whole-library shuffle, transport/volume hotkeys, playlists/favorites, wake-to-music, live topology.
 - **Next:** stronger playlist / mood workflows without polluting daily shuffle (jazz, soundtracks, etc.).
-- **MCP (now):** with the tray app running, agents can hit `http://127.0.0.1:42341/mcp` for device list, refresh, logs, favorites, etc. (see **[spec.md](spec.md)**).
-- **Later:** local library tags (e.g. tempo on FLAC/MP3), optional master-library tag mirror, playlist build-from-filter, and more — see **[spec.md](spec.md)** (Shipped / Next / Later).
+- **MCP (now):** with the tray app running, agents can hit `http://127.0.0.1:42341/mcp` for device list, refresh, logs, favorites, library path config, control tools, etc. (see **[spec.md](spec.md)**).
+- **Library roots + cache (now):** Settings store Sonos library folder path(s) and optional master root; **Rescan** builds a local SQLite index of FLAC/MP3 tags (MCP: status / rescan / search). Does not change daily shuffle.
+- **Later:** write tempo tags into files, master dual-write, playlist build-from-filter — see **[spec.md](spec.md)** §0 / §7.
 
 ---
 

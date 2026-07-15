@@ -1,3 +1,4 @@
+using HotSonos.App.Library;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
 using HotSonos.Core.Models;
@@ -13,6 +14,7 @@ public sealed class HotSonosMcpState
     public SonosManager Sonos { get; set; } = null!;
     public Func<AppSettings> Settings { get; set; } = () => AppSettings.CreateDefault();
     public WakeMusicService? Wake { get; set; }
+    public LibraryService? Library { get; set; }
     public Func<NowPlaying?> GetLastNowPlaying { get; set; } = () => null;
     public Func<Task<string>> RefreshDevicesAsync { get; set; } =
         () => Task.FromResult("Refresh not wired.");
