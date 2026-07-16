@@ -189,6 +189,106 @@ public sealed class LibraryService : IDisposable
     public bool NeedsAudioPropsRescan() =>
         _db.CountTracks() > 0 && _db.HasTracksMissingAudioProps();
 
+    /// <summary>
+    /// Write tags into the file on the Sonos library share, then refresh the SQLite row.
+    /// Path must be under a configured Sonos library root (or resolvable from cache).
+    /// Master dual-write is step 4 — not done here.
+    /// </summary>
+    public TagWriteResult SetTags(string path, TrackTagUpdate update, bool dryRun = false)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return new TagWriteResult { Ok = false, Path = path ?? "", Error = "path is required", Message = "path is required" };
+
+        path = path.Trim();
+        var s = _settings().EnsureShape();
+        var roots = s.SonosLibraryRoots;
+        if (roots.Count == 0)
+            return new TagWriteResult
+            {
+                Ok = false,
+                Path = path,
+                Error = "No Sonos library roots configured. Discover from Sonos first.",
+                Message = "No Sonos library roots configured.",
+            };
+
+        // Prefer full path from cache if the caller passed a relative or partial path.
+        var cached = _db.GetByPath(path) ?? _db.FindBySonosUriOrUnc(path);
+        var fullPath = cached?.Path ?? path;
+        if (!Path.IsPathRooted(fullPath) && !fullPath.StartsWith(@"\\", StringComparison.Ordinal))
+            return new TagWriteResult { Ok = false, Path = fullPath, Error = "Path must be absolute/UNC.", Message = "Path must be absolute/UNC." };
+
+        try { fullPath = Path.GetFullPath(fullPath); }
+        catch { /* keep as-is for UNC edge cases */ }
+
+        if (!IsUnderAnyRoot(fullPath, roots))
+        {
+            return new TagWriteResult
+            {
+                Ok = false,
+                Path = fullPath,
+                Error = "Path is not under a configured Sonos library root.",
+                Message = "Path is not under a configured Sonos library root.",
+            };
+        }
+
+        var root = roots.First(r => IsUnderRoot(fullPath, r));
+        var result = LibraryTagWriter.Write(fullPath, update, dryRun, root);
+
+        if (result.Ok && !result.DryRun && result.TrackAfter is not null)
+        {
+            try { _db.UpsertTracks([result.TrackAfter]); }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Cache refresh after tag write failed", ex);
+            }
+        }
+        else if (result.Ok && !result.DryRun)
+        {
+            // Re-read even if writer didn't return a track
+            var again = LibraryTagReader.TryRead(fullPath, root, DateTime.UtcNow);
+            if (again is not null)
+            {
+                try { _db.UpsertTracks([again]); }
+                catch (Exception ex) { AppLog.Warn("Cache refresh after tag write failed", ex); }
+                return new TagWriteResult
+                {
+                    Ok = result.Ok,
+                    Path = result.Path,
+                    DryRun = result.DryRun,
+                    Message = result.Message,
+                    Error = result.Error,
+                    Changes = result.Changes,
+                    TrackAfter = again,
+                };
+            }
+        }
+
+        return result;
+    }
+
+    private static bool IsUnderAnyRoot(string fullPath, IReadOnlyList<string> roots) =>
+        roots.Any(r => IsUnderRoot(fullPath, r));
+
+    private static bool IsUnderRoot(string fullPath, string root)
+    {
+        try
+        {
+            var r = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            var full = fullPath;
+            // UNC-safe ordinal ignore case
+            return full.StartsWith(r, StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(
+                       full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                       root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                       StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private void RunScan(List<string> roots, bool forceAll, CancellationToken ct)
     {
         var started = DateTime.UtcNow;

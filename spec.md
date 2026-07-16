@@ -15,24 +15,24 @@
 
 | Item | State |
 |------|--------|
-| **Git HEAD (last push)** | `0bb4d7a` — MCP control tools (play, volume, shuffle, wake, discovery state) |
-| **Working tree** | **Dirty / uncommitted** — library steps 1–2 + **MCP Debug / Library UI tabs**; not committed yet |
+| **Git HEAD (last push)** | `64d2403` — library steps 1–2 + MCP Debug UI (then local step 3 work) |
+| **Working tree** | May be dirty with **step 3** tag write until committed |
 | **App version** | `1.0.0.8` (`Directory.Build.props`) — no version bump yet |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
-| **Main window** | Tabs: **Settings** · **Library** (search/results) · **MCP Debug** (live tool command log). Tray: Library… / MCP Debug… |
-| **User paths** | Prefer **Discover from Sonos** (`A:TRACKS` → `x-file-cifs` → UNC roots). Manual override still allowed. Rescan auto-discovers when roots empty. |
+| **Main window** | Tabs: **Settings** · **Library** (search/results/set tempo) · **MCP Debug** |
+| **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** access on this PC |
 | **Library DB** | `%LocalAppData%\HotSonos\library.db` (rebuildable; not sole tag store) |
 
 ### Library intelligence plan (§7.7) — checklist
 
 | Step | Status | Notes |
 |------|--------|--------|
-| **1. Config: Sonos library root(s) + optional master root** | **DONE (uncommitted)** | Settings UI, `AppSettings`, MCP `get_library_config` / settings summary. Does **not** change shuffle. |
-| **2. Scanner → SQLite cache (FLAC/MP3 tags)** | **DONE (uncommitted)** | TagLib# read; SQLite cache; Settings rescan; MCP status/rescan/search/get. Skip unchanged by size/mtime. |
-| **2b. Audio props + Sonos-unplayable flag** | **DONE (uncommitted)** | Sample rate, bit depth, bitrate, channels, codec; heuristic SonosPlayable (≤48 kHz, FLAC ≤24-bit, …). UI + MCP filter. GENA logs when now-playing matches unplayable cache row / TransportStatus ERROR. |
-| **3. Read/write `HOTSONOS_TEMPO` (+ standard fields)** | **NEXT** | Write into FLAC/MP3 on share (read of tempo already cached if present) |
-| **4. Master match + optional dual write** | Pending | Uses `MasterLibraryRoot` |
-| **5. MCP set_tags** (+ polish search) | Partial | Read search/get shipped with step 2; **set_tags** still pending |
+| **1. Config: Sonos library root(s) + optional master root** | **DONE** | Settings + MCP; discover from Sonos |
+| **2. Scanner → SQLite cache (FLAC/MP3 tags)** | **DONE** | TagLib read; rescan/search |
+| **2b. Audio props + Sonos-unplayable flag** | **DONE** | Format heuristic + UI/MCP filter |
+| **3. Read/write `HOTSONOS_TEMPO` (+ standard fields)** | **DONE (this task)** | `LibraryTagWriter`; MCP `track_set_tags` (dryRun); Library tab set tempo; cache refresh after write |
+| **4. Master match + optional dual write** | **NEXT** | Uses `MasterLibraryRoot` |
+| **5. MCP polish** | Partial | search/get/set_tags shipped; further polish as needed |
 | **6. Playlist create from filter + play on Sonos** | Pending | |
 | **7. Optional Sonos `SQ:` create** | Pending | |
 | **8. Optional BPM analysis (suggest only)** | Pending | Never sole source of truth |
@@ -81,9 +81,18 @@
 - Commit only when the user asks; steps 1–2 are ready to commit when they do.  
 - NuGet audit: transitive `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 may warn NU1903 until Microsoft.Data.Sqlite ships a newer native bundle — local DB only, not network-facing.
 
+### Step 3 — tag write (files)
+
+| Area | Location |
+|------|----------|
+| Writer | `Library/LibraryTagWriter.cs` — FLAC Xiph `HOTSONOS_TEMPO`; MP3 ID3v2 TXXX; optional title/artist/album/genre/track/year/bpm |
+| Service | `LibraryService.SetTags` — path must be under `SonosLibraryRoots`; dry-run; upsert cache after save |
+| MCP | `track_set_tags` (`path`, `tempo`, standard fields, `dryRun`) |
+| UI | Library tab: select row → tempo combo → **Set tempo on selection** |
+
 ### Immediate next work (when asked)
 
-Implement **step 3**: write `HOTSONOS_TEMPO` (and useful standard fields) back to FLAC/MP3 on the Sonos roots; MCP `track_set_tags` with optional dry-run; refresh SQLite row after write.
+Implement **step 4**: master match + optional dual-write of the same tags to `MasterLibraryRoot` when a twin is linked.
 
 ---
 
@@ -491,3 +500,4 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |
 | 2026-07-15 | Library audio props + Sonos-unplayable heuristic; GENA cross-check on track change |
+| 2026-07-15 | Step 3: write HOTSONOS_TEMPO + standard tags to FLAC/MP3; MCP track_set_tags |

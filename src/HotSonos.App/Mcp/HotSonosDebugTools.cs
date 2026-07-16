@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using HotSonos.App.Infrastructure;
+using HotSonos.App.Library;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
 using ModelContextProtocol.Server;
@@ -389,6 +390,68 @@ public sealed class HotSonosDebugTools
                 return JsonSerializer.Serialize(new { ok = false, error = "Track not in cache.", path }, JsonOptions);
 
             return JsonSerializer.Serialize(new { ok = true, track }, JsonOptions);
+        }, category: "library");
+
+    [McpServerTool(Name = "track_set_tags")]
+    [Description("Write tags into a FLAC/MP3 on the Sonos library share (HOTSONOS_TEMPO and/or standard fields). Updates SQLite cache after write. Path must be under configured roots. dryRun=true previews changes.")]
+    public string TrackSetTags(
+        [Description("Absolute/UNC path to the audio file (same as library_search path)")] string path,
+        [Description("slow | medium | fast, or empty string to clear HOTSONOS_TEMPO")] string? tempo = null,
+        [Description("Title (null = leave unchanged)")] string? title = null,
+        [Description("Artist (null = leave unchanged)")] string? artist = null,
+        [Description("Album (null = leave unchanged)")] string? album = null,
+        [Description("Genre (null = leave unchanged)")] string? genre = null,
+        [Description("Track number (null = leave unchanged)")] int? trackNumber = null,
+        [Description("Year (null = leave unchanged)")] int? year = null,
+        [Description("BPM (null = leave unchanged)")] double? bpm = null,
+        [Description("If true, do not write the file — return planned changes only")] bool dryRun = false) =>
+        McpActivityLog.Run("track_set_tags", new { path, tempo, title, artist, album, genre, trackNumber, year, bpm, dryRun }, () =>
+        {
+            var lib = _state.Library;
+            if (lib is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "Library service not available." }, JsonOptions);
+
+            // Only pass fields that were explicitly intended: MCP may send default nulls.
+            // Convention: any non-null string (including "") is intentional; tempo "" clears.
+            var update = new TrackTagUpdate
+            {
+                Tempo = tempo,
+                Title = title,
+                Artist = artist,
+                Album = album,
+                Genre = genre,
+                TrackNumber = trackNumber,
+                Year = year,
+                Bpm = bpm,
+            };
+
+            // If caller only wants dry-run probe with no fields, still call for validation.
+            var result = lib.SetTags(path, update, dryRun);
+            return JsonSerializer.Serialize(new
+            {
+                ok = result.Ok,
+                dryRun = result.DryRun,
+                path = result.Path,
+                message = result.Message,
+                error = result.Error,
+                changes = result.Changes,
+                track = result.TrackAfter is null ? null : new
+                {
+                    result.TrackAfter.Path,
+                    result.TrackAfter.Title,
+                    result.TrackAfter.Artist,
+                    result.TrackAfter.Album,
+                    result.TrackAfter.Genre,
+                    result.TrackAfter.TrackNumber,
+                    result.TrackAfter.Year,
+                    result.TrackAfter.Tempo,
+                    result.TrackAfter.Bpm,
+                    result.TrackAfter.AudioFormatLabel,
+                    result.TrackAfter.SonosPlayable,
+                    result.TrackAfter.SonosPlayIssue,
+                },
+                note = "Master dual-write is step 4 (not yet). Tags are written into the Sonos-library file only.",
+            }, JsonOptions);
         }, category: "library");
 
     [McpServerTool(Name = "get_logs")]

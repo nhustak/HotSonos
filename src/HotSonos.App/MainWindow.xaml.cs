@@ -383,6 +383,49 @@ public partial class MainWindow : Window
         RunLibrarySearch(LibrarySearchBox.Text, browse: true);
     }
 
+    private void LibrarySetTempoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_library is null)
+        {
+            SetStatus("Library service not available.", warn: true);
+            return;
+        }
+
+        if (LibraryResultsGrid.SelectedItem is not LibraryResultRow row
+            || string.IsNullOrWhiteSpace(row.Path))
+        {
+            SetStatus("Select a track in the results grid first.", warn: true);
+            return;
+        }
+
+        var tempoChoice = (LibraryTempoCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "medium";
+        var tempo = string.Equals(tempoChoice, "(clear)", StringComparison.OrdinalIgnoreCase)
+            ? ""
+            : tempoChoice;
+
+        var result = _library.SetTags(row.Path, new TrackTagUpdate { Tempo = tempo }, dryRun: false);
+        if (!result.Ok)
+        {
+            SetStatus(result.Error ?? result.Message ?? "Tag write failed", warn: true);
+            return;
+        }
+
+        SetStatus($"{result.Message}: {string.Join("; ", result.Changes)}", warn: false);
+        // Refresh the visible row if we re-read the track.
+        if (result.TrackAfter is not null)
+        {
+            var list = (LibraryResultsGrid.ItemsSource as IEnumerable<LibraryResultRow>)?.ToList() ?? [];
+            var idx = list.FindIndex(r => string.Equals(r.Path, row.Path, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+            {
+                list[idx] = new LibraryResultRow(result.TrackAfter);
+                LibraryResultsGrid.ItemsSource = null;
+                LibraryResultsGrid.ItemsSource = list;
+                LibraryResultsGrid.SelectedIndex = idx;
+            }
+        }
+    }
+
     private void RunLibrarySearch(string? query, bool browse)
     {
         if (_library is null)

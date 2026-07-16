@@ -436,9 +436,19 @@
                                       VerticalAlignment="Center" Margin="0,0,12,0" />
                             <Button Content="Show unplayable" Height="26" Padding="10,0"
                                     Click="LibraryUnplayableButton_Click" />
+                            <TextBlock Text="Tempo" VerticalAlignment="Center" Margin="16,0,6,0" />
+                            <ComboBox x:Name="LibraryTempoCombo" Width="100" Height="26"
+                                      VerticalContentAlignment="Center">
+                                <ComboBoxItem Content="slow" />
+                                <ComboBoxItem Content="medium" IsSelected="True" />
+                                <ComboBoxItem Content="fast" />
+                                <ComboBoxItem Content="(clear)" />
+                            </ComboBox>
+                            <Button Content="Set tempo on selection" Height="26" Padding="10,0" Margin="8,0,0,0"
+                                    Click="LibrarySetTempoButton_Click" />
                         </StackPanel>
                         <TextBlock x:Name="LibraryResultsMetaText" Foreground="#FF60707F" FontSize="11"
-                                   Text="Search the cache or watch agent library_search results. Format = bit depth / sample rate / bitrate. Sonos = heuristic vs local-library limits." />
+                                   Text="Search the cache or watch agent results. Format = bit depth / sample rate / bitrate. Sonos = heuristic. Set tempo writes HOTSONOS_TEMPO into the file (needs SMB write access)." />
                         <TextBox x:Name="LibraryMcpResultBox" MinHeight="72" MaxHeight="140" Margin="0,6,0,0"
                                  IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                                  FontFamily="Consolas" FontSize="11" Background="#FF1C2536" Foreground="#FFE8EEF4"
