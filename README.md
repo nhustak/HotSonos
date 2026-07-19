@@ -4,7 +4,7 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.8** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
+**Version 1.0.0.9** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
@@ -13,60 +13,62 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
 
 ### Product direction
-- **Today:** daily whole-library shuffle, transport/volume hotkeys, playlists/favorites, wake-to-music, live topology.
-- **Next:** stronger playlist / mood workflows without polluting daily shuffle (jazz, soundtracks, etc.).
-- **MCP (now):** with the tray app running, agents can hit `http://127.0.0.1:42341/mcp` for device list, refresh, logs, favorites, library path config, control tools, etc. (see **[spec.md](spec.md)**).
-- **Library roots + cache (now):** Settings store Sonos library folder path(s) and optional master root; **Rescan** builds a local SQLite index of FLAC/MP3 tags (MCP: status / rescan / search). Does not change daily shuffle.
-- **Later:** write tempo tags into files, master dual-write, playlist build-from-filter — see **[spec.md](spec.md)** §0 / §7.
+- **Today:** history-aware daily shuffle, transport/volume hotkeys, favorites, wake-to-music, live topology, local library cache + tags, loopback MCP for agents.
+- **Settings UI:** left vertical nav — Control · Hotkeys · Shuffle · Library · Wake · Options · MCP Debug.
+- **Next:** master-library dual-write for tags; stronger mood/playlist workflows (see **[spec.md](spec.md)** §0).
+- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags, logs).
 
 ---
 
 ## Features
 
-### 🔀 Shuffle your entire Music Library to all speakers
-The headline feature. One action groups **every** speaker under a single coordinator and shuffle-plays your whole local Music Library. The shuffle order is randomized **client-side** (Sonos' own on-speaker shuffle mode reuses the same order for a given queue, so it never actually felt random) — HotSonos browses the full library, shuffles it fresh every time, and enqueues it pre-shuffled, so you get a genuinely different order on every trigger. Trigger it by **double-clicking the tray icon** or with a hotkey.
+### 🔀 History-aware library shuffle
+Groups speakers and builds a **short random queue** from Sonos `A:TRACKS` (client-side order, not Sonos device shuffle mode).
+
+- **Excludes recently played tracks** (recorded via GENA while music plays) for a configurable number of days  
+- **Auto top-up** near the end of the queue so listening continues with a new batch that again respects history  
+- Optional **artist spacing** (avoid same artist back-to-back)  
+- All parameters editable under **Shuffle** (queue size, top-up size, history days, clear history)
+
+Trigger with **double-click tray icon**, hotkey, or Control page.
 
 ### 🔄 Restart fresh (re-sync + reshuffle)
-Re-discovers your speakers, force-regroups them all (which clears an out-of-sync state), and starts a brand-new shuffle. Use it when speakers drift apart. Available as a button in Settings, a tray item, and an optional hotkey. Since re-discovery + regroup + shuffle can take several seconds, the flyout immediately shows **"Fresh start: re-syncing…"** so the keypress never feels ignored, then updates once it's actually done.
+Re-discovers speakers, force-regroups them, and starts a new history-aware shuffle. Tray item, Control button, optional hotkey.
 
-### ⏯️ Transport hotkeys
-Global play/pause, next track, and previous track — from any app, anywhere.
-
-### 🔊 Whole-house volume hotkeys
-Volume up, volume down, and mute/unmute across the entire group, with a configurable step size.
+### ⏯️ Transport & volume hotkeys
+Play/pause, next, previous, volume up/down, mute, and level-all — from any app. Re-bindable under **Hotkeys**.
 
 ### 🔉 Level all speakers
-One click (or hotkey) sets **every** speaker in the house to the same absolute volume — default 20%, configurable — and unmutes them. Great for resetting after someone cranked one room. Unlike the proportional volume hotkeys, this slams every player to the exact level. Fixed-volume devices (Sub, Port/Amp on line-out) are skipped.
+One click (or hotkey) sets every speaker to the same absolute volume (default 20%) and unmutes them.
 
 ### 🎴 Live Now-Playing flyout
-A custom, lightweight flyout (not the Windows toast) showing **album art + title + artist + state**, updated in real time via Sonos push events — so it reflects track changes even when you change songs from the phone app. It's **draggable** (position is remembered), **pinnable** (keep it on screen), and has independent toggles for "show on every track change" and "show when I trigger an action."
+Album art, title, artist, state — GENA push updates. Draggable, pinnable; toggles under **Options**.
 
 ### 📡 Live speaker monitoring
-HotSonos subscribes to Sonos topology events, so it knows the instant a speaker drops off or rejoins:
-- A tray indicator shows **"All speakers online"** or **"⚠ Offline: <room>"**
-- Connectivity toasts on drop (**"⚠️ Kitchen dropped off"**) and reconnect (**"✓ Kitchen reconnected"**) surface through the draggable now-playing flyout instead of an OS balloon
-- A speaker that reconnects is **automatically rejoined** to the currently active group
-- The room/group picker auto-refreshes on any grouping change
+Topology events: offline tray indicator, reconnect toasts, auto-rejoin active group, live room picker.
 
-### 🎚️ Per-speaker volume in Settings
-Settings shows every discovered speaker with its own volume slider and mute checkbox, so you can see and adjust exact levels room-by-room instead of only the whole-house step hotkeys. The list re-reads live levels every time you reopen Settings, not just on first launch.
-
-### 🌙 Nightly silent re-sync
-Optionally, once a night (default 3:00 AM), HotSonos silently regroups every speaker so you wake up to a synced system. **It never starts playback** — if anything is playing at that time, it skips entirely.
+### 🎚️ Per-speaker volume
+Control page shows every speaker with volume slider and mute.
 
 ### ☀️ Wake to music
-A gentle alarm clock for Sonos. On the days you choose, at a set time, HotSonos starts music on a **selected room** at a low volume and **steps the volume up** on an interval until a target. Play source is either a **library shuffle** or a **favorite/playlist**. Optionally, when the ramp finishes, it **expands to every speaker** and starts a **full library shuffle**. **If anything is already playing on Sonos, wake does nothing.** Requires the PC to be awake with HotSonos running. Cancel mid-ramp from the tray (**Stop wake / volume ramp**) or by using a volume hotkey.
+Scheduled start on a room, volume ramp, favorite or shuffle source, optional whole-house expand + shuffle. Skips if already playing.
 
-### 🎚️ Group-aware room picker
-Targets are shown as Sonos groups (e.g. a group containing every player shows as **"All Speakers"**). Commands route to the group coordinator automatically.
+### 📚 Local library cache & tags
+- **Discover from Sonos** (share roots from `x-file-cifs` URIs)  
+- SQLite cache of FLAC/MP3 metadata (format, bit depth, sample rate, bitrate)  
+- **Sonos-unplayable** heuristic for hi-res / out-of-spec files  
+- Write **`HOTSONOS_TEMPO`** (and optional standard tags) into files; MCP `track_set_tags`  
+- Paths / rescan / search under **Library**
+
+### 🤖 Loopback MCP
+While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery, control, library tools, logs. Live command log on **MCP Debug**. Register via `C:\Project\_mcp` if you use the multi-agent MCP hub.
 
 ### Other
-- System-tray app, single-instance, optional **Start with Windows**
-- Plain-JSON config at `%LocalAppData%\HotSonos\settings.json`
-- Four assignable "play a favorite/playlist" hotkey slots
-- Launching HotSonos manually opens **Settings** directly; launching via Windows autorun stays silent in the tray
-- The Settings window remembers its position and size between launches; **devices auto-discover** when Settings opens
-- **Diagnostics**: rolling logs under `%LocalAppData%\HotSonos\logs`; tray menu **Open log folder** / **Copy diagnostics**
+- Single-instance tray app; second launch activates the running window  
+- Optional **Start with Windows**; nightly silent re-sync  
+- Config: `%LocalAppData%\HotSonos\settings.json`  
+- Play history: `%LocalAppData%\HotSonos\play-history.json`  
+- Logs: `%LocalAppData%\HotSonos\logs`
 
 ---
 
@@ -81,26 +83,27 @@ Targets are shown as Sonos groups (e.g. a group containing every player shows as
 | Volume up | `Ctrl + Alt + ↑` |
 | Volume down | `Ctrl + Alt + ↓` |
 | Mute / Unmute | `Ctrl + Alt + M` |
-| Level all speakers / Restart fresh / favorite slots | unassigned (set your own) |
+| Level all / Restart fresh / favorite slots | unassigned (set your own) |
 
-All shortcuts are re-bindable in **Settings** (right-click the tray icon → *Open HotSonos*).
+Re-bind under **Hotkeys** (tray → *Open HotSonos*).
 
 ---
 
 ## Install
 
-Download the latest **`HotSonos-x.y.z.msi`** from the [Releases page](https://github.com/nhustak/HotSonos/releases/latest) and run it. It's a **per-user** install (no admin/UAC) to `%LocalAppData%\Programs\HotSonos`, with a Start Menu shortcut, and the .NET runtime is bundled — nothing else to install. Uninstall any time from **Settings → Apps**.
+Download the latest **`HotSonos-x.y.z.msi`** from the [Releases page](https://github.com/nhustak/HotSonos/releases/latest) and run it. Per-user install (no admin) to `%LocalAppData%\Programs\HotSonos`, Start Menu shortcut, .NET runtime bundled. Uninstall from **Settings → Apps**.
 
-> The MSI is **unsigned**, so Windows SmartScreen may show an "unknown publisher" prompt on first run — choose **More info → Run anyway**. (Code signing requires a paid certificate.)
+> The MSI is **unsigned**, so SmartScreen may prompt **More info → Run anyway**.
 
-Each [GitHub Release](https://github.com/nhustak/HotSonos/releases) is produced by CI when a version tag (`v*`) is pushed. Pushes to `master` run [build + test + MSI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) and upload the MSI as a workflow artifact.
+Each [GitHub Release](https://github.com/nhustak/HotSonos/releases) is produced by CI when a version tag (`v*`) is pushed. Pushes to `master` run [build + test + MSI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml).
 
 ## Requirements
 
-- Windows 10 or 11
-- One or more Sonos players (S1 or S2) on the same local network
-- To **install** from Releases: nothing else (self-contained MSI)
-- To **build** from source: [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- Windows 10 or 11  
+- Sonos players (S1 or S2) on the same LAN  
+- Install from Releases: nothing else  
+- Build from source: [.NET 10 SDK](https://dotnet.microsoft.com/download)  
+- Library scan/tag write: this PC needs SMB access to the music share Sonos indexes  
 
 ---
 
@@ -114,76 +117,72 @@ dotnet test HotSonos.slnx
 dotnet run --project src/HotSonos.App
 ```
 
-The app starts in the system tray. **On first launch, Windows may prompt to allow HotSonos on the network** — allow it on *Private* networks. This is required for the speakers to push live now-playing/topology events back to the app (it runs a small local callback listener).
+First launch may prompt for **Private network** access (GENA callbacks).
 
 ### Console harness
-`src/HotSonos.Harness` is a small command-line tester for the core library:
 
 ```powershell
 dotnet run --project src/HotSonos.Harness -- zones
 dotnet run --project src/HotSonos.Harness -- --room "Living Room" favorites
 dotnet run --project src/HotSonos.Harness -- --room "Living Room" shuffle
-dotnet run --project src/HotSonos.Harness -- --ip 192.168.1.50 playpause
 ```
 
 ### Project layout
 | Project | Purpose |
 |---|---|
-| `HotSonos.Core` | Platform-agnostic Sonos UPnP client (discovery, control, favorites, events) |
-| `HotSonos.App` | WPF tray app: hotkeys, settings, flyout, scheduler |
-| `HotSonos.Harness` | Console tester for the core library |
-| `HotSonos.Core.Tests` | Offline unit tests for topology/DIDL/notify parsers |
+| `HotSonos.Core` | UPnP client (discovery, control, events, shuffle) |
+| `HotSonos.App` | Tray app: hotkeys, settings, library, MCP, wake |
+| `HotSonos.Harness` | Console tester |
+| `HotSonos.Core.Tests` | Offline unit tests |
 
-Product version is single-sourced in `Directory.Build.props` (app, tests, and MSI share it). Release tags override it with `-p:Version=…` so the published MSI matches the tag.
+Version is single-sourced in `Directory.Build.props`; release tags override with `-p:Version=…`.
 
 ---
 
 ## How it works
 
-- **Discovery** — SSDP `M-SEARCH` across every active network interface (important on multi-homed PCs where a single probe goes out the wrong adapter), then the full zone/group topology is resolved from any one responding player.
-- **Control** — SOAP calls to each speaker on TCP port `1400` (`AVTransport`, `RenderingControl`/`GroupRenderingControl`, `ContentDirectory`, `ZoneGroupTopology`). Commands are routed to the group **coordinator**.
-- **Library shuffle** — the full `A:TRACKS` container is browsed client-side, shuffled fresh on every trigger, and enqueued pre-shuffled in batches via `AddMultipleURIsToQueue`, then played in `NORMAL` mode (the device's own `SHUFFLE` mode reuses the same order for a given queue, so it's not used).
-- **Live updates** — UPnP **GENA** event subscriptions (a local TCP HTTP listener receives `NOTIFY` callbacks; subscriptions auto-renew) for AVTransport (now-playing) and ZoneGroupTopology (grouping/drops).
-- **Diagnostics** — rolling daily logs under `%LocalAppData%\HotSonos\logs` (7-day retention); tray **Open log folder** / **Copy diagnostics**.
+- **Discovery** — SSDP across interfaces; topology from any responding player.  
+- **Control** — SOAP on TCP **1400** to group coordinators.  
+- **Shuffle** — browse `A:TRACKS`, exclude recently **played** tracks, short queue (~80 default), auto **top-up** near end, play in `NORMAL` mode.  
+- **Library** — optional filesystem scan/tag index under discovered UNC roots; tags live in files; SQLite is a rebuildable cache.  
+- **MCP** — Kestrel loopback host inside the tray process.  
+- **GENA** — local listener for now-playing and topology.
 
 ---
 
 ## Notes & limitations
 
-- HotSonos only **sends commands** — it can't cause speakers to fall out of sync. Persistent out-of-sync or a speaker repeatedly dropping is almost always a **wireless/signal issue** on that unit; wiring one nearby Sonos to ethernet (forming SonosNet) usually steadies the area. The "Restart fresh" and nightly re-sync features are the practical cure for a drifted group.
-- The nightly re-sync only fires while the **PC is awake and HotSonos is running**; if the machine is asleep at the scheduled time it simply runs the next night.
-- Playing a saved **Sonos Playlist** uses container enqueue (`x-rincon-playlist`) by playlist id — playable even when Sonos leaves `<res>` empty or as a non-playable `file://` path. (Empty playlists have nothing to play.)
-- Because library shuffle browses and re-enqueues the whole library client-side for a genuinely fresh order, it takes a bit longer to start than a plain "play" action on very large libraries (thousands of tracks) — a one-time cost per trigger, not a hang. Overlapping shuffle / Fresh Start is rejected with a busy notice so two queue rebuilds never interleave.
-- The GENA callback listener is for a **trusted home LAN** only (local ephemeral port).
+- Speakers out of sync is usually Wi‑Fi; Restart fresh / nightly re-sync help.  
+- Nightly re-sync and wake need the **PC awake** with HotSonos running.  
+- Sonos does not reliably report “can’t play this file”; unplayable flags are **format heuristics**.  
+- Shuffle history only reshapes the queue at **rebuild/top-up**, not mid-queue.  
+- GENA callback is for a **trusted home LAN**.
 
 ---
 
 ## Changelog
 
+### 1.0.0.9
+- **History-aware shuffle**: short queues, hard-exclude played tracks, auto top-up near end, artist spacing; Settings under **Shuffle** (clear history, all parameters)
+- **Library intelligence**: discover roots from Sonos, SQLite FLAC/MP3 cache, format / Sonos-unplayable flags, write `HOTSONOS_TEMPO` + standard tags (`track_set_tags`)
+- **UI**: left vertical navigation (Control, Hotkeys, Shuffle, Library, Wake, Options, MCP Debug)
+- **MCP**: library tools + control tools; live MCP command log
+- Play history file: `%LocalAppData%\HotSonos\play-history.json`
+
 ### 1.0.0.8
-- **Loopback MCP** inside the tray app (`http://127.0.0.1:42341/mcp`): status, groups/zones, offline, refresh_devices, volumes, now-playing, favorites, settings summary, logs
-- Settings toggle + port; tray copies MCP endpoint
-- Spec/README: MCP debug phase documented as shipped
+- **Loopback MCP** inside the tray app; Settings toggle + port; tray copies endpoint
 
 ### 1.0.0.7
-- Living **[spec.md](spec.md)** with Shipped / Next / Later roadmap (daily vs mood libraries, file tags, master mirror, MCP, backlog ideas)
-- README product-direction summary linking to the full spec
+- Living **[spec.md](spec.md)** roadmap
 
 ### 1.0.0.6
-- **Wake to music**: day/time schedule, per-room start, volume ramp (start/end/step/interval), favorite or shuffle, optional whole-house expand + full library shuffle at end of ramp
-- Tray **Stop wake / volume ramp**; volume hotkeys cancel an in-progress ramp
-- Wake **skips** if Sonos is already playing; Settings **auto-refreshes** devices on open
+- **Wake to music**; Settings auto-refresh devices on open
 
 ### 1.0.0.5
-- **Diagnostics**: rolling logs + tray **Open log folder** / **Copy diagnostics**
-- Playlist hotkeys: playlists bind/play by container id (not only `<res>` URI)
-- Safer long actions: exclusive gate for shuffle / Fresh Start
-- Hardened GENA subscription renew/dispose; paginated favorites browse
-- Settings Hide/close persists hotkey edits; level-all reports successful speaker count
-- Core unit tests + CI test step; shipped `spec.md` brought in line with the app
+- Diagnostics, playlist-by-id, exclusive shuffle gate, Core unit tests
 
 ### 1.0.0.4
-- Immediate Fresh Start flyout feedback; live-refreshing per-speaker volume list in Settings
+- Fresh Start flyout feedback; live per-speaker volumes
 
 ---
 

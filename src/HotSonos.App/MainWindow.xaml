@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="HotSonos"
-        Width="980" Height="720"
-        MinWidth="760" MinHeight="520"
+        Width="1000" Height="700"
+        MinWidth="820" MinHeight="520"
         WindowStartupLocation="CenterScreen"
         FontFamily="Segoe UI" FontSize="13"
         Background="#FFF4F6F8">
@@ -12,7 +12,7 @@
             <Setter Property="FontSize" Value="15" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="#FF1C2536" />
-            <Setter Property="Margin" Value="0,14,0,6" />
+            <Setter Property="Margin" Value="0,12,0,6" />
         </Style>
         <Style TargetType="TextBox" x:Key="HotkeyBox">
             <Setter Property="IsReadOnly" Value="True" />
@@ -22,397 +22,303 @@
             <Setter Property="Background" Value="White" />
             <Setter Property="Cursor" Value="Hand" />
         </Style>
+        <!-- Left vertical nav tabs -->
         <Style TargetType="TabItem">
-            <Setter Property="Padding" Value="14,8" />
             <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Padding" Value="14,12" />
+            <Setter Property="MinWidth" Value="128" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Bd" Background="Transparent" BorderThickness="0,0,0,0"
+                                Padding="{TemplateBinding Padding}" Margin="0,1">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"
+                                              ContentSource="Header" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FFE8F8EF" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF2ECC71" />
+                                <Setter TargetName="Bd" Property="BorderThickness" Value="3,0,0,0" />
+                                <Setter Property="Foreground" Value="#FF1C8E54" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FFF0F4F8" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
-    <Grid Margin="14">
+    <Grid Margin="0">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TabControl x:Name="MainTabs" Grid.Row="0" Background="Transparent" BorderThickness="0"
+        <TabControl x:Name="MainTabs" Grid.Row="0"
+                    TabStripPlacement="Left"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="0"
                     SelectionChanged="MainTabs_SelectionChanged">
 
-            <!-- ========== Settings (existing controls) ========== -->
-            <TabItem Header="Settings">
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4,8,4,0">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="24" />
-                    <ColumnDefinition Width="300" />
-                </Grid.ColumnDefinitions>
+            <!-- ========== Control ========== -->
+            <TabItem x:Name="ControlTab" Header="Control">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12,16,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="20" />
+                            <ColumnDefinition Width="300" />
+                        </Grid.ColumnDefinitions>
 
-                <!-- Left column: shuffle/fresh-start, transport hotkeys, favorites, flyout, options -->
-                <StackPanel Grid.Column="0">
-                    <Border Background="#FFEAF8F0" CornerRadius="6" Padding="12" Margin="0,8,0,4"
-                            BorderBrush="#FF2ECC71" BorderThickness="1">
-                        <StackPanel>
-                            <TextBlock Text="🔀 Shuffle my Music Library" FontSize="15" FontWeight="SemiBold"
-                                       Foreground="#FF1C2536" />
-                            <TextBlock Text="One hotkey to shuffle-play your entire local music library on the selected speakers."
-                                       Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
+                        <StackPanel Grid.Column="0">
+                            <Border Background="#FFEAF8F0" CornerRadius="6" Padding="12" Margin="0,0,0,8"
+                                    BorderBrush="#FF2ECC71" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="🔀 Shuffle my Music Library" FontSize="15" FontWeight="SemiBold"
+                                               Foreground="#FF1C2536" />
+                                    <TextBlock Text="History-aware shuffle of your Sonos Music Library to the selected speakers."
+                                               Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Hotkey" VerticalAlignment="Center" Width="80" />
+                                        <TextBox x:Name="ShuffleHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                                 PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                                        <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="Shuffle" Click="ClearHotkey_Click" />
+                                    </StackPanel>
+                                    <Separator Margin="0,12,0,10" Background="#FF2ECC71" Opacity="0.4" />
+                                    <TextBlock Text="🔄 Restart fresh" FontSize="15" FontWeight="SemiBold" Foreground="#FF1C2536" />
+                                    <TextBlock Text="Re-discover, regroup all speakers, and start a new shuffle."
+                                               Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="🔄  Restart fresh now" Height="32" Padding="14,0" Margin="0,0,12,0"
+                                                Background="#FF1C8E54" Foreground="White" FontWeight="SemiBold"
+                                                Click="FreshStartButton_Click" />
+                                        <TextBlock Text="Hotkey" VerticalAlignment="Center" Margin="8,0,6,0" />
+                                        <TextBox x:Name="FreshStartHotkeyBox" Style="{StaticResource HotkeyBox}" Width="130"
+                                                 PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                                        <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="FreshStart" Click="ClearHotkey_Click" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="Level all speakers" Style="{StaticResource SectionHeader}" Margin="0,4,0,6" />
+                            <TextBlock Text="Set every speaker to the same volume and unmute."
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="Hotkey" VerticalAlignment="Center" Width="120" />
-                                <TextBox x:Name="ShuffleHotkeyBox" Style="{StaticResource HotkeyBox}"
-                                         PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                                <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="Shuffle" Click="ClearHotkey_Click" />
-                            </StackPanel>
-
-                            <Separator Margin="0,12,0,10" Background="#FF2ECC71" Opacity="0.4" />
-
-                            <TextBlock Text="🔄 Restart fresh" FontSize="15" FontWeight="SemiBold" Foreground="#FF1C2536" />
-                            <TextBlock Text="Re-discovers speakers, regroups them all (clears out-of-sync), and starts a brand-new shuffle. Use this if speakers drift out of sync."
-                                       Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
-                            <StackPanel Orientation="Horizontal">
-                                <Button Content="🔄  Restart fresh now" Height="32" Padding="14,0" Margin="0,0,12,0"
-                                        Background="#FF1C8E54" Foreground="White" FontWeight="SemiBold"
-                                        Click="FreshStartButton_Click" />
-                                <TextBlock Text="Hotkey" VerticalAlignment="Center" Margin="8,0,6,0" />
-                                <TextBox x:Name="FreshStartHotkeyBox" Style="{StaticResource HotkeyBox}" Width="130"
-                                         PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                                <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="FreshStart" Click="ClearHotkey_Click" />
+                                <TextBlock Text="Level (%)" VerticalAlignment="Center" Width="80" />
+                                <TextBox x:Name="LevelPercentBox" Width="50" Padding="6,4" VerticalContentAlignment="Center" />
+                                <Button Content="Set all speakers now" Height="30" Padding="12,0" Margin="12,0,0,0"
+                                        Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                        Click="LevelVolumesButton_Click" />
                             </StackPanel>
                         </StackPanel>
-                    </Border>
 
-                    <TextBlock Text="Transport hotkeys" Style="{StaticResource SectionHeader}" />
-                    <TextBlock Text="Click a box and press your key combo (e.g. Ctrl+Alt+F9). Press Esc to clear."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
+                        <Border Grid.Column="1" Width="1" Background="#FFD8DEE4" Margin="0,4" />
 
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="120" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Target room / group" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
+                            <ComboBox x:Name="RoomComboBox" Height="28"
+                                      VerticalContentAlignment="Center"
+                                      SelectionChanged="RoomComboBox_SelectionChanged" />
+                            <Button x:Name="RefreshButton" Content="Refresh devices" Height="28" Margin="0,8,0,0"
+                                    Padding="10,0" Click="RefreshButton_Click" />
+                            <TextBlock Text="Hotkeys control this room. Grouped rooms follow their coordinator."
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
 
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Play / Pause" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="PlayPauseHotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="0" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="PlayPause"
-                                Click="ClearHotkey_Click" />
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Next track" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="NextHotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="1" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="Next"
-                                Click="ClearHotkey_Click" />
-
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Previous track" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="2" Grid.Column="1" x:Name="PreviousHotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="2" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="Previous"
-                                Click="ClearHotkey_Click" />
+                            <TextBlock Text="Speakers" Style="{StaticResource SectionHeader}" />
+                            <TextBlock Text="Drag volume; check to mute."
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
+                            <StackPanel x:Name="SpeakersPanel" />
+                        </StackPanel>
                     </Grid>
-
-                    <TextBlock Text="Playlist / favorite hotkeys (4 slots)" Style="{StaticResource SectionHeader}" />
-                    <TextBlock Text="Pick a Sonos favorite or playlist for each slot, then assign a hotkey."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
-
-                    <Grid x:Name="FavoritesGrid">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="60" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <!-- Slot 1 -->
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Slot 1" VerticalAlignment="Center" Margin="0,4" />
-                        <ComboBox Grid.Row="0" Grid.Column="1" x:Name="Fav1NameCombo" Height="26" Margin="0,4"
-                                  VerticalContentAlignment="Center" />
-                        <TextBox Grid.Row="0" Grid.Column="2" x:Name="Fav1HotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="0" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav1"
-                                Click="ClearHotkey_Click" />
-
-                        <!-- Slot 2 -->
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Slot 2" VerticalAlignment="Center" Margin="0,4" />
-                        <ComboBox Grid.Row="1" Grid.Column="1" x:Name="Fav2NameCombo" Height="26" Margin="0,4"
-                                  VerticalContentAlignment="Center" />
-                        <TextBox Grid.Row="1" Grid.Column="2" x:Name="Fav2HotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="1" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav2"
-                                Click="ClearHotkey_Click" />
-
-                        <!-- Slot 3 -->
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Slot 3" VerticalAlignment="Center" Margin="0,4" />
-                        <ComboBox Grid.Row="2" Grid.Column="1" x:Name="Fav3NameCombo" Height="26" Margin="0,4"
-                                  VerticalContentAlignment="Center" />
-                        <TextBox Grid.Row="2" Grid.Column="2" x:Name="Fav3HotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="2" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav3"
-                                Click="ClearHotkey_Click" />
-
-                        <!-- Slot 4 -->
-                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Slot 4" VerticalAlignment="Center" Margin="0,4" />
-                        <ComboBox Grid.Row="3" Grid.Column="1" x:Name="Fav4NameCombo" Height="26" Margin="0,4"
-                                  VerticalContentAlignment="Center" />
-                        <TextBox Grid.Row="3" Grid.Column="2" x:Name="Fav4HotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="3" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav4"
-                                Click="ClearHotkey_Click" />
-                    </Grid>
-
-                    <TextBlock Text="Now-Playing flyout" Style="{StaticResource SectionHeader}" />
-                    <CheckBox x:Name="FlyoutOnTrackChangeCheckBox" Content="Pop the flyout on every track change" Margin="0,2" />
-                    <CheckBox x:Name="FlyoutOnActionCheckBox" Content="Pop the flyout when I use a hotkey or action" Margin="0,6" />
-                    <TextBlock Text="Tip: drag the flyout to reposition it; click the 📌 to keep it on-screen."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
-
-                    <TextBlock Text="Options" Style="{StaticResource SectionHeader}" />
-                    <CheckBox x:Name="StartWithWindowsCheckBox" Content="Start HotSonos with Windows" Margin="0,6"
-                              Checked="StartWithWindows_Changed" Unchecked="StartWithWindows_Changed" />
-                    <StackPanel Orientation="Horizontal" Margin="0,6">
-                        <CheckBox x:Name="NightlyResetCheckBox" Content="Re-sync all speakers nightly at" VerticalAlignment="Center" />
-                        <TextBox x:Name="NightlyResetTimeBox" Width="60" Margin="8,0,0,0" Padding="6,2"
-                                 VerticalContentAlignment="Center" />
-                        <TextBlock Text="(24-hour, e.g. 03:00)" VerticalAlignment="Center" Margin="8,0,0,0"
-                                   Foreground="#FF60707F" FontSize="11" />
-                    </StackPanel>
-                    <CheckBox x:Name="NightlyResetReshuffleCheckBox" Content="Also reshuffle the library (starts playback)" Margin="20,4,0,0" />
-                    <TextBlock Text="Regroups every speaker so they start the day in sync. Skipped automatically if anything is playing. Reshuffle is opt-in since it starts music on its own."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
-
-                    <TextBlock Text="Agent MCP (loopback)" Style="{StaticResource SectionHeader}" />
-                    <CheckBox x:Name="McpEnabledCheckBox" Content="Enable MCP server while HotSonos is running" Margin="0,2" />
-                    <StackPanel Orientation="Horizontal" Margin="0,6">
-                        <TextBlock Text="Port" VerticalAlignment="Center" Width="70" />
-                        <TextBox x:Name="McpPortBox" Width="80" Padding="6,2" VerticalContentAlignment="Center" />
-                        <TextBlock Text="(http://127.0.0.1:port/mcp — requires app restart after change)"
-                                   VerticalAlignment="Center" Margin="8,0,0,0" Foreground="#FF60707F" FontSize="11" />
-                    </StackPanel>
-                    <TextBlock Text="Lets AI tools inspect devices, logs, and force refresh while the tray app is running. Loopback only."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
-
-                    <TextBlock Text="Library shuffle &amp; history" Style="{StaticResource SectionHeader}" />
-                    <TextBlock Text="History only affects the next rebuild/top-up (not the rest of the current queue). Played tracks are recorded while Sonos plays."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
-                    <Grid Margin="0,2,0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="170" />
-                            <ColumnDefinition Width="70" />
-                            <ColumnDefinition Width="16" />
-                            <ColumnDefinition Width="170" />
-                            <ColumnDefinition Width="70" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Queue size (shuffle)" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="ShuffleQueueTracksBox" Padding="6,2" Margin="0,4"
-                                 ToolTip="Tracks enqueued on each full shuffle (20–500)" />
-                        <TextBlock Grid.Row="0" Grid.Column="3" Text="Top-up size" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="0" Grid.Column="4" x:Name="ShuffleTopUpTracksBox" Padding="6,2" Margin="0,4"
-                                 ToolTip="Tracks appended near end of queue (10–300)" />
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="History days" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="ShuffleHistoryDaysBox" Padding="6,2" Margin="0,4"
-                                 ToolTip="Exclude played tracks for this many days (1–90)" />
-                        <TextBlock Grid.Row="1" Grid.Column="3" Text="Top-up when remaining ≤" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="1" Grid.Column="4" x:Name="ShuffleTopUpRemainingBox" Padding="6,2" Margin="0,4"
-                                 ToolTip="Auto top-up when this many tracks or fewer remain (1–30)" />
-                    </Grid>
-                    <CheckBox x:Name="ShuffleExcludePlayedCheckBox" Content="Exclude recently played tracks from new batches" Margin="0,6,0,0" />
-                    <CheckBox x:Name="ShuffleAutoTopUpCheckBox" Content="Auto top-up when the queue is nearly empty" Margin="0,4,0,0" />
-                    <CheckBox x:Name="ShuffleArtistSpreadCheckBox" Content="Avoid same artist back-to-back when building a batch" Margin="0,4,0,0" />
-                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                        <Button Content="Clear play history" Height="28" Padding="12,0"
-                                Click="ClearPlayHistoryButton_Click" />
-                        <TextBlock x:Name="PlayHistoryStatusText" VerticalAlignment="Center" Margin="12,0,0,0"
-                                   Foreground="#FF60707F" FontSize="11"
-                                   Text="History: …" />
-                    </StackPanel>
-                    <TextBlock Text="Clearing history does not change the current Sonos queue — shuffle again to apply."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
-
-                    <TextBlock Text="Music library paths" Style="{StaticResource SectionHeader}" />
-                    <TextBlock Text="Filesystem roots for the local library cache (FLAC/MP3 → SQLite). Prefer Discover from Sonos (reads x-file-cifs URIs from A:TRACKS). Daily shuffle still uses Sonos Music Library."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                        <Button Content="Discover from Sonos" Height="28" Padding="12,0"
-                                Click="DiscoverLibraryRootsButton_Click" />
-                        <TextBlock Text="Fills roots from speakers; then Rescan indexes tags."
-                                   VerticalAlignment="Center" Margin="10,0,0,0"
-                                   Foreground="#FF60707F" FontSize="11" />
-                    </StackPanel>
-                    <TextBlock Text="Sonos library root(s)" FontWeight="SemiBold" Margin="0,2,0,4" />
-                    <TextBox x:Name="SonosLibraryRootsBox" MinHeight="56" AcceptsReturn="True" TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto" Padding="6,4"
-                             ToolTip="Usually filled by Discover from Sonos; one UNC path per line" />
-                    <TextBlock Text="Auto-filled from Sonos when empty on Rescan. Override manually if needed."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
-                    <TextBlock Text="Master library root (optional)" FontWeight="SemiBold" Margin="0,2,0,4" />
-                    <TextBox x:Name="MasterLibraryRootBox" Height="26" Padding="6,4" VerticalContentAlignment="Center"
-                             ToolTip="Full archive; may include hi-res files not in Sonos" />
-                    <TextBlock Text="Optional full archive for durable tags later. Do not add a hi-res dump as a Sonos Music Library share."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                        <Button x:Name="LibraryRescanButton" Content="Rescan library" Height="28" Padding="12,0"
-                                Click="LibraryRescanButton_Click" />
-                        <Button Content="Force re-read tags" Height="28" Padding="12,0" Margin="8,0,0,0"
-                                Click="LibraryForceRescanButton_Click" />
-                    </StackPanel>
-                    <TextBlock x:Name="LibraryStatusText" Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0"
-                               TextWrapping="Wrap" Text="Library cache: not loaded." />
-
-                    <TextBlock Text="Wake to music" Style="{StaticResource SectionHeader}" />
-                    <CheckBox x:Name="WakeEnabledCheckBox" Content="Enable wake to music" Margin="0,2" />
-                    <StackPanel Orientation="Horizontal" Margin="0,6">
-                        <TextBlock Text="Time" VerticalAlignment="Center" Width="70" />
-                        <TextBox x:Name="WakeTimeBox" Width="60" Padding="6,2" VerticalContentAlignment="Center" />
-                        <TextBlock Text="(24-hour, e.g. 07:00)" VerticalAlignment="Center" Margin="8,0,0,0"
-                                   Foreground="#FF60707F" FontSize="11" />
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                        <TextBlock Text="Days" VerticalAlignment="Center" Width="70" />
-                        <CheckBox x:Name="WakeDaySu" Content="Su" Margin="0,0,8,0" />
-                        <CheckBox x:Name="WakeDayMo" Content="Mo" Margin="0,0,8,0" />
-                        <CheckBox x:Name="WakeDayTu" Content="Tu" Margin="0,0,8,0" />
-                        <CheckBox x:Name="WakeDayWe" Content="We" Margin="0,0,8,0" />
-                        <CheckBox x:Name="WakeDayTh" Content="Th" Margin="0,0,8,0" />
-                        <CheckBox x:Name="WakeDayFr" Content="Fr" Margin="0,0,8,0" />
-                        <CheckBox x:Name="WakeDaySa" Content="Sa" />
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,6">
-                        <TextBlock Text="Room" VerticalAlignment="Center" Width="70" />
-                        <ComboBox x:Name="WakeRoomComboBox" Width="220" Height="28" VerticalContentAlignment="Center" />
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,6">
-                        <TextBlock Text="Play" VerticalAlignment="Center" Width="70" />
-                        <ComboBox x:Name="WakeSourceComboBox" Width="220" Height="28" VerticalContentAlignment="Center"
-                                  SelectionChanged="WakeSourceComboBox_SelectionChanged" />
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,6">
-                        <TextBlock Text="Favorite" VerticalAlignment="Center" Width="70" />
-                        <ComboBox x:Name="WakeFavoriteComboBox" Width="220" Height="28" VerticalContentAlignment="Center" />
-                    </StackPanel>
-                    <Grid Margin="0,6,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="70" />
-                            <ColumnDefinition Width="60" />
-                            <ColumnDefinition Width="16" />
-                            <ColumnDefinition Width="70" />
-                            <ColumnDefinition Width="60" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Start %" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="WakeStartVolumeBox" Padding="6,2" Margin="0,4" />
-                        <TextBlock Grid.Row="0" Grid.Column="3" Text="End %" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="0" Grid.Column="4" x:Name="WakeEndVolumeBox" Padding="6,2" Margin="0,4" />
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Step %" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="WakeStepBox" Padding="6,2" Margin="0,4" />
-                        <TextBlock Grid.Row="1" Grid.Column="3" Text="Every min" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="1" Grid.Column="4" x:Name="WakeIntervalBox" Padding="6,2" Margin="0,4" />
-                    </Grid>
-                    <CheckBox x:Name="WakeExpandCheckBox"
-                              Content="After ramp: expand to all speakers and shuffle full library"
-                              Margin="0,8,0,0" />
-                    <TextBlock Text="Starts on the selected room only, ramps volume, then optionally joins the whole house. Skipped if Sonos is already playing. PC must be awake with HotSonos running. Tray: Stop wake / volume ramp. Volume hotkeys cancel the ramp."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
-                </StackPanel>
-
-                <!-- Column divider -->
-                <Border Grid.Column="1" Width="1" Background="#FFD8DEE4" Margin="0,8" />
-
-                <!-- Right column: speakers + volume -->
-                <StackPanel Grid.Column="2">
-                    <TextBlock Text="Target room / group" Style="{StaticResource SectionHeader}" Margin="0,8,0,6" />
-                    <ComboBox x:Name="RoomComboBox" Height="28"
-                              VerticalContentAlignment="Center"
-                              SelectionChanged="RoomComboBox_SelectionChanged" />
-                    <Button x:Name="RefreshButton" Content="Refresh devices" Height="28" Margin="0,8,0,0"
-                            Padding="10,0" Click="RefreshButton_Click" />
-                    <TextBlock Text="Hotkeys control this room. Grouped rooms follow their coordinator automatically."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
-
-                    <TextBlock Text="Speakers" Style="{StaticResource SectionHeader}" />
-                    <TextBlock Text="Current volume for each speaker. Drag to change; check to mute."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
-                    <StackPanel x:Name="SpeakersPanel" />
-
-                    <TextBlock Text="Volume hotkeys (all speakers)" Style="{StaticResource SectionHeader}" />
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Volume up" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="VolumeUpHotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Width="Auto" HorizontalAlignment="Stretch" Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="0" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="VolumeUp"
-                                Click="ClearHotkey_Click" />
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Volume down" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="VolumeDownHotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Width="Auto" HorizontalAlignment="Stretch" Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="1" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="VolumeDown"
-                                Click="ClearHotkey_Click" />
-
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Mute toggle" VerticalAlignment="Center" Margin="0,4" />
-                        <TextBox Grid.Row="2" Grid.Column="1" x:Name="MuteHotkeyBox" Style="{StaticResource HotkeyBox}"
-                                 Width="Auto" HorizontalAlignment="Stretch" Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                        <Button Grid.Row="2" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="Mute"
-                                Click="ClearHotkey_Click" />
-                    </Grid>
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <TextBlock Text="Step per press (%)" VerticalAlignment="Center" Width="110" />
-                        <TextBox x:Name="VolumeStepBox" Width="50" Padding="6,4" VerticalContentAlignment="Center" />
-                    </StackPanel>
-
-                    <TextBlock Text="Level all speakers" Style="{StaticResource SectionHeader}" />
-                    <TextBlock Text="Set every speaker in the house to the same volume (and unmute them). Handy for resetting after someone cranked one room."
-                               Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Level (%)" VerticalAlignment="Center" Width="110" />
-                        <TextBox x:Name="LevelPercentBox" Width="50" Padding="6,4" VerticalContentAlignment="Center" />
-                    </StackPanel>
-                    <Button Content="Set all speakers now" Height="30" Padding="12,0" Margin="0,8,0,0"
-                            Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
-                            Click="LevelVolumesButton_Click" />
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <TextBlock Text="Hotkey" VerticalAlignment="Center" Width="110" />
-                        <TextBox x:Name="LevelVolumesHotkeyBox" Style="{StaticResource HotkeyBox}" Width="Auto" HorizontalAlignment="Stretch"
-                                 PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                    </StackPanel>
-                    <Button Content="Clear hotkey" Margin="0,6,0,0" Padding="8,4" Tag="LevelVolumes"
-                            HorizontalAlignment="Left" Click="ClearHotkey_Click" />
-                </StackPanel>
-            </Grid>
-        </ScrollViewer>
+                </ScrollViewer>
             </TabItem>
 
-            <!-- ========== Library cache / results ========== -->
-            <TabItem Header="Library" x:Name="LibraryTab">
-                <Grid Margin="8,10,8,4">
+            <!-- ========== Hotkeys ========== -->
+            <TabItem Header="Hotkeys">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12,16,8">
+                    <StackPanel MaxWidth="640" HorizontalAlignment="Left">
+                        <TextBlock Text="Transport" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
+                        <TextBlock Text="Click a box and press your key combo. Esc clears."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Play / Pause" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="PlayPauseHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="0" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="PlayPause"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Next track" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="NextHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="1" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="Next"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Previous track" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="PreviousHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="2" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="Previous"
+                                    Click="ClearHotkey_Click" />
+                        </Grid>
+
+                        <TextBlock Text="Volume (all speakers)" Style="{StaticResource SectionHeader}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Volume up" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="VolumeUpHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="Auto" HorizontalAlignment="Left" Margin="0,4"
+                                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="0" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="VolumeUp"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Volume down" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="VolumeDownHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="Auto" HorizontalAlignment="Left" Margin="0,4"
+                                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="1" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="VolumeDown"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Mute toggle" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="MuteHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="Auto" HorizontalAlignment="Left" Margin="0,4"
+                                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="2" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="Mute"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Level all" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="3" Grid.Column="1" x:Name="LevelVolumesHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="Auto" HorizontalAlignment="Left" Margin="0,4"
+                                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="3" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="LevelVolumes"
+                                    Click="ClearHotkey_Click" />
+                            <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
+                                <TextBlock Text="Step per press (%)" VerticalAlignment="Center" Width="120" />
+                                <TextBox x:Name="VolumeStepBox" Width="50" Padding="6,4" VerticalContentAlignment="Center" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Playlist / favorite slots" Style="{StaticResource SectionHeader}" />
+                        <TextBlock Text="Pick a Sonos favorite or playlist, then assign a hotkey."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
+                        <Grid x:Name="FavoritesGrid">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="60" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Slot 1" VerticalAlignment="Center" Margin="0,4" />
+                            <ComboBox Grid.Row="0" Grid.Column="1" x:Name="Fav1NameCombo" Height="26" Margin="0,4"
+                                      VerticalContentAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="2" x:Name="Fav1HotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="0" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav1"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Slot 2" VerticalAlignment="Center" Margin="0,4" />
+                            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="Fav2NameCombo" Height="26" Margin="0,4"
+                                      VerticalContentAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="2" x:Name="Fav2HotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="1" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav2"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Slot 3" VerticalAlignment="Center" Margin="0,4" />
+                            <ComboBox Grid.Row="2" Grid.Column="1" x:Name="Fav3NameCombo" Height="26" Margin="0,4"
+                                      VerticalContentAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="2" x:Name="Fav3HotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="2" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav3"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Slot 4" VerticalAlignment="Center" Margin="0,4" />
+                            <ComboBox Grid.Row="3" Grid.Column="1" x:Name="Fav4NameCombo" Height="26" Margin="0,4"
+                                      VerticalContentAlignment="Center" />
+                            <TextBox Grid.Row="3" Grid.Column="2" x:Name="Fav4HotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="3" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav4"
+                                    Click="ClearHotkey_Click" />
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ========== Shuffle ========== -->
+            <TabItem Header="Shuffle">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12,16,8">
+                    <StackPanel MaxWidth="560" HorizontalAlignment="Left">
+                        <TextBlock Text="Library shuffle &amp; history" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
+                        <TextBlock Text="History only affects the next rebuild or top-up — not the rest of the current queue. Played tracks are recorded while Sonos plays."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="200" />
+                                <ColumnDefinition Width="80" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Queue size (shuffle)" VerticalAlignment="Center" Margin="0,6" />
+                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="ShuffleQueueTracksBox" Padding="6,2" Margin="0,6"
+                                     ToolTip="Tracks enqueued on each full shuffle (20–500)" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Top-up size" VerticalAlignment="Center" Margin="0,6" />
+                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="ShuffleTopUpTracksBox" Padding="6,2" Margin="0,6"
+                                     ToolTip="Tracks appended near end of queue (10–300)" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="History days" VerticalAlignment="Center" Margin="0,6" />
+                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="ShuffleHistoryDaysBox" Padding="6,2" Margin="0,6"
+                                     ToolTip="Exclude played tracks for this many days (1–90)" />
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Top-up when remaining ≤" VerticalAlignment="Center" Margin="0,6" />
+                            <TextBox Grid.Row="3" Grid.Column="1" x:Name="ShuffleTopUpRemainingBox" Padding="6,2" Margin="0,6"
+                                     ToolTip="Auto top-up when this many tracks or fewer remain (1–30)" />
+                        </Grid>
+                        <CheckBox x:Name="ShuffleExcludePlayedCheckBox" Content="Exclude recently played tracks from new batches" Margin="0,12,0,0" />
+                        <CheckBox x:Name="ShuffleAutoTopUpCheckBox" Content="Auto top-up when the queue is nearly empty" Margin="0,6,0,0" />
+                        <CheckBox x:Name="ShuffleArtistSpreadCheckBox" Content="Avoid same artist back-to-back when building a batch" Margin="0,6,0,0" />
+                        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                            <Button Content="Clear play history" Height="30" Padding="14,0"
+                                    Click="ClearPlayHistoryButton_Click" />
+                            <TextBlock x:Name="PlayHistoryStatusText" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       Foreground="#FF60707F" FontSize="11" Text="History: …" />
+                        </StackPanel>
+                        <TextBlock Text="Clearing history does not change the current Sonos queue — shuffle again to apply."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ========== Library ========== -->
+            <TabItem x:Name="LibraryTab" Header="Library">
+                <Grid Margin="16,12,16,8">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -425,10 +331,12 @@
                             <TextBlock Text="Local library cache" FontSize="15" FontWeight="SemiBold" />
                             <TextBlock x:Name="LibTabStatusText" Text="…" Foreground="#FF60707F" FontSize="12"
                                        Margin="0,4,0,0" TextWrapping="Wrap" />
+                            <TextBlock x:Name="LibraryStatusText" Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0"
+                                       TextWrapping="Wrap" Visibility="Collapsed" />
                             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                                 <Button Content="Discover from Sonos" Height="28" Padding="12,0"
                                         Click="DiscoverLibraryRootsButton_Click" />
-                                <Button Content="Rescan" Height="28" Padding="14,0" Margin="8,0,0,0"
+                                <Button x:Name="LibraryRescanButton" Content="Rescan" Height="28" Padding="14,0" Margin="8,0,0,0"
                                         Click="LibraryRescanButton_Click" />
                                 <Button Content="Force re-read tags" Height="28" Padding="12,0" Margin="8,0,0,0"
                                         Click="LibraryForceRescanButton_Click" />
@@ -436,7 +344,19 @@
                         </StackPanel>
                     </Border>
 
-                    <Grid Grid.Row="1" Margin="0,0,0,8">
+                    <Expander Grid.Row="1" Header="Library paths (Sonos share + optional master)" Margin="0,0,0,10"
+                              IsExpanded="False">
+                        <StackPanel Margin="0,8,0,0">
+                            <TextBlock Text="Sonos library root(s) — one path per line; usually filled by Discover from Sonos."
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,0,0,4" TextWrapping="Wrap" />
+                            <TextBox x:Name="SonosLibraryRootsBox" MinHeight="48" AcceptsReturn="True" TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto" Padding="6,4" />
+                            <TextBlock Text="Master library root (optional)" FontWeight="SemiBold" Margin="0,8,0,4" />
+                            <TextBox x:Name="MasterLibraryRootBox" Height="26" Padding="6,4" VerticalContentAlignment="Center" />
+                        </StackPanel>
+                    </Expander>
+
+                    <Grid Grid.Row="2" Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -453,7 +373,7 @@
                                 Click="LibraryBrowseButton_Click" />
                     </Grid>
 
-                    <DataGrid x:Name="LibraryResultsGrid" Grid.Row="2"
+                    <DataGrid x:Name="LibraryResultsGrid" Grid.Row="3"
                               AutoGenerateColumns="False" IsReadOnly="True"
                               CanUserAddRows="False" CanUserDeleteRows="False"
                               HeadersVisibility="Column" GridLinesVisibility="Horizontal"
@@ -472,7 +392,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
 
-                    <StackPanel Grid.Row="3" Margin="0,8,0,0">
+                    <StackPanel Grid.Row="4" Margin="0,8,0,0">
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                             <CheckBox x:Name="LibraryUnplayableOnlyCheck" Content="Sonos-unplayable only"
                                       VerticalAlignment="Center" Margin="0,0,12,0" />
@@ -490,8 +410,8 @@
                                     Click="LibrarySetTempoButton_Click" />
                         </StackPanel>
                         <TextBlock x:Name="LibraryResultsMetaText" Foreground="#FF60707F" FontSize="11"
-                                   Text="Search the cache or watch agent results. Format = bit depth / sample rate / bitrate. Sonos = heuristic. Set tempo writes HOTSONOS_TEMPO into the file (needs SMB write access)." />
-                        <TextBox x:Name="LibraryMcpResultBox" MinHeight="72" MaxHeight="140" Margin="0,6,0,0"
+                                   Text="Search the cache or watch agent results. Set tempo writes HOTSONOS_TEMPO into the file." />
+                        <TextBox x:Name="LibraryMcpResultBox" MinHeight="56" MaxHeight="120" Margin="0,6,0,0"
                                  IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                                  FontFamily="Consolas" FontSize="11" Background="#FF1C2536" Foreground="#FFE8EEF4"
                                  Padding="8" Visibility="Collapsed" />
@@ -499,13 +419,114 @@
                 </Grid>
             </TabItem>
 
+            <!-- ========== Wake ========== -->
+            <TabItem Header="Wake">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12,16,8">
+                    <StackPanel MaxWidth="520" HorizontalAlignment="Left">
+                        <TextBlock Text="Wake to music" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
+                        <CheckBox x:Name="WakeEnabledCheckBox" Content="Enable wake to music" Margin="0,2" />
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <TextBlock Text="Time" VerticalAlignment="Center" Width="70" />
+                            <TextBox x:Name="WakeTimeBox" Width="60" Padding="6,2" VerticalContentAlignment="Center" />
+                            <TextBlock Text="(24-hour, e.g. 07:00)" VerticalAlignment="Center" Margin="8,0,0,0"
+                                       Foreground="#FF60707F" FontSize="11" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Days" VerticalAlignment="Center" Width="70" />
+                            <CheckBox x:Name="WakeDaySu" Content="Su" Margin="0,0,8,0" />
+                            <CheckBox x:Name="WakeDayMo" Content="Mo" Margin="0,0,8,0" />
+                            <CheckBox x:Name="WakeDayTu" Content="Tu" Margin="0,0,8,0" />
+                            <CheckBox x:Name="WakeDayWe" Content="We" Margin="0,0,8,0" />
+                            <CheckBox x:Name="WakeDayTh" Content="Th" Margin="0,0,8,0" />
+                            <CheckBox x:Name="WakeDayFr" Content="Fr" Margin="0,0,8,0" />
+                            <CheckBox x:Name="WakeDaySa" Content="Sa" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <TextBlock Text="Room" VerticalAlignment="Center" Width="70" />
+                            <ComboBox x:Name="WakeRoomComboBox" Width="240" Height="28" VerticalContentAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,6">
+                            <TextBlock Text="Play" VerticalAlignment="Center" Width="70" />
+                            <ComboBox x:Name="WakeSourceComboBox" Width="240" Height="28" VerticalContentAlignment="Center"
+                                      SelectionChanged="WakeSourceComboBox_SelectionChanged" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,6">
+                            <TextBlock Text="Favorite" VerticalAlignment="Center" Width="70" />
+                            <ComboBox x:Name="WakeFavoriteComboBox" Width="240" Height="28" VerticalContentAlignment="Center" />
+                        </StackPanel>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="70" />
+                                <ColumnDefinition Width="60" />
+                                <ColumnDefinition Width="16" />
+                                <ColumnDefinition Width="70" />
+                                <ColumnDefinition Width="60" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Start %" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="WakeStartVolumeBox" Padding="6,2" Margin="0,4" />
+                            <TextBlock Grid.Row="0" Grid.Column="3" Text="End %" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="0" Grid.Column="4" x:Name="WakeEndVolumeBox" Padding="6,2" Margin="0,4" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Step %" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="WakeStepBox" Padding="6,2" Margin="0,4" />
+                            <TextBlock Grid.Row="1" Grid.Column="3" Text="Every min" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="1" Grid.Column="4" x:Name="WakeIntervalBox" Padding="6,2" Margin="0,4" />
+                        </Grid>
+                        <CheckBox x:Name="WakeExpandCheckBox"
+                                  Content="After ramp: expand to all speakers and shuffle library"
+                                  Margin="0,10,0,0" />
+                        <TextBlock Text="PC must be awake with HotSonos running. Skipped if Sonos is already playing."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ========== Options ========== -->
+            <TabItem Header="Options">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12,16,8">
+                    <StackPanel MaxWidth="520" HorizontalAlignment="Left">
+                        <TextBlock Text="Now-Playing flyout" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
+                        <CheckBox x:Name="FlyoutOnTrackChangeCheckBox" Content="Pop the flyout on every track change" Margin="0,2" />
+                        <CheckBox x:Name="FlyoutOnActionCheckBox" Content="Pop the flyout when I use a hotkey or action" Margin="0,6" />
+                        <TextBlock Text="Drag the flyout to reposition; pin to keep it on-screen."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+                        <TextBlock Text="Startup &amp; nightly" Style="{StaticResource SectionHeader}" />
+                        <CheckBox x:Name="StartWithWindowsCheckBox" Content="Start HotSonos with Windows" Margin="0,2"
+                                  Checked="StartWithWindows_Changed" Unchecked="StartWithWindows_Changed" />
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <CheckBox x:Name="NightlyResetCheckBox" Content="Re-sync all speakers nightly at" VerticalAlignment="Center" />
+                            <TextBox x:Name="NightlyResetTimeBox" Width="60" Margin="8,0,0,0" Padding="6,2"
+                                     VerticalContentAlignment="Center" />
+                            <TextBlock Text="(24-hour)" VerticalAlignment="Center" Margin="8,0,0,0"
+                                       Foreground="#FF60707F" FontSize="11" />
+                        </StackPanel>
+                        <CheckBox x:Name="NightlyResetReshuffleCheckBox" Content="Also reshuffle the library (starts playback)" Margin="20,6,0,0" />
+
+                        <TextBlock Text="Agent MCP (loopback)" Style="{StaticResource SectionHeader}" />
+                        <CheckBox x:Name="McpEnabledCheckBox" Content="Enable MCP server while HotSonos is running" Margin="0,2" />
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <TextBlock Text="Port" VerticalAlignment="Center" Width="50" />
+                            <TextBox x:Name="McpPortBox" Width="80" Padding="6,2" VerticalContentAlignment="Center" />
+                            <TextBlock Text="(restart app after port change)"
+                                       VerticalAlignment="Center" Margin="8,0,0,0" Foreground="#FF60707F" FontSize="11" />
+                        </StackPanel>
+                        <TextBlock Text="http://127.0.0.1:port/mcp — loopback only."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <!-- ========== MCP Debug ========== -->
-            <TabItem Header="MCP Debug" x:Name="McpTab">
-                <Grid Margin="8,10,8,4">
+            <TabItem x:Name="McpTab" Header="MCP Debug">
+                <Grid Margin="16,12,16,8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
-                        <RowDefinition Height="180" />
+                        <RowDefinition Height="160" />
                     </Grid.RowDefinitions>
 
                     <Border Grid.Row="0" Background="#FFEEF2F7" CornerRadius="6" Padding="12" Margin="0,0,0,10"
@@ -520,8 +541,6 @@
                                 <TextBlock x:Name="McpEndpointText" Text="Endpoint: (not running)"
                                            Foreground="#FF60707F" FontSize="12" Margin="0,4,0,0"
                                            TextWrapping="Wrap" />
-                                <TextBlock Text="Live tool calls from agents (loopback). Select a row for full args/result."
-                                           Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                 <CheckBox x:Name="McpAutoScrollCheck" Content="Auto-scroll" IsChecked="True"
@@ -561,19 +580,21 @@
         </TabControl>
 
         <!-- Footer -->
-        <Grid Grid.Row="1" Margin="0,10,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBlock x:Name="StatusText" Grid.Column="0" VerticalAlignment="Center"
-                       Foreground="#FF2E7D46" TextWrapping="Wrap" />
-            <Button Grid.Column="1" Content="Hide to tray" Height="30" Padding="14,0" Margin="0,0,8,0"
-                    Click="HideButton_Click" />
-            <Button Grid.Column="2" x:Name="SaveButton" Content="Save" Height="30" Padding="20,0"
-                    Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
-                    Click="SaveButton_Click" />
-        </Grid>
+        <Border Grid.Row="1" Background="#FFEEF2F7" BorderBrush="#FFD8DEE4" BorderThickness="0,1,0,0" Padding="14,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusText" Grid.Column="0" VerticalAlignment="Center"
+                           Foreground="#FF2E7D46" TextWrapping="Wrap" />
+                <Button Grid.Column="1" Content="Hide to tray" Height="30" Padding="14,0" Margin="0,0,8,0"
+                        Click="HideButton_Click" />
+                <Button Grid.Column="2" x:Name="SaveButton" Content="Save" Height="30" Padding="20,0"
+                        Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                        Click="SaveButton_Click" />
+            </Grid>
+        </Border>
     </Grid>
 </Window>

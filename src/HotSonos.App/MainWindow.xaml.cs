@@ -99,8 +99,16 @@ public partial class MainWindow : Window
         else if (string.Equals(tab, "mcp", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "mcp debug", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = McpTab;
+        else if (string.Equals(tab, "shuffle", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedIndex = 2;
+        else if (string.Equals(tab, "hotkeys", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedIndex = 1;
+        else if (string.Equals(tab, "wake", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedIndex = 4;
+        else if (string.Equals(tab, "options", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedIndex = 5;
         else
-            MainTabs.SelectedIndex = 0;
+            MainTabs.SelectedItem = ControlTab; // Control / Settings default
     }
 
     /// <summary>Applies the last saved position/size, if any; otherwise keeps the XAML defaults.</summary>
@@ -276,11 +284,13 @@ public partial class MainWindow : Window
         {
             line =
                 $"Scanning… {st.Phase ?? ""}  |  tracks in cache: {st.TrackCount}  |  last seen {st.LastScanFilesSeen}, updated {st.LastScanFilesUpdated}";
-            LibraryRescanButton.IsEnabled = false;
+            if (LibraryRescanButton is not null)
+                LibraryRescanButton.IsEnabled = false;
         }
         else
         {
-            LibraryRescanButton.IsEnabled = true;
+            if (LibraryRescanButton is not null)
+                LibraryRescanButton.IsEnabled = true;
             var last = st.LastScanFinishedUtc is { } t
                 ? t.ToLocalTime().ToString("g")
                 : "never";
