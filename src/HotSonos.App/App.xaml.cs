@@ -123,7 +123,7 @@ public partial class App : System.Windows.Application
         _store = new ConfigStore();
         _settings = _store.Load();
 
-        _sonos = new SonosManager();
+        _sonos = new SonosManager(() => _settings);
         _sonos.NowPlayingChanged += OnNowPlayingChanged;
         _sonos.TopologyChanged += OnTopologyChanged;
         _sonos.SpeakerAvailabilityChanged += OnSpeakerAvailabilityChanged;

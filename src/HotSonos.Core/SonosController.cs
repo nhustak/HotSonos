@@ -162,28 +162,40 @@ public sealed class SonosController
     private const int EnqueueBatchSize = 16;
 
     /// <summary>
-    /// Shuffles the entire local Music Library across the group.
+    /// Shuffles the local Music Library onto the group queue (client-side order).
     /// </summary>
     /// <remarks>
     /// The device's own <c>SetPlayMode SHUFFLE</c> derives its play order
     /// deterministically from the queue's content, so re-enqueuing the same
     /// "all tracks" container and flipping to SHUFFLE produces the *same*
-    /// shuffled order every time. To get a genuinely different order per
-    /// invocation, the shuffle happens here on the client: the full track
-    /// list is browsed, randomized, and enqueued pre-shuffled with plain
-    /// NORMAL play mode.
+    /// shuffled order every time. HotSonos browses <c>A:TRACKS</c>, builds a
+    /// history-aware random order, enqueues a capped sample, and plays with
+    /// plain NORMAL mode.
     /// </remarks>
-    public async Task ShuffleMusicLibraryAsync(CancellationToken ct = default)
+    public Task ShuffleMusicLibraryAsync(CancellationToken ct = default) =>
+        ShuffleMusicLibraryAsync(null, ct);
+
+    public async Task<ShuffleResult> ShuffleMusicLibraryAsync(
+        ShuffleOptions? options,
+        CancellationToken ct = default)
     {
+        options ??= new ShuffleOptions();
+        var maxQueue = Math.Clamp(options.MaxQueueTracks, 20, 2000);
+        var append = options.AppendToQueue;
+
         var tracks = (await BrowseAllTracksAsync(ct).ConfigureAwait(false)).ToList();
         if (tracks.Count == 0)
             throw new InvalidOperationException("No tracks found in the local Music Library.");
 
-        Shuffle(tracks);
+        var browsed = tracks.Count;
+        var excludeKeys = BuildNormalizedKeySet(options.ExcludeUris);
+        var (ordered, excludedCount, candidateCount) =
+            BuildExclusionOrder(tracks, excludeKeys, maxQueue, options.ArtistSpread);
 
-        await InvokeAvTransport("RemoveAllTracksFromQueue", ct, ("InstanceID", "0"));
+        if (!append)
+            await InvokeAvTransport("RemoveAllTracksFromQueue", ct, ("InstanceID", "0"));
 
-        foreach (var batch in tracks.Chunk(EnqueueBatchSize))
+        foreach (var batch in ordered.Chunk(EnqueueBatchSize))
         {
             await InvokeAvTransport("AddMultipleURIsToQueue", ct,
                 ("InstanceID", "0"),
@@ -197,13 +209,146 @@ public sealed class SonosController
                 ("EnqueueAsNext", "0")).ConfigureAwait(false);
         }
 
-        await InvokeAvTransport("SetAVTransportURI", ct,
-            ("InstanceID", "0"),
-            ("CurrentURI", $"x-rincon-queue:{CoordinatorUuid}#0"),
-            ("CurrentURIMetaData", "")).ConfigureAwait(false);
+        if (!append)
+        {
+            await InvokeAvTransport("SetAVTransportURI", ct,
+                ("InstanceID", "0"),
+                ("CurrentURI", $"x-rincon-queue:{CoordinatorUuid}#0"),
+                ("CurrentURIMetaData", "")).ConfigureAwait(false);
 
-        await InvokeAvTransport("SetPlayMode", ct, ("InstanceID", "0"), ("NewPlayMode", "NORMAL")).ConfigureAwait(false);
-        await PlayAsync(ct).ConfigureAwait(false);
+            await InvokeAvTransport("SetPlayMode", ct, ("InstanceID", "0"), ("NewPlayMode", "NORMAL")).ConfigureAwait(false);
+            await PlayAsync(ct).ConfigureAwait(false);
+        }
+
+        return new ShuffleResult
+        {
+            Browsed = browsed,
+            Enqueued = ordered.Count,
+            ExcludedCount = excludedCount,
+            CandidateCount = candidateCount,
+            Appended = append,
+            EnqueuedUris = ordered.Select(t => t.Uri).ToList(),
+        };
+    }
+
+    /// <summary>Normalize Sonos/browse URIs for history matching (decode + lower + strip scheme).</summary>
+    public static string NormalizeTrackKey(string? uri)
+    {
+        if (string.IsNullOrWhiteSpace(uri)) return "";
+        var s = uri.Trim();
+        try { s = Uri.UnescapeDataString(s); } catch { /* keep */ }
+        s = s.Replace('\\', '/');
+        const string prefix = "x-file-cifs://";
+        if (s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            s = s[prefix.Length..];
+        var q = s.IndexOf('?', StringComparison.Ordinal);
+        if (q >= 0) s = s[..q];
+        return s.Trim().ToLowerInvariant();
+    }
+
+    private static HashSet<string> BuildNormalizedKeySet(IReadOnlyCollection<string>? uris)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (uris is null) return set;
+        foreach (var u in uris)
+        {
+            var k = NormalizeTrackKey(u);
+            if (k.Length > 0) set.Add(k);
+        }
+        return set;
+    }
+
+    /// <summary>
+    /// Hard-exclude played tracks when possible, then shuffle + artist-spread, take maxQueue.
+    /// </summary>
+    private static (List<(string Uri, XElement Item)> Ordered, int ExcludedCount, int CandidateCount)
+        BuildExclusionOrder(
+            List<(string Uri, XElement Item)> tracks,
+            HashSet<string> excludeKeys,
+            int maxQueue,
+            bool artistSpread)
+    {
+        List<(string Uri, XElement Item)> candidates;
+        var excluded = 0;
+        if (excludeKeys.Count == 0)
+        {
+            candidates = tracks.ToList();
+        }
+        else
+        {
+            candidates = new List<(string Uri, XElement Item)>(tracks.Count);
+            foreach (var t in tracks)
+            {
+                var key = NormalizeTrackKey(t.Uri);
+                if (excludeKeys.Contains(key))
+                {
+                    excluded++;
+                    continue;
+                }
+                candidates.Add(t);
+            }
+
+            // Need enough unheard material; otherwise relax exclusion so music still plays.
+            if (candidates.Count < Math.Max(20, maxQueue / 2))
+            {
+                candidates = tracks.ToList();
+                excluded = 0;
+            }
+        }
+
+        Shuffle(candidates);
+        var ordered = artistSpread ? SpreadArtists(candidates) : candidates;
+        if (ordered.Count > maxQueue)
+            ordered = ordered.Take(maxQueue).ToList();
+        return (ordered, excluded, candidates.Count);
+    }
+
+    /// <summary>
+    /// Greedy pass: prefer not placing the same artist twice in a row when an
+    /// alternative exists nearby (small window search).
+    /// </summary>
+    private static List<(string Uri, XElement Item)> SpreadArtists(
+        IReadOnlyList<(string Uri, XElement Item)> source)
+    {
+        if (source.Count < 3)
+            return source.ToList();
+
+        var remaining = source.ToList();
+        var result = new List<(string Uri, XElement Item)>(remaining.Count);
+        string? lastArtist = null;
+
+        while (remaining.Count > 0)
+        {
+            var pick = 0;
+            if (lastArtist is not null)
+            {
+                var window = Math.Min(12, remaining.Count);
+                for (var i = 0; i < window; i++)
+                {
+                    var a = ExtractArtist(remaining[i].Item);
+                    if (!string.Equals(a, lastArtist, StringComparison.OrdinalIgnoreCase))
+                    {
+                        pick = i;
+                        break;
+                    }
+                }
+            }
+
+            var chosen = remaining[pick];
+            remaining.RemoveAt(pick);
+            result.Add(chosen);
+            lastArtist = ExtractArtist(chosen.Item) ?? lastArtist;
+        }
+
+        return result;
+    }
+
+    private static string? ExtractArtist(XElement item)
+    {
+        var artist = item.Descendants()
+            .FirstOrDefault(e => e.Name.LocalName is "artist" or "creator")
+            ?.Value;
+        return string.IsNullOrWhiteSpace(artist) ? null : artist.Trim();
     }
 
     /// <summary>

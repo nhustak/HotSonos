@@ -19,7 +19,25 @@ public sealed record NowPlaying
     /// <summary>Raw AVTransport <c>TransportStatus</c> when present (e.g. OK / ERROR_OCCURRED).</summary>
     public string? TransportStatus { get; init; }
 
+    /// <summary>1-based index of the current queue track when Sonos reports it.</summary>
+    public int? CurrentTrack { get; init; }
+
+    /// <summary>Total tracks in the active queue when Sonos reports it.</summary>
+    public int? NumberOfTracks { get; init; }
+
     public SonosTransportState State { get; init; } = SonosTransportState.Unknown;
+
+    /// <summary>
+    /// True when this many tracks or fewer remain after the current one
+    /// (time to top-up). Default 4 matches the previous hard-coded behavior.
+    /// </summary>
+    public bool IsNearQueueEnd(int remainingInclusive = 4)
+    {
+        if (CurrentTrack is not int cur || NumberOfTracks is not int total || total <= 0)
+            return false;
+        remainingInclusive = Math.Clamp(remainingInclusive, 1, 50);
+        return (total - cur) <= remainingInclusive;
+    }
 
     /// <summary>True when there's no meaningful track (stopped/idle/empty).</summary>
     public bool IsEmpty => string.IsNullOrWhiteSpace(Title) && string.IsNullOrWhiteSpace(TrackUri);

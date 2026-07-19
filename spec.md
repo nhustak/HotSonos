@@ -139,7 +139,7 @@ Sonos speakers expose a local UPnP/SOAP server on **TCP 1400**, discoverable via
 | Next / Previous | `AVTransport` `Next` / `Previous` |
 | Play Favorite | Browse `FV:2` → `SetAVTransportURI` + `Play` |
 | Play Playlist | Browse `SQ:` → `x-rincon-playlist:{uuid}#SQ:N` → queue + play |
-| Shuffle Music Library | Browse `A:TRACKS`, client-side Fisher-Yates, batch `AddMultipleURIsToQueue`, `NORMAL` play mode |
+| Shuffle Music Library | Browse `A:TRACKS`; **short queue (~80)**; hard-exclude tracks **actually played** (~14d); **auto top-up** near queue end; artist spread; `NORMAL` |
 | Volume | Per-member `RenderingControl` (group write often 803 with fixed-volume members) |
 | Level all | Absolute `SetVolume` + unmute |
 | Now playing | GENA AVTransport `LastChange` |
@@ -501,3 +501,5 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |
 | 2026-07-15 | Library audio props + Sonos-unplayable heuristic; GENA cross-check on track change |
 | 2026-07-15 | Step 3: write HOTSONOS_TEMPO + standard tags to FLAC/MP3; MCP track_set_tags |
+| 2026-07-17 | History-aware library shuffle: deprioritize recent plays/serves, queue cap 500, artist spread |
+| 2026-07-19 | Shuffle v2: short queues, hard-exclude played only, auto top-up near end (history applies at rebuild) |

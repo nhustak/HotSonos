@@ -244,8 +244,10 @@ public sealed class WakeMusicService : IDisposable
         }
         else
         {
-            await controller.ShuffleMusicLibraryAsync(ct).ConfigureAwait(false);
-            _status($"Wake: 🔀 shuffling on {group.DisplayName}");
+            // Use history-aware shuffle via SonosManager (not bare controller).
+            _sonos.SetActiveRoom(group.CoordinatorRoom);
+            var summary = await _sonos.ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
+            _status($"Wake: 🔀 shuffling on {group.DisplayName} ({summary})");
         }
 
         _rampCoordinatorUuid = group.CoordinatorUuid;
@@ -314,12 +316,12 @@ public sealed class WakeMusicService : IDisposable
         await _sonos.GroupAllSpeakersToAsync(_rampCoordinatorUuid, ct).ConfigureAwait(false);
         await _sonos.SetVolumesAbsoluteAsync(_sonos.AllVisibleIps(), _rampEnd, ct).ConfigureAwait(false);
 
-        var controller = _sonos.CreateControllerForRoom(_rampCoordinatorRoom)
-            ?? throw new InvalidOperationException("Wake expand: coordinator no longer available.");
-        await controller.ShuffleMusicLibraryAsync(ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(_rampCoordinatorRoom))
+            _sonos.SetActiveRoom(_rampCoordinatorRoom);
+        var summary = await _sonos.ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
 
-        AppLog.Info("Wake Phase B complete: whole-house library shuffle");
-        _status("Wake: 🔀 all speakers, full library shuffle");
+        AppLog.Info($"Wake Phase B complete: whole-house library shuffle ({summary})");
+        _status($"Wake: 🔀 all speakers, library shuffle ({summary})");
     }
 
     private void CancelPreviousWakeCts()

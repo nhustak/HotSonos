@@ -191,6 +191,14 @@ public partial class MainWindow : Window
         NightlyResetReshuffleCheckBox.IsChecked = _settings.NightlyResetReshuffle;
         McpEnabledCheckBox.IsChecked = _settings.McpEnabled;
         McpPortBox.Text = _settings.McpPort.ToString();
+        ShuffleQueueTracksBox.Text = _settings.ShuffleQueueTracks.ToString();
+        ShuffleTopUpTracksBox.Text = _settings.ShuffleTopUpTracks.ToString();
+        ShuffleHistoryDaysBox.Text = _settings.ShuffleHistoryDays.ToString();
+        ShuffleTopUpRemainingBox.Text = _settings.ShuffleTopUpWhenRemaining.ToString();
+        ShuffleExcludePlayedCheckBox.IsChecked = _settings.ShuffleExcludePlayed;
+        ShuffleAutoTopUpCheckBox.IsChecked = _settings.ShuffleAutoTopUp;
+        ShuffleArtistSpreadCheckBox.IsChecked = _settings.ShuffleArtistSpread;
+        RefreshPlayHistoryStatus();
         SonosLibraryRootsBox.Text = string.Join(Environment.NewLine, _settings.SonosLibraryRoots);
         MasterLibraryRootBox.Text = _settings.MasterLibraryRoot ?? string.Empty;
         LoadWakeUiFromSettings();
@@ -381,6 +389,41 @@ public partial class MainWindow : Window
     {
         LibraryUnplayableOnlyCheck.IsChecked = true;
         RunLibrarySearch(LibrarySearchBox.Text, browse: true);
+    }
+
+    private void ClearPlayHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            CommitWorkingValuesToSettings();
+            _store.Save(_settings);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Save before clear history failed", ex);
+        }
+
+        var removed = _sonos.PlayHistory.Clear();
+        RefreshPlayHistoryStatus();
+        SetStatus(
+            removed == 0
+                ? "Play history was already empty."
+                : $"Cleared {removed} history entries. Shuffle again to build a fresh queue.",
+            warn: false);
+    }
+
+    private void RefreshPlayHistoryStatus()
+    {
+        try
+        {
+            var n = _sonos.PlayHistory.PlayedDistinctCount;
+            var days = _settings.ShuffleHistoryDays;
+            PlayHistoryStatusText.Text = $"History: {n} distinct played track(s) (last {days} days)";
+        }
+        catch
+        {
+            PlayHistoryStatusText.Text = "History: (unavailable)";
+        }
     }
 
     private void LibrarySetTempoButton_Click(object sender, RoutedEventArgs e)
@@ -960,6 +1003,18 @@ public partial class MainWindow : Window
         _settings.McpEnabled = McpEnabledCheckBox.IsChecked == true;
         if (int.TryParse(McpPortBox.Text, out var mcpPort) && mcpPort is >= 1024 and <= 65535)
             _settings.McpPort = mcpPort;
+
+        if (int.TryParse(ShuffleQueueTracksBox.Text, out var qn) && qn is >= 20 and <= 500)
+            _settings.ShuffleQueueTracks = qn;
+        if (int.TryParse(ShuffleTopUpTracksBox.Text, out var tu) && tu is >= 10 and <= 300)
+            _settings.ShuffleTopUpTracks = tu;
+        if (int.TryParse(ShuffleHistoryDaysBox.Text, out var hd) && hd is >= 1 and <= 90)
+            _settings.ShuffleHistoryDays = hd;
+        if (int.TryParse(ShuffleTopUpRemainingBox.Text, out var rem) && rem is >= 1 and <= 30)
+            _settings.ShuffleTopUpWhenRemaining = rem;
+        _settings.ShuffleExcludePlayed = ShuffleExcludePlayedCheckBox.IsChecked == true;
+        _settings.ShuffleAutoTopUp = ShuffleAutoTopUpCheckBox.IsChecked == true;
+        _settings.ShuffleArtistSpread = ShuffleArtistSpreadCheckBox.IsChecked == true;
 
         _settings.SonosLibraryRoots = SplitLibraryRoots(SonosLibraryRootsBox.Text);
         _settings.MasterLibraryRoot = string.IsNullOrWhiteSpace(MasterLibraryRootBox.Text)

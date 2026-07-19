@@ -201,6 +201,48 @@
                     <TextBlock Text="Lets AI tools inspect devices, logs, and force refresh while the tray app is running. Loopback only."
                                Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
 
+                    <TextBlock Text="Library shuffle &amp; history" Style="{StaticResource SectionHeader}" />
+                    <TextBlock Text="History only affects the next rebuild/top-up (not the rest of the current queue). Played tracks are recorded while Sonos plays."
+                               Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <Grid Margin="0,2,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="170" />
+                            <ColumnDefinition Width="70" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="170" />
+                            <ColumnDefinition Width="70" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Queue size (shuffle)" VerticalAlignment="Center" Margin="0,4" />
+                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="ShuffleQueueTracksBox" Padding="6,2" Margin="0,4"
+                                 ToolTip="Tracks enqueued on each full shuffle (20–500)" />
+                        <TextBlock Grid.Row="0" Grid.Column="3" Text="Top-up size" VerticalAlignment="Center" Margin="0,4" />
+                        <TextBox Grid.Row="0" Grid.Column="4" x:Name="ShuffleTopUpTracksBox" Padding="6,2" Margin="0,4"
+                                 ToolTip="Tracks appended near end of queue (10–300)" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="History days" VerticalAlignment="Center" Margin="0,4" />
+                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="ShuffleHistoryDaysBox" Padding="6,2" Margin="0,4"
+                                 ToolTip="Exclude played tracks for this many days (1–90)" />
+                        <TextBlock Grid.Row="1" Grid.Column="3" Text="Top-up when remaining ≤" VerticalAlignment="Center" Margin="0,4" />
+                        <TextBox Grid.Row="1" Grid.Column="4" x:Name="ShuffleTopUpRemainingBox" Padding="6,2" Margin="0,4"
+                                 ToolTip="Auto top-up when this many tracks or fewer remain (1–30)" />
+                    </Grid>
+                    <CheckBox x:Name="ShuffleExcludePlayedCheckBox" Content="Exclude recently played tracks from new batches" Margin="0,6,0,0" />
+                    <CheckBox x:Name="ShuffleAutoTopUpCheckBox" Content="Auto top-up when the queue is nearly empty" Margin="0,4,0,0" />
+                    <CheckBox x:Name="ShuffleArtistSpreadCheckBox" Content="Avoid same artist back-to-back when building a batch" Margin="0,4,0,0" />
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button Content="Clear play history" Height="28" Padding="12,0"
+                                Click="ClearPlayHistoryButton_Click" />
+                        <TextBlock x:Name="PlayHistoryStatusText" VerticalAlignment="Center" Margin="12,0,0,0"
+                                   Foreground="#FF60707F" FontSize="11"
+                                   Text="History: …" />
+                    </StackPanel>
+                    <TextBlock Text="Clearing history does not change the current Sonos queue — shuffle again to apply."
+                               Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+
                     <TextBlock Text="Music library paths" Style="{StaticResource SectionHeader}" />
                     <TextBlock Text="Filesystem roots for the local library cache (FLAC/MP3 → SQLite). Prefer Discover from Sonos (reads x-file-cifs URIs from A:TRACKS). Daily shuffle still uses Sonos Music Library."
                                Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />

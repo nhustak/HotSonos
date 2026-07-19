@@ -123,6 +123,29 @@ public sealed class AppSettings
     /// </summary>
     public string? MasterLibraryRoot { get; set; }
 
+    // ---- Library shuffle / play history ------------------------------------
+
+    /// <summary>Tracks put on the Sonos queue when you shuffle (short = rebuilds more often).</summary>
+    public int ShuffleQueueTracks { get; set; } = 80;
+
+    /// <summary>Tracks appended when the queue is nearly empty (auto top-up).</summary>
+    public int ShuffleTopUpTracks { get; set; } = 60;
+
+    /// <summary>Days to remember actually-played tracks and hard-exclude them from new batches.</summary>
+    public int ShuffleHistoryDays { get; set; } = 14;
+
+    /// <summary>Auto top-up when this many tracks or fewer remain in the queue (needs Sonos GENA track counts).</summary>
+    public int ShuffleTopUpWhenRemaining { get; set; } = 4;
+
+    /// <summary>Hard-exclude tracks that were actually played within history days.</summary>
+    public bool ShuffleExcludePlayed { get; set; } = true;
+
+    /// <summary>When near the end of the queue, append another random batch automatically.</summary>
+    public bool ShuffleAutoTopUp { get; set; } = true;
+
+    /// <summary>Prefer not placing the same artist back-to-back when building a batch.</summary>
+    public bool ShuffleArtistSpread { get; set; } = true;
+
     /// <summary>Exactly four favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
 
@@ -197,6 +220,10 @@ public sealed class AppSettings
         MasterLibraryRoot = string.IsNullOrWhiteSpace(MasterLibraryRoot)
             ? null
             : MasterLibraryRoot.Trim();
+        if (ShuffleQueueTracks is < 20 or > 500) ShuffleQueueTracks = 80;
+        if (ShuffleTopUpTracks is < 10 or > 300) ShuffleTopUpTracks = 60;
+        if (ShuffleHistoryDays is < 1 or > 90) ShuffleHistoryDays = 14;
+        if (ShuffleTopUpWhenRemaining is < 1 or > 30) ShuffleTopUpWhenRemaining = 4;
         FavoriteSlots ??= [];
         while (FavoriteSlots.Count < FavoriteSlotCount)
             FavoriteSlots.Add(new FavoriteSlot());

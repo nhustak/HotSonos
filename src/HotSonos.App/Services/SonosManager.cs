@@ -34,12 +34,15 @@ public sealed class SonosManager
     private readonly SonosSoapClient _soap = new();
     private readonly SonosDiscovery _discovery;
     private readonly SonosEventSubscriber _events = new();
+    private readonly PlayHistoryStore _playHistory;
+    private readonly Func<AppSettings> _settings;
 
     private IReadOnlyList<SonosZone> _zones = [];
     private SonosController? _controller;
 
     private IReadOnlyList<string> _offline = [];
     private bool _topologySeen;
+    private int _topUpInFlight; // 0/1
 
     /// <summary>Raised when the active coordinator pushes a now-playing change.</summary>
     public event Action<NowPlaying>? NowPlayingChanged;
@@ -84,12 +87,30 @@ public sealed class SonosManager
         }).ToList(),
     };
 
-    public SonosManager()
+    public SonosManager(Func<AppSettings>? settings = null, PlayHistoryStore? playHistory = null)
     {
+        _settings = settings ?? AppSettings.CreateDefault;
+        _playHistory = playHistory ?? new PlayHistoryStore(() => _settings().EnsureShape().ShuffleHistoryDays);
         _discovery = new SonosDiscovery(_soap);
-        _events.NowPlayingChanged += np => NowPlayingChanged?.Invoke(np);
+        _events.NowPlayingChanged += np =>
+        {
+            if (!string.IsNullOrWhiteSpace(np.TrackUri))
+                _playHistory.RecordPlayed(np.TrackUri);
+
+            var s = _settings().EnsureShape();
+            if (s.ShuffleAutoTopUp
+                && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning
+                && np.IsNearQueueEnd(s.ShuffleTopUpWhenRemaining))
+            {
+                _ = TryTopUpQueueAsync();
+            }
+
+            NowPlayingChanged?.Invoke(np);
+        };
         _events.TopologyChanged += OnTopologyEvent;
     }
+
+    public PlayHistoryStore PlayHistory => _playHistory;
 
     private void OnTopologyEvent(string stateXml)
     {
@@ -193,8 +214,8 @@ public sealed class SonosManager
             if (_controller is null)
                 throw new InvalidOperationException("No Sonos speakers found. Check the speakers are powered on and on the network.");
             await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
-            await _controller.ShuffleMusicLibraryAsync(ct).ConfigureAwait(false);
-            return "🔄 Fresh start: re-synced + shuffling all speakers";
+            var fresh = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
+            return $"🔄 Fresh start: re-synced + shuffle ({fresh})";
         }
 
         if (_controller is null)
@@ -223,8 +244,8 @@ public sealed class SonosManager
                 return "⏮ Previous";
             case HotsonosAction.ShuffleLibrary:
                 await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
-                await _controller.ShuffleMusicLibraryAsync(ct).ConfigureAwait(false);
-                return "🔀 Shuffling library → all speakers";
+                var shuffleSummary = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
+                return $"🔀 Shuffling library → all speakers ({shuffleSummary})";
             case HotsonosAction.VolumeUp:
                 return $"🔊 Volume {await ChangeVolumeAsync(settings.VolumeStep, ct).ConfigureAwait(false)}%";
             case HotsonosAction.VolumeDown:
@@ -519,8 +540,79 @@ public sealed class SonosManager
         if (!reshuffle)
             return "regrouped all speakers";
 
-        await _controller.ShuffleMusicLibraryAsync(ct).ConfigureAwait(false);
-        return "regrouped + reshuffled all speakers";
+        var summary = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
+        return $"regrouped + reshuffled all speakers ({summary})";
+    }
+
+    /// <summary>
+    /// Rebuild the queue from A:TRACKS using current shuffle settings
+    /// (queue size, exclude played history, artist spread).
+    /// </summary>
+    public async Task<string> ShuffleWithHistoryAsync(CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected.");
+
+        var s = _settings().EnsureShape();
+        IReadOnlyCollection<string>? exclude = s.ShuffleExcludePlayed ? _playHistory.GetPlayedKeys() : null;
+        var result = await _controller.ShuffleMusicLibraryAsync(
+            new ShuffleOptions
+            {
+                MaxQueueTracks = s.ShuffleQueueTracks,
+                ExcludeUris = exclude,
+                AppendToQueue = false,
+                ArtistSpread = s.ShuffleArtistSpread,
+            },
+            ct).ConfigureAwait(false);
+
+        var msg =
+            $"browsed {result.Browsed}, queued {result.Enqueued} " +
+            $"(candidates {result.CandidateCount}, excluded played {result.ExcludedCount}, " +
+            $"history keys {_playHistory.PlayedDistinctCount}, history days {s.ShuffleHistoryDays})";
+        AppLog.Info($"Shuffle rebuild: {msg}");
+        return msg;
+    }
+
+    /// <summary>
+    /// Append another random batch excluding play history — when the queue is nearly empty.
+    /// </summary>
+    public async Task TryTopUpQueueAsync(CancellationToken ct = default)
+    {
+        if (Interlocked.CompareExchange(ref _topUpInFlight, 1, 0) != 0)
+            return;
+
+        try
+        {
+            if (_controller is null)
+                return;
+
+            var s = _settings().EnsureShape();
+            if (!s.ShuffleAutoTopUp)
+                return;
+
+            IReadOnlyCollection<string>? exclude = s.ShuffleExcludePlayed ? _playHistory.GetPlayedKeys() : null;
+            var result = await _controller.ShuffleMusicLibraryAsync(
+                new ShuffleOptions
+                {
+                    MaxQueueTracks = s.ShuffleTopUpTracks,
+                    ExcludeUris = exclude,
+                    AppendToQueue = true,
+                    ArtistSpread = s.ShuffleArtistSpread,
+                },
+                ct).ConfigureAwait(false);
+
+            AppLog.Info(
+                $"Shuffle top-up: appended {result.Enqueued} " +
+                $"(excluded played {result.ExcludedCount}, history {_playHistory.PlayedDistinctCount})");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Shuffle top-up failed", ex);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _topUpInFlight, 0);
+        }
     }
 
     /// <summary>True if any group coordinator is currently playing or mid-transition.</summary>

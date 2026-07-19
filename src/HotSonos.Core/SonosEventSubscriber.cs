@@ -203,9 +203,25 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         if (!string.IsNullOrEmpty(trackUri))
             trackUri = WebUtility.HtmlDecode(trackUri);
 
+        int? currentTrack = null;
+        int? numberOfTracks = null;
+        if (int.TryParse(AttrVal(lastChange, "CurrentTrack"), out var ct) && ct > 0)
+            currentTrack = ct;
+        if (int.TryParse(AttrVal(lastChange, "NumberOfTracks"), out var nt) && nt > 0)
+            numberOfTracks = nt;
+
         var metaEscaped = AttrVal(lastChange, "CurrentTrackMetaData");
         if (string.IsNullOrEmpty(metaEscaped))
-            return new NowPlaying { State = state, TrackUri = trackUri, TransportStatus = transportStatus };
+        {
+            return new NowPlaying
+            {
+                State = state,
+                TrackUri = trackUri,
+                TransportStatus = transportStatus,
+                CurrentTrack = currentTrack,
+                NumberOfTracks = numberOfTracks,
+            };
+        }
 
         var meta = WebUtility.HtmlDecode(metaEscaped);
         var art = Tag(meta, "upnp:albumArtURI");
@@ -220,6 +236,8 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
             AlbumArtUri = string.IsNullOrEmpty(art) ? null : art,
             TrackUri = trackUri,
             TransportStatus = transportStatus,
+            CurrentTrack = currentTrack,
+            NumberOfTracks = numberOfTracks,
             State = state,
         };
     }
