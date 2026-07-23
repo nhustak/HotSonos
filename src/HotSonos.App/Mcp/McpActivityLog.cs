@@ -96,6 +96,7 @@ public static class McpActivityLog
 
         if (string.Equals(cat, "library", StringComparison.OrdinalIgnoreCase)
             && tool is "library_search" or "library_get_track" or "track_set_tags"
+                or "track_find_master" or "track_link_master"
                 or "get_library_status" or "library_rescan" or "get_library_config" or "discover_library_roots")
         {
             RaiseLibrary(tool, argsText, resultFull);

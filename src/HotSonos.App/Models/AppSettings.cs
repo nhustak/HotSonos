@@ -119,7 +119,7 @@ public sealed class AppSettings
     public List<string> SonosLibraryRoots { get; set; } = [];
 
     /// <summary>
-    /// Optional full archive root (may include hi-res files not in Sonos). Tags may dual-write here later.
+    /// Optional full archive root (may include hi-res files not in Sonos). Tags dual-write here when a twin is matched/linked.
     /// </summary>
     public string? MasterLibraryRoot { get; set; }
 

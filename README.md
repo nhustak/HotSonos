@@ -15,22 +15,40 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 ### Product direction
 - **Today:** history-aware daily shuffle, transport/volume hotkeys, favorites, wake-to-music, live topology, local library cache + tags, loopback MCP for agents.
 - **Settings UI:** left vertical nav — Control · Hotkeys · Shuffle · Library · Wake · Options · MCP Debug.
-- **Next:** master-library dual-write for tags; stronger mood/playlist workflows (see **[spec.md](spec.md)** §0).
-- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags, logs).
+- **Next:** MCP polish; playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
+- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags + master dual-write, logs).
 
 ---
 
 ## Features
 
 ### 🔀 History-aware library shuffle
-Groups speakers and builds a **short random queue** from Sonos `A:TRACKS` (client-side order, not Sonos device shuffle mode).
+Groups speakers and builds a short random mix from your music library, leaves out songs you’ve already heard recently, and plays that list straight through. When the list is almost done, it adds another fresh batch the same way. That starts music quickly and keeps the day from repeating what you already listened to.
 
-- **Excludes recently played tracks** (recorded via GENA while music plays) for a configurable number of days  
-- **Auto top-up** near the end of the queue so listening continues with a new batch that again respects history  
-- Optional **artist spacing** (avoid same artist back-to-back)  
-- All parameters editable under **Shuffle** (queue size, top-up size, history days, clear history)
+Trigger with **double-click tray icon**, hotkey, or Control page. Optional **artist spacing** and all parameters (queue size, top-up size, history days, clear history) live under **Settings → Shuffle**.
 
-Trigger with **double-click tray icon**, hotkey, or Control page.
+#### Shuffle FAQ
+
+**What does it do?**  
+It builds a short random mix from your library, leaves out songs you’ve heard recently, and plays that list in order. When the list is almost empty, it adds another fresh batch.
+
+**Why a small list instead of the whole library?**  
+A short mix starts faster and is more reliable on Sonos. Dumping thousands of songs at once is slow and can be flaky. Small batches keep things snappy and let HotSonos keep the mix fresh as you listen.
+
+**How does it avoid repeats?**  
+As songs play, HotSonos remembers them. When it builds the next batch, it skips those recent ones (by default, roughly the last couple of weeks).
+
+**Does it reshuffle what’s already lined up?**  
+No. Songs already in the queue stay put. New songs only get added at the end.
+
+**What happens when the queue is almost empty?**  
+HotSonos quietly adds another random batch of unheard-recently songs so music keeps going without you doing anything.
+
+**What if I’ve already heard most of my library?**  
+If there aren’t enough “fresh” songs left, it loosens the “skip recent” rule so music can still play.
+
+**Is this the same as a saved Sonos playlist?**  
+No. This is a live daily mix for whole-house listening. Saved playlists are better for intentional moods (“Jazz,” “Dinner,” etc.).
 
 ### 🔄 Restart fresh (re-sync + reshuffle)
 Re-discovers speakers, force-regroups them, and starts a new history-aware shuffle. Tray item, Control button, optional hotkey.

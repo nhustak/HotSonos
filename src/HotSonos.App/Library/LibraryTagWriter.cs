@@ -36,6 +36,16 @@ public sealed class TagWriteResult
     public string? Error { get; init; }
     public IReadOnlyList<string> Changes { get; init; } = [];
     public LibraryTrack? TrackAfter { get; init; }
+
+    // ---- Master dual-write (step 4) ----------------------------------------
+    public bool UpdateMasterRequested { get; init; }
+    public string? MasterPath { get; init; }
+    public string? MasterMatchKind { get; init; }
+    public string? MasterMessage { get; init; }
+    public IReadOnlyList<string> MasterChanges { get; init; } = [];
+    public string? MasterError { get; init; }
+    public bool MasterWritten { get; init; }
+    public IReadOnlyList<string> MasterCandidates { get; init; } = [];
 }
 
 /// <summary>

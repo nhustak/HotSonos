@@ -90,6 +90,8 @@ public sealed class LibraryDb : IDisposable
         EnsureColumn(conn, "bitrate_kbps", "INTEGER");
         EnsureColumn(conn, "sonos_playable", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(conn, "sonos_play_issue", "TEXT");
+        // Manual / auto-linked twin under MasterLibraryRoot (not overwritten by rescan upsert).
+        EnsureColumn(conn, "master_path", "TEXT");
 
         using (var cmd = conn.CreateCommand())
         {
@@ -101,6 +103,7 @@ public sealed class LibraryDb : IDisposable
                 CREATE INDEX IF NOT EXISTS ix_tracks_tempo ON tracks(tempo);
                 CREATE INDEX IF NOT EXISTS ix_tracks_root ON tracks(root);
                 CREATE INDEX IF NOT EXISTS ix_tracks_sonos_playable ON tracks(sonos_playable);
+                CREATE INDEX IF NOT EXISTS ix_tracks_master_path ON tracks(master_path);
                 """;
             cmd.ExecuteNonQuery();
         }
@@ -376,7 +379,8 @@ public sealed class LibraryDb : IDisposable
         track_number, year, duration_ms, tempo, bpm,
         codec, sample_rate_hz, bits_per_sample, channels, bitrate_kbps,
         sonos_playable, sonos_play_issue,
-        file_size, file_mtime_utc, last_scanned_utc
+        file_size, file_mtime_utc, last_scanned_utc,
+        master_path
         """;
 
     public IReadOnlyList<LibraryTrack> Search(string? query, int limit, int offset, bool sonosUnplayableOnly = false)
@@ -530,7 +534,33 @@ public sealed class LibraryDb : IDisposable
         FileSize = reader.GetInt64(20),
         FileMtimeUtc = DateTime.Parse(reader.GetString(21), null, System.Globalization.DateTimeStyles.RoundtripKind),
         LastScannedUtc = DateTime.Parse(reader.GetString(22), null, System.Globalization.DateTimeStyles.RoundtripKind),
+        MasterPath = reader.FieldCount > 23 && !reader.IsDBNull(23) ? reader.GetString(23) : null,
     };
+
+    /// <summary>
+    /// Persist or clear a manual/auto master twin link. Does not write tags.
+    /// Returns false if the Sonos track path is not in the cache.
+    /// </summary>
+    public bool SetMasterPath(string sonosPath, string? masterPath)
+    {
+        if (string.IsNullOrWhiteSpace(sonosPath))
+            return false;
+
+        lock (_gate)
+        {
+            EnsureOpen();
+            using var cmd = _conn!.CreateCommand();
+            cmd.CommandText =
+                """
+                UPDATE tracks SET master_path = $m
+                WHERE path = $p COLLATE NOCASE;
+                """;
+            cmd.Parameters.AddWithValue("$p", sonosPath.Trim());
+            cmd.Parameters.AddWithValue("$m",
+                string.IsNullOrWhiteSpace(masterPath) ? DBNull.Value : masterPath.Trim());
+            return cmd.ExecuteNonQuery() > 0;
+        }
+    }
 
     private static string EscapeLike(string value) =>
         value.Replace("\\", "\\\\", StringComparison.Ordinal)

@@ -379,6 +379,7 @@ public sealed class HotSonosDebugTools
                     t.SonosPlayable,
                     t.SonosPlayIssue,
                     t.RelativePath,
+                    t.MasterPath,
                 }),
             }, JsonOptions);
         }, category: "library");
@@ -400,8 +401,51 @@ public sealed class HotSonosDebugTools
             return JsonSerializer.Serialize(new { ok = true, track }, JsonOptions);
         }, category: "library");
 
+    [McpServerTool(Name = "track_find_master")]
+    [Description("Preview master-library twin match for a Sonos-library track (no writes). Uses stored link, relative path, path suffix, then filename/metadata scoring.")]
+    public string TrackFindMaster(
+        [Description("Absolute/UNC path to the Sonos-library audio file")] string path) =>
+        McpActivityLog.Run("track_find_master", new { path }, () =>
+        {
+            var lib = _state.Library;
+            if (lib is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "Library service not available." }, JsonOptions);
+
+            var match = lib.FindMasterMatch(path);
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                found = match.Found,
+                kind = match.Kind.ToString(),
+                masterPath = match.Path,
+                message = match.Message,
+                candidates = match.Candidates,
+            }, JsonOptions);
+        }, category: "library");
+
+    [McpServerTool(Name = "track_link_master")]
+    [Description("Manually link (or clear) a master twin path for a cached Sonos track. Master path must be under MasterLibraryRoot. Pass masterPath empty/null to clear.")]
+    public string TrackLinkMaster(
+        [Description("Absolute/UNC path to the Sonos-library audio file")] string path,
+        [Description("Absolute/UNC path under MasterLibraryRoot, or empty to clear the link")] string? masterPath = null) =>
+        McpActivityLog.Run("track_link_master", new { path, masterPath }, () =>
+        {
+            var lib = _state.Library;
+            if (lib is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "Library service not available." }, JsonOptions);
+
+            var (ok, message, linked) = lib.LinkMaster(path, masterPath);
+            return JsonSerializer.Serialize(new
+            {
+                ok,
+                message,
+                path,
+                masterPath = linked,
+            }, JsonOptions);
+        }, category: "library");
+
     [McpServerTool(Name = "track_set_tags")]
-    [Description("Write tags into a FLAC/MP3 on the Sonos library share (HOTSONOS_TEMPO and/or standard fields). Updates SQLite cache after write. Path must be under configured roots. dryRun=true previews changes.")]
+    [Description("Write tags into a FLAC/MP3 on the Sonos library share (HOTSONOS_TEMPO and/or standard fields). Optionally dual-writes the same tags to a matched master twin (updateMaster, default true). dryRun=true previews both.")]
     public string TrackSetTags(
         [Description("Absolute/UNC path to the audio file (same as library_search path)")] string path,
         [Description("slow | medium | fast, or empty string to clear HOTSONOS_TEMPO")] string? tempo = null,
@@ -412,8 +456,9 @@ public sealed class HotSonosDebugTools
         [Description("Track number (null = leave unchanged)")] int? trackNumber = null,
         [Description("Year (null = leave unchanged)")] int? year = null,
         [Description("BPM (null = leave unchanged)")] double? bpm = null,
-        [Description("If true, do not write the file — return planned changes only")] bool dryRun = false) =>
-        McpActivityLog.Run("track_set_tags", new { path, tempo, title, artist, album, genre, trackNumber, year, bpm, dryRun }, () =>
+        [Description("If true, do not write the file — return planned changes only")] bool dryRun = false,
+        [Description("If true (default), also write the same tags to a matched master twin when MasterLibraryRoot is set")] bool updateMaster = true) =>
+        McpActivityLog.Run("track_set_tags", new { path, tempo, title, artist, album, genre, trackNumber, year, bpm, dryRun, updateMaster }, () =>
         {
             var lib = _state.Library;
             if (lib is null)
@@ -434,7 +479,7 @@ public sealed class HotSonosDebugTools
             };
 
             // If caller only wants dry-run probe with no fields, still call for validation.
-            var result = lib.SetTags(path, update, dryRun);
+            var result = lib.SetTags(path, update, dryRun, updateMaster);
             return JsonSerializer.Serialize(new
             {
                 ok = result.Ok,
@@ -443,6 +488,17 @@ public sealed class HotSonosDebugTools
                 message = result.Message,
                 error = result.Error,
                 changes = result.Changes,
+                updateMaster = result.UpdateMasterRequested,
+                master = new
+                {
+                    path = result.MasterPath,
+                    matchKind = result.MasterMatchKind,
+                    message = result.MasterMessage,
+                    error = result.MasterError,
+                    changes = result.MasterChanges,
+                    written = result.MasterWritten,
+                    candidates = result.MasterCandidates,
+                },
                 track = result.TrackAfter is null ? null : new
                 {
                     result.TrackAfter.Path,
@@ -454,11 +510,11 @@ public sealed class HotSonosDebugTools
                     result.TrackAfter.Year,
                     result.TrackAfter.Tempo,
                     result.TrackAfter.Bpm,
+                    result.TrackAfter.MasterPath,
                     result.TrackAfter.AudioFormatLabel,
                     result.TrackAfter.SonosPlayable,
                     result.TrackAfter.SonosPlayIssue,
                 },
-                note = "Master dual-write is step 4 (not yet). Tags are written into the Sonos-library file only.",
             }, JsonOptions);
         }, category: "library");
 

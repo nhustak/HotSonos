@@ -410,7 +410,7 @@
                                     Click="LibrarySetTempoButton_Click" />
                         </StackPanel>
                         <TextBlock x:Name="LibraryResultsMetaText" Foreground="#FF60707F" FontSize="11"
-                                   Text="Search the cache or watch agent results. Set tempo writes HOTSONOS_TEMPO into the file." />
+                                   Text="Search the cache or watch agent results. Set tempo writes HOTSONOS_TEMPO into the Sonos file and dual-writes to a matched master twin when Master library root is set." />
                         <TextBox x:Name="LibraryMcpResultBox" MinHeight="56" MaxHeight="120" Margin="0,6,0,0"
                                  IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                                  FontFamily="Consolas" FontSize="11" Background="#FF1C2536" Foreground="#FFE8EEF4"

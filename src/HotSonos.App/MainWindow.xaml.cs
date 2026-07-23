@@ -456,14 +456,26 @@ public partial class MainWindow : Window
             ? ""
             : tempoChoice;
 
-        var result = _library.SetTags(row.Path, new TrackTagUpdate { Tempo = tempo }, dryRun: false);
+        var result = _library.SetTags(row.Path, new TrackTagUpdate { Tempo = tempo }, dryRun: false, updateMaster: true);
         if (!result.Ok)
         {
             SetStatus(result.Error ?? result.Message ?? "Tag write failed", warn: true);
             return;
         }
 
-        SetStatus($"{result.Message}: {string.Join("; ", result.Changes)}", warn: false);
+        var sonosPart = result.Changes.Count > 0
+            ? string.Join("; ", result.Changes)
+            : result.Message ?? "ok";
+        var masterPart = result.UpdateMasterRequested
+            ? result.MasterWritten
+                ? $" | master: {result.MasterPath} ({string.Join("; ", result.MasterChanges)})"
+                : result.MasterError is not null
+                    ? $" | master: {result.MasterError}"
+                    : result.MasterMessage is not null
+                        ? $" | master: {result.MasterMessage}"
+                        : ""
+            : "";
+        SetStatus($"Tags: {sonosPart}{masterPart}", warn: result.MasterError is not null && result.MasterWritten == false);
         // Refresh the visible row if we re-read the track.
         if (result.TrackAfter is not null)
         {

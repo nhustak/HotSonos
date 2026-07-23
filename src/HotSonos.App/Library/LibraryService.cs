@@ -192,9 +192,10 @@ public sealed class LibraryService : IDisposable
     /// <summary>
     /// Write tags into the file on the Sonos library share, then refresh the SQLite row.
     /// Path must be under a configured Sonos library root (or resolvable from cache).
-    /// Master dual-write is step 4 — not done here.
+    /// When <paramref name="updateMaster"/> is true (default) and a master root is configured,
+    /// also dual-write to a matched twin under <c>MasterLibraryRoot</c> (spec §7.4).
     /// </summary>
-    public TagWriteResult SetTags(string path, TrackTagUpdate update, bool dryRun = false)
+    public TagWriteResult SetTags(string path, TrackTagUpdate update, bool dryRun = false, bool updateMaster = true)
     {
         if (string.IsNullOrWhiteSpace(path))
             return new TagWriteResult { Ok = false, Path = path ?? "", Error = "path is required", Message = "path is required" };
@@ -234,36 +235,243 @@ public sealed class LibraryService : IDisposable
         var root = roots.First(r => IsUnderRoot(fullPath, r));
         var result = LibraryTagWriter.Write(fullPath, update, dryRun, root);
 
-        if (result.Ok && !result.DryRun && result.TrackAfter is not null)
+        LibraryTrack? trackAfter = result.TrackAfter;
+        if (result.Ok && !result.DryRun)
         {
-            try { _db.UpsertTracks([result.TrackAfter]); }
-            catch (Exception ex)
+            if (trackAfter is null)
+                trackAfter = LibraryTagReader.TryRead(fullPath, root, DateTime.UtcNow);
+
+            if (trackAfter is not null)
             {
-                AppLog.Warn("Cache refresh after tag write failed", ex);
-            }
-        }
-        else if (result.Ok && !result.DryRun)
-        {
-            // Re-read even if writer didn't return a track
-            var again = LibraryTagReader.TryRead(fullPath, root, DateTime.UtcNow);
-            if (again is not null)
-            {
-                try { _db.UpsertTracks([again]); }
-                catch (Exception ex) { AppLog.Warn("Cache refresh after tag write failed", ex); }
-                return new TagWriteResult
+                // Preserve existing master link across tag re-read upsert.
+                trackAfter.MasterPath = cached?.MasterPath ?? trackAfter.MasterPath;
+                try { _db.UpsertTracks([trackAfter]); }
+                catch (Exception ex)
                 {
-                    Ok = result.Ok,
-                    Path = result.Path,
-                    DryRun = result.DryRun,
-                    Message = result.Message,
-                    Error = result.Error,
-                    Changes = result.Changes,
-                    TrackAfter = again,
-                };
+                    AppLog.Warn("Cache refresh after tag write failed", ex);
+                }
             }
         }
 
-        return result;
+        if (!result.Ok)
+            return WithTrack(result, trackAfter);
+
+        // Master dual-write
+        if (!updateMaster)
+        {
+            return WithMaster(
+                WithTrack(result, trackAfter),
+                updateMasterRequested: false,
+                match: new MasterMatchResult
+                {
+                    Kind = MasterMatchKind.None,
+                    Message = "Master dual-write not requested.",
+                },
+                masterWrite: null);
+        }
+
+        var probe = cached ?? trackAfter ?? new LibraryTrack
+        {
+            Path = fullPath,
+            Root = root,
+            RelativePath = cached?.RelativePath,
+            Title = trackAfter?.Title ?? cached?.Title,
+            Artist = trackAfter?.Artist ?? cached?.Artist,
+            Album = trackAfter?.Album ?? cached?.Album,
+            AlbumArtist = trackAfter?.AlbumArtist ?? cached?.AlbumArtist,
+            TrackNumber = trackAfter?.TrackNumber ?? cached?.TrackNumber,
+            DurationMs = trackAfter?.DurationMs ?? cached?.DurationMs,
+            MasterPath = cached?.MasterPath,
+        };
+        // Prefer freshest tags for match scoring (before write for dry-run, after for real).
+        if (cached is not null && trackAfter is null)
+        {
+            probe = cached;
+        }
+        else if (trackAfter is not null)
+        {
+            probe.MasterPath = cached?.MasterPath ?? trackAfter.MasterPath;
+            // Match identity uses pre-write tags when available so rename-like edits still find twins.
+            if (cached is not null)
+            {
+                probe.Title = cached.Title;
+                probe.Artist = cached.Artist;
+                probe.Album = cached.Album;
+                probe.AlbumArtist = cached.AlbumArtist;
+                probe.TrackNumber = cached.TrackNumber;
+                probe.DurationMs = cached.DurationMs;
+                probe.RelativePath = cached.RelativePath ?? trackAfter.RelativePath;
+            }
+        }
+
+        var match = LibraryMasterMatcher.Find(probe, s.MasterLibraryRoot, cached?.MasterPath);
+        if (!match.Found)
+        {
+            return WithMaster(WithTrack(result, trackAfter), updateMasterRequested: true, match, masterWrite: null);
+        }
+
+        // Never write master into Sonos cache root; tags only on the twin file.
+        var masterWrite = LibraryTagWriter.Write(match.Path!, update, dryRun, rootForRescan: null);
+
+        if (masterWrite.Ok && !dryRun && match.Path is not null)
+        {
+            // Auto-link confident matches so next write is instant.
+            try
+            {
+                if (_db.SetMasterPath(fullPath, match.Path) && trackAfter is not null)
+                    trackAfter.MasterPath = match.Path;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Persist master link after dual-write failed", ex);
+            }
+        }
+
+        if (masterWrite.Ok)
+        {
+            AppLog.Info(
+                dryRun
+                    ? $"Master dual-write dry-run: {match.Path} ({match.Kind})"
+                    : $"Master dual-write: {match.Path} ({match.Kind})");
+        }
+        else
+        {
+            AppLog.Warn($"Master dual-write failed: {match.Path} — {masterWrite.Error}");
+        }
+
+        return WithMaster(WithTrack(result, trackAfter), updateMasterRequested: true, match, masterWrite);
+    }
+
+    /// <summary>Preview master twin match for a Sonos-library track (no writes).</summary>
+    public MasterMatchResult FindMasterMatch(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return new MasterMatchResult { Kind = MasterMatchKind.None, Message = "path is required" };
+
+        var s = _settings().EnsureShape();
+        var cached = _db.GetByPath(path.Trim()) ?? _db.FindBySonosUriOrUnc(path.Trim());
+        if (cached is null)
+        {
+            // Minimal probe from path alone
+            var probe = new LibraryTrack { Path = path.Trim() };
+            return LibraryMasterMatcher.Find(probe, s.MasterLibraryRoot);
+        }
+
+        return LibraryMasterMatcher.Find(cached, s.MasterLibraryRoot, cached.MasterPath);
+    }
+
+    /// <summary>
+    /// Manually link (or clear) a master twin path for a cached Sonos track.
+    /// Master path must exist and live under <c>MasterLibraryRoot</c> when set.
+    /// </summary>
+    public (bool ok, string message, string? masterPath) LinkMaster(string sonosPath, string? masterPath)
+    {
+        if (string.IsNullOrWhiteSpace(sonosPath))
+            return (false, "sonos path is required", null);
+
+        sonosPath = sonosPath.Trim();
+        var cached = _db.GetByPath(sonosPath) ?? _db.FindBySonosUriOrUnc(sonosPath);
+        if (cached is null)
+            return (false, "Track not in library cache. Run a rescan first.", null);
+
+        sonosPath = cached.Path;
+        var s = _settings().EnsureShape();
+
+        if (string.IsNullOrWhiteSpace(masterPath))
+        {
+            if (!_db.SetMasterPath(sonosPath, null))
+                return (false, "Failed to clear master link.", null);
+            return (true, "Master link cleared.", null);
+        }
+
+        masterPath = masterPath.Trim();
+        if (!File.Exists(masterPath))
+            return (false, "Master file not found.", masterPath);
+
+        try { masterPath = Path.GetFullPath(masterPath); }
+        catch { /* keep */ }
+
+        if (string.IsNullOrWhiteSpace(s.MasterLibraryRoot))
+            return (false, "Configure MasterLibraryRoot before linking.", masterPath);
+
+        if (!IsUnderRoot(masterPath, s.MasterLibraryRoot))
+            return (false, "Master path is not under configured MasterLibraryRoot.", masterPath);
+
+        var ext = Path.GetExtension(masterPath);
+        if (!LibraryTagReader.AudioExtensions.Contains(ext))
+            return (false, $"Unsupported master extension '{ext}' (FLAC/MP3 only).", masterPath);
+
+        if (!_db.SetMasterPath(sonosPath, masterPath))
+            return (false, "Failed to save master link.", masterPath);
+
+        return (true, "Master link saved.", masterPath);
+    }
+
+    private static TagWriteResult WithTrack(TagWriteResult r, LibraryTrack? trackAfter) => new()
+    {
+        Ok = r.Ok,
+        Path = r.Path,
+        DryRun = r.DryRun,
+        Message = r.Message,
+        Error = r.Error,
+        Changes = r.Changes,
+        TrackAfter = trackAfter ?? r.TrackAfter,
+        UpdateMasterRequested = r.UpdateMasterRequested,
+        MasterPath = r.MasterPath,
+        MasterMatchKind = r.MasterMatchKind,
+        MasterMessage = r.MasterMessage,
+        MasterChanges = r.MasterChanges,
+        MasterError = r.MasterError,
+        MasterWritten = r.MasterWritten,
+        MasterCandidates = r.MasterCandidates,
+    };
+
+    private static TagWriteResult WithMaster(
+        TagWriteResult sonos,
+        bool updateMasterRequested,
+        MasterMatchResult match,
+        TagWriteResult? masterWrite)
+    {
+        var masterOk = masterWrite?.Ok == true;
+        var masterErr = match.Kind is MasterMatchKind.Offline or MasterMatchKind.Ambiguous or MasterMatchKind.None
+            ? match.Message
+            : masterWrite?.Error ?? (masterWrite is null ? match.Message : null);
+
+        string message = sonos.Message ?? "";
+        if (updateMasterRequested)
+        {
+            if (masterWrite is not null && masterOk)
+            {
+                var mPart = masterWrite.Changes.Count > 0
+                    ? string.Join("; ", masterWrite.Changes)
+                    : masterWrite.Message ?? "ok";
+                message = $"{sonos.Message} | master ({match.Kind}): {mPart}";
+            }
+            else if (!string.IsNullOrWhiteSpace(match.Message))
+            {
+                message = $"{sonos.Message} | master: {match.Message}";
+            }
+        }
+
+        return new TagWriteResult
+        {
+            Ok = sonos.Ok, // Sonos write remains the primary success bit
+            Path = sonos.Path,
+            DryRun = sonos.DryRun,
+            Message = message,
+            Error = sonos.Error,
+            Changes = sonos.Changes,
+            TrackAfter = sonos.TrackAfter,
+            UpdateMasterRequested = updateMasterRequested,
+            MasterPath = match.Path ?? masterWrite?.Path,
+            MasterMatchKind = match.Kind.ToString(),
+            MasterMessage = masterWrite?.Message ?? match.Message,
+            MasterChanges = masterWrite?.Changes ?? [],
+            MasterError = masterOk ? null : masterErr,
+            // True only when the master file was actually saved (not dry-run / not skipped).
+            MasterWritten = masterWrite is not null && masterWrite.Ok && !sonos.DryRun && !masterWrite.DryRun,
+            MasterCandidates = match.Candidates,
+        };
     }
 
     private static bool IsUnderAnyRoot(string fullPath, IReadOnlyList<string> roots) =>

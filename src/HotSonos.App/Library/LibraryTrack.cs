@@ -14,9 +14,15 @@ public sealed class LibraryTrack
     public int? TrackNumber { get; set; }
     public int? Year { get; set; }
     public long? DurationMs { get; set; }
-    /// <summary>From file custom tag <c>HOTSONOS_TEMPO</c> when present (read-only until step 3).</summary>
+    /// <summary>From file custom tag <c>HOTSONOS_TEMPO</c> when present.</summary>
     public string? Tempo { get; set; }
     public double? Bpm { get; set; }
+
+    /// <summary>
+    /// Optional linked twin under <c>MasterLibraryRoot</c> (cache only — dual-write target).
+    /// Preserved across rescans; set on successful auto-match or manual link.
+    /// </summary>
+    public string? MasterPath { get; set; }
 
     // ---- Audio technical (TagLib properties) --------------------------------
     public string? Codec { get; set; }

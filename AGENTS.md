@@ -30,8 +30,8 @@
 
 ## Loopback MCP (debug / agent tools)
 - While the tray app is running with MCP enabled: `http://127.0.0.1:42341/mcp`
-- Tools: discovery status (`deviceListPopulated`), groups/zones/offline, refresh_devices, volumes, now_playing, favorites, settings, logs; **library**: `discover_library_roots`, `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`, `track_set_tags` (HOTSONOS_TEMPO + standard fields, dryRun); **control**: play_pause, next/previous, volume_up/down, mute, level_volumes, shuffle_library, fresh_start, play_favorite_slot, set_active_room, wake_now, wake_cancel
-- Library scan/tag **write** needs this **PC** SMB access (read for scan, write for tags) to the UNC root Sonos reports.
+- Tools: discovery status (`deviceListPopulated`), groups/zones/offline, refresh_devices, volumes, now_playing, favorites, settings, logs; **library**: `discover_library_roots`, `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`, `track_set_tags` (HOTSONOS_TEMPO + standard fields, dryRun, updateMaster dual-write), `track_find_master`, `track_link_master`; **control**: play_pause, next/previous, volume_up/down, mute, level_volumes, shuffle_library, fresh_start, play_favorite_slot, set_active_room, wake_now, wake_cancel
+- Library scan/tag **write** needs this **PC** SMB access (read for scan, write for tags) to the UNC root Sonos reports; master dual-write also needs write access under `MasterLibraryRoot`.
 - **UI**: Main window tabs — Settings / Library (search results) / MCP Debug (live tool command log). Tray: Library…, MCP Debug…
 - Register in `C:\Project\_mcp\mcp-servers.json` as `hotsonos`, then run `sync-mcp.ps1`
-- Product roadmap / live checklist: `spec.md` §0 (next after steps 1–2: tag **write** / `HOTSONOS_TEMPO`)
+- Product roadmap / live checklist: `spec.md` §0 (next after steps 1–4: MCP polish / playlists)
