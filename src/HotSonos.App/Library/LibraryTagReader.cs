@@ -29,7 +29,13 @@ public static class LibraryTagReader
             if (tag.BeatsPerMinute > 0)
                 bpm = tag.BeatsPerMinute;
 
-            var tempo = ReadCustomTempo(file);
+            var customAll = ReadAllHotsonosFields(file);
+            string? tempo = null;
+            if (customAll.TryGetValue(TempoField, out var tempoRaw))
+            {
+                tempo = NormalizeTempo(tempoRaw);
+                customAll.Remove(TempoField);
+            }
 
             string? relative = null;
             try
@@ -76,6 +82,7 @@ public static class LibraryTagReader
                     : null,
                 Tempo = tempo,
                 Bpm = bpm,
+                CustomTags = customAll,
                 Codec = codec,
                 SampleRateHz = sampleRate,
                 BitsPerSample = bits is 0 ? null : bits,
@@ -106,36 +113,51 @@ public static class LibraryTagReader
         return string.IsNullOrEmpty(ext) ? null : ext;
     }
 
-    private static string? ReadCustomTempo(TagLib.File file)
+    /// <summary>Known + discovered HOTSONOS_* fields (including tempo).</summary>
+    private static readonly string[] KnownHotsonosKeys =
+    [
+        TempoField,
+        "HOTSONOS_LANE",
+        "HOTSONOS_MOOD",
+        "HOTSONOS_FLAGS",
+        "HOTSONOS_ENERGY",
+    ];
+
+    /// <summary>All HOTSONOS_* user fields from FLAC/MP3 (including tempo).</summary>
+    private static Dictionary<string, string> ReadAllHotsonosFields(TagLib.File file)
     {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
         {
+            // Probe known keys on Xiph (enumeration API varies by TagLib version).
             if (file.GetTag(TagLib.TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph)
             {
-                var values = xiph.GetField(TempoField);
-                if (values is { Length: > 0 } && !string.IsNullOrWhiteSpace(values[0]))
-                    return NormalizeTempo(values[0]);
+                foreach (var key in KnownHotsonosKeys)
+                {
+                    var values = xiph.GetField(key);
+                    if (values is { Length: > 0 } && !string.IsNullOrWhiteSpace(values[0]))
+                        map[key] = values[0].Trim();
+                }
             }
 
             if (file.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3)
             {
                 foreach (var frame in id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>())
                 {
-                    if (string.Equals(frame.Description, TempoField, StringComparison.OrdinalIgnoreCase)
-                        && frame.Text is { Length: > 0 }
-                        && !string.IsNullOrWhiteSpace(frame.Text[0]))
-                    {
-                        return NormalizeTempo(frame.Text[0]);
-                    }
+                    if (frame.Description is null
+                        || !frame.Description.StartsWith("HOTSONOS_", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (frame.Text is { Length: > 0 } && !string.IsNullOrWhiteSpace(frame.Text[0]))
+                        map[frame.Description] = frame.Text[0].Trim();
                 }
             }
         }
         catch (Exception ex)
         {
-            AppLog.Warn("HOTSONOS_TEMPO read failed", ex);
+            AppLog.Warn("HOTSONOS_* tag read failed", ex);
         }
 
-        return null;
+        return map;
     }
 
     private static string? NormalizeTempo(string raw)

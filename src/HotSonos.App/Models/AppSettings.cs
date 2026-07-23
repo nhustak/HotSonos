@@ -123,6 +123,20 @@ public sealed class AppSettings
     /// </summary>
     public string? MasterLibraryRoot { get; set; }
 
+    // ---- Custom tags / quick-tag presets -----------------------------------
+
+    /// <summary>Declared HOTSONOS_* dimensions (beyond built-in tempo).</summary>
+    public List<CustomTagDefinition> CustomTagDefinitions { get; set; } = [];
+
+    /// <summary>Quick-tag slots 1–9 (overlay digit keys + library context menu).</summary>
+    public List<TagPreset> TagPresets { get; set; } = [];
+
+    /// <summary>Global hotkey that opens the quick-tag overlay for the playing track.</summary>
+    public HotkeyConfig QuickTag { get; set; } = new();
+
+    /// <summary>When true, quick-tag / library preset apply also dual-writes to master when linked.</summary>
+    public bool TagUpdateMasterDefault { get; set; } = true;
+
     // ---- Library shuffle / play history ------------------------------------
 
     /// <summary>Tracks put on the Sonos queue when you shuffle (short = rebuilds more often).</summary>
@@ -179,6 +193,7 @@ public sealed class AppSettings
             HotsonosAction.Mute => Mute,
             HotsonosAction.LevelVolumes => LevelVolumes,
             HotsonosAction.FreshStart => FreshStart,
+            HotsonosAction.QuickTag => QuickTag,
             _ => new HotkeyConfig(),
         };
     }
@@ -195,6 +210,10 @@ public sealed class AppSettings
         Mute ??= new HotkeyConfig();
         LevelVolumes ??= new HotkeyConfig();
         FreshStart ??= new HotkeyConfig();
+        QuickTag ??= new HotkeyConfig();
+        // First-time seed so existing installs get a usable quick-tag hotkey.
+        if (!QuickTag.IsSet)
+            QuickTag = new HotkeyConfig { Control = true, Alt = true, Key = "T" };
         if (VolumeStep < 1) VolumeStep = 5;
         if (LevelVolumePercent is < 0 or > 100) LevelVolumePercent = 20;
         if (NightlyResetMinutes is < 0 or > 1439) NightlyResetMinutes = 180;
@@ -229,7 +248,54 @@ public sealed class AppSettings
             FavoriteSlots.Add(new FavoriteSlot());
         if (FavoriteSlots.Count > FavoriteSlotCount)
             FavoriteSlots = FavoriteSlots.Take(FavoriteSlotCount).ToList();
+
+        EnsureTagCatalog();
         return this;
+    }
+
+    /// <summary>Seeds default definitions + presets when missing; cleans slots to 1–9.</summary>
+    public void EnsureTagCatalog()
+    {
+        CustomTagDefinitions ??= [];
+        TagPresets ??= [];
+
+        if (CustomTagDefinitions.Count == 0)
+        {
+            CustomTagDefinitions =
+            [
+                new CustomTagDefinition { Id = "lane", Label = "Lane", StorageKey = "HOTSONOS_LANE" },
+                new CustomTagDefinition { Id = "mood", Label = "Mood", StorageKey = "HOTSONOS_MOOD" },
+            ];
+        }
+
+        if (TagPresets.Count == 0)
+        {
+            TagPresets =
+            [
+                new TagPreset { Slot = 1, Label = "Slow", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "slow" } },
+                new TagPreset { Slot = 2, Label = "Medium", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "medium" } },
+                new TagPreset { Slot = 3, Label = "Fast", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "fast" } },
+                new TagPreset { Slot = 4, Label = "Dinner", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "slow", ["HOTSONOS_LANE"] = "dinner" } },
+                new TagPreset { Slot = 5, Label = "Drive", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "fast", ["HOTSONOS_LANE"] = "drive" } },
+                new TagPreset { Slot = 6, Label = "Focus", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "medium", ["HOTSONOS_LANE"] = "focus" } },
+            ];
+        }
+
+        // Normalize presets
+        foreach (var p in TagPresets)
+        {
+            p.Label = string.IsNullOrWhiteSpace(p.Label) ? $"Slot {p.Slot}" : p.Label.Trim();
+            p.Set ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            // Rebuild with ordinal-ignore comparer
+            p.Set = new Dictionary<string, string>(p.Set, StringComparer.OrdinalIgnoreCase);
+        }
+
+        TagPresets = TagPresets
+            .Where(p => p.Slot is >= 1 and <= 9)
+            .GroupBy(p => p.Slot)
+            .Select(g => g.First())
+            .OrderBy(p => p.Slot)
+            .ToList();
     }
 
     /// <summary>Sensible first-run defaults: Ctrl+Alt chords that rarely collide.</summary>
@@ -243,5 +309,6 @@ public sealed class AppSettings
         VolumeUp = new HotkeyConfig { Control = true, Alt = true, Key = "Up" },
         VolumeDown = new HotkeyConfig { Control = true, Alt = true, Key = "Down" },
         Mute = new HotkeyConfig { Control = true, Alt = true, Key = "M" },
+        QuickTag = new HotkeyConfig { Control = true, Alt = true, Key = "T" },
     }.EnsureShape();
 }

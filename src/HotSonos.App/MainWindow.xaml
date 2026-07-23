@@ -188,6 +188,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Volume up" VerticalAlignment="Center" Margin="0,4" />
                             <TextBox Grid.Row="0" Grid.Column="1" x:Name="VolumeUpHotkeyBox" Style="{StaticResource HotkeyBox}"
@@ -213,7 +214,14 @@
                                      PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
                             <Button Grid.Row="3" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="LevelVolumes"
                                     Click="ClearHotkey_Click" />
-                            <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Quick tag overlay" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="4" Grid.Column="1" x:Name="QuickTagHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="Auto" HorizontalAlignment="Left" Margin="0,4"
+                                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus"
+                                     ToolTip="Opens preset picker for the playing library track (default Ctrl+Alt+T)" />
+                            <Button Grid.Row="4" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="QuickTag"
+                                    Click="ClearHotkey_Click" />
+                            <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
                                 <TextBlock Text="Step per press (%)" VerticalAlignment="Center" Width="120" />
                                 <TextBox x:Name="VolumeStepBox" Width="50" Padding="6,4" VerticalContentAlignment="Center" />
                             </StackPanel>
@@ -379,7 +387,12 @@
                               HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                               AlternatingRowBackground="#FFF0F4F8" Background="White"
                               BorderBrush="#FFD8DEE4" BorderThickness="1"
-                              SelectionMode="Single" FontSize="12">
+                              SelectionMode="Extended" FontSize="12">
+                        <DataGrid.ContextMenu>
+                            <ContextMenu Opened="LibraryContextMenu_Opened">
+                                <MenuItem x:Name="LibraryApplyPresetMenu" Header="Apply tag preset" />
+                            </ContextMenu>
+                        </DataGrid.ContextMenu>
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="1.6*" />
                             <DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="1.2*" />
@@ -388,6 +401,7 @@
                             <DataGridTextColumn Header="Sonos" Binding="{Binding SonosOk}" Width="70" />
                             <DataGridTextColumn Header="Issue" Binding="{Binding Issue}" Width="1.2*" />
                             <DataGridTextColumn Header="Tempo" Binding="{Binding Tempo}" Width="60" />
+                            <DataGridTextColumn Header="Tags" Binding="{Binding Tags}" Width="1.2*" />
                             <DataGridTextColumn Header="Path" Binding="{Binding Path=Path}" Width="1.5*" />
                         </DataGrid.Columns>
                     </DataGrid>

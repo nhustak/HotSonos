@@ -19,6 +19,24 @@ public sealed class LibraryTrack
     public double? Bpm { get; set; }
 
     /// <summary>
+    /// Other <c>HOTSONOS_*</c> custom fields from the file (excludes tempo, which is <see cref="Tempo"/>).
+    /// Keys are storage names e.g. HOTSONOS_LANE.
+    /// </summary>
+    public Dictionary<string, string> CustomTags { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Compact label for UI (lane/mood etc.).</summary>
+    public string CustomTagsLabel =>
+        CustomTags.Count == 0
+            ? ""
+            : string.Join(" · ", CustomTags.Select(kv =>
+            {
+                var k = kv.Key.StartsWith("HOTSONOS_", StringComparison.OrdinalIgnoreCase)
+                    ? kv.Key["HOTSONOS_".Length..]
+                    : kv.Key;
+                return $"{k}={kv.Value}";
+            }));
+
+    /// <summary>
     /// Optional linked twin under <c>MasterLibraryRoot</c> (cache only — dual-write target).
     /// Preserved across rescans; set on successful auto-match or manual link.
     /// </summary>

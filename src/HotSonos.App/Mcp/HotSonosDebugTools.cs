@@ -444,6 +444,75 @@ public sealed class HotSonosDebugTools
             }, JsonOptions);
         }, category: "library");
 
+    [McpServerTool(Name = "list_tag_presets")]
+    [Description("List configured quick-tag presets (slots 1–9) and custom tag definitions.")]
+    public string ListTagPresets() =>
+        McpActivityLog.Run("list_tag_presets", null, () =>
+        {
+            var s = _state.Settings().EnsureShape();
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                updateMasterDefault = s.TagUpdateMasterDefault,
+                definitions = s.CustomTagDefinitions.Select(d => new
+                {
+                    d.Id,
+                    d.Label,
+                    d.StorageKey,
+                    d.Multi,
+                }),
+                presets = s.TagPresets.Select(p => new
+                {
+                    p.Slot,
+                    p.Label,
+                    set = p.Set,
+                    summary = p.Summary,
+                }),
+            }, JsonOptions);
+        }, category: "library");
+
+    [McpServerTool(Name = "track_apply_preset")]
+    [Description("Apply a quick-tag preset (slot 1–9) to a Sonos-library track path. Writes HOTSONOS_* fields into the file and updates cache; optional master dual-write.")]
+    public string TrackApplyPreset(
+        [Description("Absolute/UNC path (or Sonos URI) to the track")] string path,
+        [Description("Preset slot number 1–9")] int slot,
+        [Description("If true, preview only")] bool dryRun = false,
+        [Description("Dual-write to master twin when configured (default: settings TagUpdateMasterDefault)")] bool? updateMaster = null) =>
+        McpActivityLog.Run("track_apply_preset", new { path, slot, dryRun, updateMaster }, () =>
+        {
+            var lib = _state.Library;
+            if (lib is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "Library service not available." }, JsonOptions);
+
+            var result = lib.ApplyPreset(path, slot, dryRun, updateMaster);
+            return JsonSerializer.Serialize(new
+            {
+                ok = result.Ok,
+                dryRun = result.DryRun,
+                path = result.Path,
+                message = result.Message,
+                error = result.Error,
+                changes = result.Changes,
+                master = new
+                {
+                    path = result.MasterPath,
+                    matchKind = result.MasterMatchKind,
+                    message = result.MasterMessage,
+                    error = result.MasterError,
+                    written = result.MasterWritten,
+                },
+                track = result.TrackAfter is null ? null : new
+                {
+                    result.TrackAfter.Path,
+                    result.TrackAfter.Title,
+                    result.TrackAfter.Artist,
+                    result.TrackAfter.Tempo,
+                    result.TrackAfter.CustomTags,
+                    result.TrackAfter.CustomTagsLabel,
+                },
+            }, JsonOptions);
+        }, category: "library");
+
     [McpServerTool(Name = "track_set_tags")]
     [Description("Write tags into a FLAC/MP3 on the Sonos library share (HOTSONOS_TEMPO and/or standard fields). Optionally dual-writes the same tags to a matched master twin (updateMaster, default true). dryRun=true previews both.")]
     public string TrackSetTags(

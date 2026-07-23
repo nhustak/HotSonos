@@ -11,6 +11,7 @@ using HotSonos.App.Models;
 using HotSonos.App.Services;
 using TextBox = System.Windows.Controls.TextBox;
 using ComboBox = System.Windows.Controls.ComboBox;
+using MenuItem = System.Windows.Controls.MenuItem;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MessageBox = System.Windows.MessageBox;
 
@@ -41,6 +42,7 @@ public partial class MainWindow : Window
     private readonly HotkeyConfig _volumeUp;
     private readonly HotkeyConfig _volumeDown;
     private readonly HotkeyConfig _mute;
+    private readonly HotkeyConfig _quickTag;
     private readonly HotkeyConfig[] _favHotkeys;
 
     private readonly Dictionary<TextBox, HotkeyConfig> _boxToConfig = [];
@@ -81,6 +83,7 @@ public partial class MainWindow : Window
         _volumeUp = Clone(_settings.VolumeUp);
         _volumeDown = Clone(_settings.VolumeDown);
         _mute = Clone(_settings.Mute);
+        _quickTag = Clone(_settings.QuickTag);
         _favHotkeys = _settings.FavoriteSlots.Select(s => Clone(s.Hotkey)).ToArray();
 
         InitializeComponent();
@@ -168,6 +171,7 @@ public partial class MainWindow : Window
         _boxToConfig[VolumeUpHotkeyBox] = _volumeUp;
         _boxToConfig[VolumeDownHotkeyBox] = _volumeDown;
         _boxToConfig[MuteHotkeyBox] = _mute;
+        _boxToConfig[QuickTagHotkeyBox] = _quickTag;
         _boxToConfig[Fav1HotkeyBox] = _favHotkeys[0];
         _boxToConfig[Fav2HotkeyBox] = _favHotkeys[1];
         _boxToConfig[Fav3HotkeyBox] = _favHotkeys[2];
@@ -182,6 +186,7 @@ public partial class MainWindow : Window
         _byTag["VolumeUp"] = (VolumeUpHotkeyBox, _volumeUp);
         _byTag["VolumeDown"] = (VolumeDownHotkeyBox, _volumeDown);
         _byTag["Mute"] = (MuteHotkeyBox, _mute);
+        _byTag["QuickTag"] = (QuickTagHotkeyBox, _quickTag);
         _byTag["Fav1"] = (Fav1HotkeyBox, _favHotkeys[0]);
         _byTag["Fav2"] = (Fav2HotkeyBox, _favHotkeys[1]);
         _byTag["Fav3"] = (Fav3HotkeyBox, _favHotkeys[2]);
@@ -552,6 +557,79 @@ public partial class MainWindow : Window
     private static string? GetStr(JsonElement el, string name) =>
         el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
 
+    private void LibraryContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        LibraryApplyPresetMenu.Items.Clear();
+        var presets = _settings.EnsureShape().TagPresets.OrderBy(p => p.Slot).ToList();
+        if (presets.Count == 0)
+        {
+            LibraryApplyPresetMenu.Items.Add(new MenuItem { Header = "(no presets)", IsEnabled = false });
+            return;
+        }
+
+        foreach (var p in presets)
+        {
+            var item = new MenuItem
+            {
+                Header = $"{p.Slot}. {p.Label} — {p.Summary}",
+                Tag = p.Slot,
+            };
+            item.Click += LibraryApplyPresetMenuItem_Click;
+            LibraryApplyPresetMenu.Items.Add(item);
+        }
+    }
+
+    private void LibraryApplyPresetMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_library is null)
+        {
+            SetStatus("Library service not available.", warn: true);
+            return;
+        }
+
+        if (sender is not MenuItem { Tag: int slot })
+            return;
+
+        var rows = LibraryResultsGrid.SelectedItems.OfType<LibraryResultRow>()
+            .Where(r => !string.IsNullOrWhiteSpace(r.Path))
+            .ToList();
+        if (rows.Count == 0)
+        {
+            SetStatus("Select one or more tracks first.", warn: true);
+            return;
+        }
+
+        var ok = 0;
+        var fail = 0;
+        string? lastMsg = null;
+        LibraryTrack? lastTrack = null;
+        foreach (var row in rows)
+        {
+            var result = _library.ApplyPreset(row.Path!, slot, dryRun: false, updateMaster: _settings.TagUpdateMasterDefault);
+            if (result.Ok)
+            {
+                ok++;
+                lastMsg = result.Message;
+                lastTrack = result.TrackAfter;
+            }
+            else
+            {
+                fail++;
+                lastMsg = result.Error ?? result.Message;
+            }
+        }
+
+        SetStatus(
+            fail == 0
+                ? $"Preset {slot}: tagged {ok} track(s). {lastMsg}"
+                : $"Preset {slot}: {ok} ok, {fail} failed. {lastMsg}",
+            warn: fail > 0);
+
+        // Refresh grid rows from cache when possible
+        if (ok > 0)
+            RunLibrarySearch(LibrarySearchBox.Text, browse: string.IsNullOrWhiteSpace(LibrarySearchBox.Text));
+    }
+
     private sealed record LibraryResultRow(
         string? Title,
         string? Artist,
@@ -560,6 +638,7 @@ public partial class MainWindow : Window
         string SonosOk,
         string? Issue,
         string? Tempo,
+        string? Tags,
         string Path)
     {
         public LibraryResultRow(LibraryTrack t)
@@ -571,6 +650,7 @@ public partial class MainWindow : Window
                 t.SonosPlayable ? "OK" : "NO",
                 t.SonosPlayIssue,
                 t.Tempo,
+                t.CustomTagsLabel,
                 t.Path)
         { }
 
@@ -592,6 +672,7 @@ public partial class MainWindow : Window
                 playable ? "OK" : "NO",
                 GetStr(t, "SonosPlayIssue") ?? GetStr(t, "sonosPlayIssue"),
                 GetStr(t, "Tempo") ?? GetStr(t, "tempo"),
+                GetStr(t, "CustomTagsLabel") ?? GetStr(t, "customTagsLabel") ?? GetStr(t, "Tags") ?? GetStr(t, "tags"),
                 GetStr(t, "Path") ?? GetStr(t, "path") ?? "");
         }
     }
@@ -1001,6 +1082,7 @@ public partial class MainWindow : Window
         _settings.VolumeUp = _volumeUp;
         _settings.VolumeDown = _volumeDown;
         _settings.Mute = _mute;
+        _settings.QuickTag = _quickTag;
         if (int.TryParse(VolumeStepBox.Text, out var step) && step is >= 1 and <= 50)
             _settings.VolumeStep = step;
         if (int.TryParse(LevelPercentBox.Text, out var level) && level is >= 0 and <= 100)

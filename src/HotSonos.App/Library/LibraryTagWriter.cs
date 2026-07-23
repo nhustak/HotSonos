@@ -16,6 +16,12 @@ public sealed class TrackTagUpdate
     public int? Year { get; init; }
     public double? Bpm { get; init; }
 
+    /// <summary>
+    /// Extra HOTSONOS_* (or other) custom fields. Key = storage name; value empty/null clears.
+    /// Do not use HOTSONOS_TEMPO here — use <see cref="Tempo"/>.
+    /// </summary>
+    public Dictionary<string, string?> CustomFields { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
     public bool HasAnyChange =>
         Tempo is not null
         || Title is not null
@@ -24,7 +30,24 @@ public sealed class TrackTagUpdate
         || Genre is not null
         || TrackNumber is not null
         || Year is not null
-        || Bpm is not null;
+        || Bpm is not null
+        || CustomFields.Count > 0;
+
+    /// <summary>Build an update from a tag preset (only keys in the preset are written).</summary>
+    public static TrackTagUpdate FromPreset(Models.TagPreset preset)
+    {
+        string? tempo = null;
+        var custom = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in preset.Set)
+        {
+            if (string.Equals(key, LibraryTagReader.TempoField, StringComparison.OrdinalIgnoreCase))
+                tempo = value ?? "";
+            else
+                custom[key] = value ?? "";
+        }
+
+        return new TrackTagUpdate { Tempo = tempo, CustomFields = custom };
+    }
 }
 
 public sealed class TagWriteResult
@@ -156,12 +179,33 @@ public static class LibraryTagWriter
 
             if (update.Tempo is not null)
             {
-                var cur = ReadTempo(file);
+                var cur = ReadCustomField(file, LibraryTagReader.TempoField);
                 var next = tempoNorm; // null means clear
                 if (!string.Equals(cur, next, StringComparison.OrdinalIgnoreCase))
                 {
                     changes.Add($"HOTSONOS_TEMPO → {next ?? "(clear)"}");
-                    WriteTempo(file, next);
+                    WriteCustomField(file, LibraryTagReader.TempoField, next);
+                }
+            }
+
+            foreach (var (key, raw) in update.CustomFields)
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                    continue;
+                if (string.Equals(key, LibraryTagReader.TempoField, StringComparison.OrdinalIgnoreCase))
+                    continue; // use Tempo property
+                if (!key.StartsWith("HOTSONOS_", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Still allow write but only HOTSONOS_* for safety in this product surface
+                    return Fail(fullPath, $"Custom field '{key}' must start with HOTSONOS_.");
+                }
+
+                var next = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+                var cur = ReadCustomField(file, key);
+                if (!string.Equals(cur, next, StringComparison.OrdinalIgnoreCase))
+                {
+                    changes.Add($"{key} → {next ?? "(clear)"}");
+                    WriteCustomField(file, key, next);
                 }
             }
 
@@ -237,66 +281,65 @@ public static class LibraryTagWriter
         return false;
     }
 
-    private static string? ReadTempo(TagLib.File file)
+    private static string? ReadCustomField(TagLib.File file, string field)
     {
         try
         {
             if (file.GetTag(TagLib.TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph)
             {
-                var values = xiph.GetField(LibraryTagReader.TempoField);
+                var values = xiph.GetField(field);
                 if (values is { Length: > 0 } && !string.IsNullOrWhiteSpace(values[0]))
-                    return values[0].Trim().ToLowerInvariant();
+                    return values[0].Trim();
             }
 
             if (file.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3)
             {
                 foreach (var frame in id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>())
                 {
-                    if (string.Equals(frame.Description, LibraryTagReader.TempoField, StringComparison.OrdinalIgnoreCase)
+                    if (string.Equals(frame.Description, field, StringComparison.OrdinalIgnoreCase)
                         && frame.Text is { Length: > 0 }
                         && !string.IsNullOrWhiteSpace(frame.Text[0]))
                     {
-                        return frame.Text[0].Trim().ToLowerInvariant();
+                        return frame.Text[0].Trim();
                     }
                 }
             }
         }
         catch (Exception ex)
         {
-            AppLog.Warn("Read tempo before write failed", ex);
+            AppLog.Warn($"Read custom field {field} before write failed", ex);
         }
 
         return null;
     }
 
-    private static void WriteTempo(TagLib.File file, string? tempoOrNull)
+    private static void WriteCustomField(TagLib.File file, string field, string? valueOrNull)
     {
         // FLAC / Ogg Vorbis comments
         var xiph = file.GetTag(TagLib.TagTypes.Xiph, create: true) as TagLib.Ogg.XiphComment;
         if (xiph is not null)
         {
-            if (tempoOrNull is null)
-                xiph.RemoveField(LibraryTagReader.TempoField);
+            if (valueOrNull is null)
+                xiph.RemoveField(field);
             else
-                xiph.SetField(LibraryTagReader.TempoField, tempoOrNull);
+                xiph.SetField(field, valueOrNull);
         }
 
         // MP3 ID3v2 TXXX
         var id3 = file.GetTag(TagLib.TagTypes.Id3v2, create: true) as TagLib.Id3v2.Tag;
         if (id3 is not null)
         {
-            // Remove existing HOTSONOS_TEMPO user text frames
             var toRemove = id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>()
-                .Where(f => string.Equals(f.Description, LibraryTagReader.TempoField, StringComparison.OrdinalIgnoreCase))
+                .Where(f => string.Equals(f.Description, field, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             foreach (var f in toRemove)
                 id3.RemoveFrame(f);
 
-            if (tempoOrNull is not null)
+            if (valueOrNull is not null)
             {
-                var frame = new TagLib.Id3v2.UserTextInformationFrame(LibraryTagReader.TempoField)
+                var frame = new TagLib.Id3v2.UserTextInformationFrame(field)
                 {
-                    Text = [tempoOrNull],
+                    Text = [valueOrNull],
                 };
                 id3.AddFrame(frame);
             }

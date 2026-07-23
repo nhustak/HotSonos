@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
 namespace HotSonos.App.Library;
@@ -92,6 +93,8 @@ public sealed class LibraryDb : IDisposable
         EnsureColumn(conn, "sonos_play_issue", "TEXT");
         // Manual / auto-linked twin under MasterLibraryRoot (not overwritten by rescan upsert).
         EnsureColumn(conn, "master_path", "TEXT");
+        // JSON object of HOTSONOS_* custom tags (excluding tempo column).
+        EnsureColumn(conn, "custom_tags", "TEXT");
 
         using (var cmd = conn.CreateCommand())
         {
@@ -244,13 +247,13 @@ public sealed class LibraryDb : IDisposable
                   track_number, year, duration_ms, tempo, bpm,
                   codec, sample_rate_hz, bits_per_sample, channels, bitrate_kbps,
                   sonos_playable, sonos_play_issue,
-                  file_size, file_mtime_utc, last_scanned_utc)
+                  file_size, file_mtime_utc, last_scanned_utc, custom_tags)
                 VALUES (
                   $path, $root, $rel, $title, $artist, $album, $albumArtist, $genre,
                   $track, $year, $dur, $tempo, $bpm,
                   $codec, $sr, $bits, $ch, $br,
                   $playable, $issue,
-                  $size, $mtime, $scanned)
+                  $size, $mtime, $scanned, $custom)
                 ON CONFLICT(path) DO UPDATE SET
                   root = excluded.root,
                   relative_path = excluded.relative_path,
@@ -273,7 +276,8 @@ public sealed class LibraryDb : IDisposable
                   sonos_play_issue = excluded.sonos_play_issue,
                   file_size = excluded.file_size,
                   file_mtime_utc = excluded.file_mtime_utc,
-                  last_scanned_utc = excluded.last_scanned_utc;
+                  last_scanned_utc = excluded.last_scanned_utc,
+                  custom_tags = excluded.custom_tags;
                 """;
 
             var pPath = cmd.Parameters.Add("$path", SqliteType.Text);
@@ -299,6 +303,7 @@ public sealed class LibraryDb : IDisposable
             var pSize = cmd.Parameters.Add("$size", SqliteType.Integer);
             var pMtime = cmd.Parameters.Add("$mtime", SqliteType.Text);
             var pScanned = cmd.Parameters.Add("$scanned", SqliteType.Text);
+            var pCustom = cmd.Parameters.Add("$custom", SqliteType.Text);
 
             foreach (var t in tracks)
             {
@@ -325,6 +330,7 @@ public sealed class LibraryDb : IDisposable
                 pSize.Value = t.FileSize;
                 pMtime.Value = t.FileMtimeUtc.ToString("o");
                 pScanned.Value = t.LastScannedUtc.ToString("o");
+                pCustom.Value = SerializeCustomTags(t.CustomTags);
                 cmd.ExecuteNonQuery();
             }
 
@@ -380,7 +386,7 @@ public sealed class LibraryDb : IDisposable
         codec, sample_rate_hz, bits_per_sample, channels, bitrate_kbps,
         sonos_playable, sonos_play_issue,
         file_size, file_mtime_utc, last_scanned_utc,
-        master_path
+        master_path, custom_tags
         """;
 
     public IReadOnlyList<LibraryTrack> Search(string? query, int limit, int offset, bool sonosUnplayableOnly = false)
@@ -419,6 +425,7 @@ public sealed class LibraryDb : IDisposable
                        OR tempo LIKE $q ESCAPE '\'
                        OR codec LIKE $q ESCAPE '\'
                        OR sonos_play_issue LIKE $q ESCAPE '\'
+                       OR custom_tags LIKE $q ESCAPE '\'
                        OR path LIKE $q ESCAPE '\')
                     ORDER BY artist, album, track_number, title
                     LIMIT $lim OFFSET $off;
@@ -535,7 +542,36 @@ public sealed class LibraryDb : IDisposable
         FileMtimeUtc = DateTime.Parse(reader.GetString(21), null, System.Globalization.DateTimeStyles.RoundtripKind),
         LastScannedUtc = DateTime.Parse(reader.GetString(22), null, System.Globalization.DateTimeStyles.RoundtripKind),
         MasterPath = reader.FieldCount > 23 && !reader.IsDBNull(23) ? reader.GetString(23) : null,
+        CustomTags = reader.FieldCount > 24 && !reader.IsDBNull(24)
+            ? DeserializeCustomTags(reader.GetString(24))
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
     };
+
+    private static object SerializeCustomTags(Dictionary<string, string>? tags)
+    {
+        if (tags is null || tags.Count == 0)
+            return DBNull.Value;
+        return JsonSerializer.Serialize(tags);
+    }
+
+    private static Dictionary<string, string> DeserializeCustomTags(string? json)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(json))
+            return map;
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            if (parsed is null) return map;
+            foreach (var kv in parsed)
+            {
+                if (!string.IsNullOrWhiteSpace(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+                    map[kv.Key] = kv.Value;
+            }
+        }
+        catch { /* ignore corrupt */ }
+        return map;
+    }
 
     /// <summary>
     /// Persist or clear a manual/auto master twin link. Does not write tags.

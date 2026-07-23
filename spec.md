@@ -11,17 +11,16 @@
 
 > Update this section **in the same task** whenever library-plan or MCP work advances. This is the resume point after context compression.
 
-### Snapshot (2026-07-16)
+### Snapshot (2026-07-23)
 
 | Item | State |
 |------|--------|
-| **Git HEAD (last push)** | `64d2403` — library steps 1–2 + MCP Debug UI (local steps 3–4 uncommitted) |
-| **Working tree** | May be dirty with **steps 3–4** (tag write + master dual-write) until committed |
-| **App version** | `1.0.0.9` (`Directory.Build.props`) — no version bump for this step |
+| **Git HEAD** | See git log — step 4 shipped; quick-tag / custom tags in progress |
+| **App version** | `1.0.0.10` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
-| **Main window** | Tabs: **Settings** · **Library** (search/results/set tempo) · **MCP Debug** |
-| **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** access on this PC (Sonos roots + optional master) |
-| **Library DB** | `%LocalAppData%\HotSonos\library.db` (rebuildable; not sole tag store); `master_path` link column |
+| **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Wake · Options · MCP Debug |
+| **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** on this PC |
+| **Library DB** | `%LocalAppData%\HotSonos\library.db`; `master_path` + `custom_tags` JSON |
 
 ### Library intelligence plan (§7.7) — checklist
 
@@ -30,10 +29,11 @@
 | **1. Config: Sonos library root(s) + optional master root** | **DONE** | Settings + MCP; discover from Sonos |
 | **2. Scanner → SQLite cache (FLAC/MP3 tags)** | **DONE** | TagLib read; rescan/search |
 | **2b. Audio props + Sonos-unplayable flag** | **DONE** | Format heuristic + UI/MCP filter |
-| **3. Read/write `HOTSONOS_TEMPO` (+ standard fields)** | **DONE** | `LibraryTagWriter`; MCP `track_set_tags` (dryRun); Library tab set tempo; cache refresh after write |
-| **4. Master match + optional dual write** | **DONE (this task)** | `LibraryMasterMatcher`; `track_set_tags` `updateMaster`; `track_find_master` / `track_link_master`; auto-link on success |
-| **5. MCP polish** | Partial | search/get/set_tags/master shipped; further polish as needed |
-| **6. Playlist create from filter + play on Sonos** | **NEXT** | |
+| **3. Read/write `HOTSONOS_TEMPO` (+ standard fields)** | **DONE** | `LibraryTagWriter`; MCP `track_set_tags` |
+| **4. Master match + optional dual write** | **DONE** | `LibraryMasterMatcher`; `updateMaster`; find/link master |
+| **4b. Custom tags + presets + quick-tag overlay** | **DONE (this task)** | HOTSONOS_* fields; presets 1–9; Ctrl+Alt+T overlay; library context menu; MCP apply preset |
+| **5. MCP polish** | Partial | search/get/set_tags/master/presets shipped |
+| **6. Playlist create from filter + play on Sonos** | **NEXT** | After multi-tag filters are in daily use |
 | **7. Optional Sonos `SQ:` create** | Pending | |
 | **8. Optional BPM analysis (suggest only)** | Pending | Never sole source of truth |
 

@@ -375,7 +375,67 @@ public partial class App : System.Windows.Application
         _tray.UpdateOfflineSpeakers(_sonos.OfflineSpeakers);
     }
 
-    private async void OnHotkeyPressed(HotsonosAction action) => await ExecuteActionAsync(action);
+    private async void OnHotkeyPressed(HotsonosAction action)
+    {
+        if (action == HotsonosAction.QuickTag)
+        {
+            ShowQuickTagOverlay();
+            return;
+        }
+
+        await ExecuteActionAsync(action);
+    }
+
+    /// <summary>HotLaunch-style overlay: digit keys apply tag presets to the playing library track.</summary>
+    private void ShowQuickTagOverlay()
+    {
+        if (_library is null)
+        {
+            EnsureFlyout().ShowAction("Library service not available.");
+            return;
+        }
+
+        var np = _lastNowPlaying;
+        string? path = null;
+        string? resolveMsg = null;
+        string line = np is null || np.IsEmpty ? "(nothing playing)" : np.DisplayLine;
+
+        if (np is null || np.IsEmpty)
+        {
+            resolveMsg = "Nothing playing.";
+        }
+        else if (string.IsNullOrWhiteSpace(np.TrackUri))
+        {
+            resolveMsg = "No track URI from Sonos.";
+        }
+        else
+        {
+            var track = _library.FindBySonosUri(np.TrackUri);
+            if (track is null)
+            {
+                resolveMsg =
+                    "Track not in library cache (streaming/radio, or run a rescan). " +
+                    "Only Sonos Music Library files under configured roots can be tagged.";
+            }
+            else
+            {
+                path = track.Path;
+            }
+        }
+
+        // Close any prior overlay instance
+        foreach (Window w in Current.Windows)
+        {
+            if (w is QuickTagOverlay existing)
+            {
+                try { existing.Close(); } catch { /* ignore */ }
+            }
+        }
+
+        var overlay = new QuickTagOverlay(_library, _settings, line, path, resolveMsg);
+        overlay.Show();
+        overlay.Activate();
+    }
 
     /// <summary>
     /// True for multi-second library work that must not stack (queue clear/enqueue races).

@@ -190,6 +190,52 @@ public sealed class LibraryService : IDisposable
         _db.CountTracks() > 0 && _db.HasTracksMissingAudioProps();
 
     /// <summary>
+    /// Apply a configured tag preset (slot 1–9) to a path/URI under Sonos library roots.
+    /// </summary>
+    public TagWriteResult ApplyPreset(string path, int slot, bool dryRun = false, bool? updateMaster = null)
+    {
+        var s = _settings().EnsureShape();
+        var preset = s.TagPresets.FirstOrDefault(p => p.Slot == slot);
+        if (preset is null)
+        {
+            return new TagWriteResult
+            {
+                Ok = false,
+                Path = path ?? "",
+                Error = $"No tag preset in slot {slot}.",
+                Message = $"No tag preset in slot {slot}.",
+            };
+        }
+
+        var master = updateMaster ?? s.TagUpdateMasterDefault;
+        var result = SetTags(path, TrackTagUpdate.FromPreset(preset), dryRun, master);
+        if (result.Ok)
+        {
+            var msg = $"Preset {slot} “{preset.Label}”: {result.Message}";
+            return new TagWriteResult
+            {
+                Ok = result.Ok,
+                Path = result.Path,
+                DryRun = result.DryRun,
+                Message = msg,
+                Error = result.Error,
+                Changes = result.Changes,
+                TrackAfter = result.TrackAfter,
+                UpdateMasterRequested = result.UpdateMasterRequested,
+                MasterPath = result.MasterPath,
+                MasterMatchKind = result.MasterMatchKind,
+                MasterMessage = result.MasterMessage,
+                MasterChanges = result.MasterChanges,
+                MasterError = result.MasterError,
+                MasterWritten = result.MasterWritten,
+                MasterCandidates = result.MasterCandidates,
+            };
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Write tags into the file on the Sonos library share, then refresh the SQLite row.
     /// Path must be under a configured Sonos library root (or resolvable from cache).
     /// When <paramref name="updateMaster"/> is true (default) and a master root is configured,

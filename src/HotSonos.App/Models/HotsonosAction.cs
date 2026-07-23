@@ -12,6 +12,8 @@ public enum HotsonosAction
     Mute,
     LevelVolumes,
     FreshStart,
+    /// <summary>Open the quick-tag overlay (HotLaunch-style presets for the playing track).</summary>
+    QuickTag,
     Favorite1,
     Favorite2,
     Favorite3,
