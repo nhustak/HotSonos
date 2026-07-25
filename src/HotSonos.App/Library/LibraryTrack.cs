@@ -14,27 +14,14 @@ public sealed class LibraryTrack
     public int? TrackNumber { get; set; }
     public int? Year { get; set; }
     public long? DurationMs { get; set; }
-    /// <summary>From file custom tag <c>HOTSONOS_TEMPO</c> when present.</summary>
-    public string? Tempo { get; set; }
-    public double? Bpm { get; set; }
 
     /// <summary>
-    /// Other <c>HOTSONOS_*</c> custom fields from the file (excludes tempo, which is <see cref="Tempo"/>).
-    /// Keys are storage names e.g. HOTSONOS_LANE.
+    /// Opaque tag keys from file field <c>HOTSONOS_TAGS</c> (semicolon-separated on disk).
+    /// Resolve labels via the settings catalog — never treat keys as display names.
     /// </summary>
-    public Dictionary<string, string> CustomTags { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public List<string> TagKeys { get; set; } = [];
 
-    /// <summary>Compact label for UI (lane/mood etc.).</summary>
-    public string CustomTagsLabel =>
-        CustomTags.Count == 0
-            ? ""
-            : string.Join(" · ", CustomTags.Select(kv =>
-            {
-                var k = kv.Key.StartsWith("HOTSONOS_", StringComparison.OrdinalIgnoreCase)
-                    ? kv.Key["HOTSONOS_".Length..]
-                    : kv.Key;
-                return $"{k}={kv.Value}";
-            }));
+    public double? Bpm { get; set; }
 
     /// <summary>
     /// Optional linked twin under <c>MasterLibraryRoot</c> (cache only — dual-write target).
@@ -59,6 +46,19 @@ public sealed class LibraryTrack
     public DateTime LastScannedUtc { get; set; }
 
     public string AudioFormatLabel => SonosPlayability.FormatLabel(this);
+
+    public bool HasTagKey(string key) =>
+        TagKeys.Any(k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Joined keys for cache/search (not for UI).</summary>
+    public string TagKeysJoined =>
+        TagKeys.Count == 0 ? "" : string.Join(';', TagKeys);
+
+    /// <summary>Resolve keys to labels for grid/overlay (unknown keys show as ?key).</summary>
+    public string FormatTagLabels(Func<string, string> labelForKey) =>
+        TagKeys.Count == 0
+            ? ""
+            : string.Join(" · ", TagKeys.Select(labelForKey));
 }
 
 /// <summary>Snapshot of cache + scan progress for UI / MCP.</summary>

@@ -33,6 +33,7 @@ public partial class App : System.Windows.Application
     private HotSonosMcpHost? _mcpHost;
     private HotSonosMcpState? _mcpState;
     private LibraryService? _library;
+    private System.Threading.Timer? _pendingTagTimer;
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private bool _isExiting;
 
@@ -121,7 +122,10 @@ public partial class App : System.Windows.Application
         try
         {
         _store = new ConfigStore();
-        _settings = _store.Load();
+        _settings = _store.Load().EnsureShape();
+        // Persist freshly seeded tag catalog (or other EnsureShape defaults) once.
+        try { _store.Save(_settings); }
+        catch (Exception ex) { AppLog.Warn("Settings save after load/normalize failed", ex); }
 
         _sonos = new SonosManager(() => _settings);
         _sonos.NowPlayingChanged += OnNowPlayingChanged;
@@ -150,6 +154,25 @@ public partial class App : System.Windows.Application
                 try { _store.Save(_settings); }
                 catch (Exception ex) { AppLog.Warn("Settings save after library root discovery failed", ex); }
             });
+        // Map leftover slow/medium/… tokens → catalog keys; clear HOTSONOS_TEMPO (no tempo support).
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var r = _library.MigrateLegacyTagTokens();
+                AppLog.Info(r.Message);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Legacy tag migration failed", ex);
+            }
+        });
+        // Retry tag writes that were deferred while Sonos had the file open.
+        _pendingTagTimer = new System.Threading.Timer(
+            _ => Dispatcher.InvokeAsync(ProcessPendingTagWritesSafe),
+            null,
+            TimeSpan.FromSeconds(12),
+            TimeSpan.FromSeconds(12));
 
         _mcpState = new HotSonosMcpState
         {
@@ -161,6 +184,11 @@ public partial class App : System.Windows.Application
             RefreshDevicesAsync = McpRefreshDevicesAsync,
             ExecuteActionAsync = McpExecuteActionAsync,
             SetActiveRoom = OnTraySetRoom,
+            PersistSettings = () =>
+            {
+                try { _store.Save(_settings); }
+                catch (Exception ex) { AppLog.Warn("Settings save from MCP failed", ex); }
+            },
         };
         _mcpHost = new HotSonosMcpHost();
 
@@ -545,7 +573,29 @@ public partial class App : System.Windows.Application
             _tray.UpdateNowPlaying(nowPlaying.IsEmpty ? null : nowPlaying.DisplayLine);
             if (_settings.ShowFlyoutOnTrackChange || _settings.FlyoutPinned)
                 EnsureFlyout().ShowNowPlaying(nowPlaying);
+
+            // Previous track file is often released when the transport advances.
+            ProcessPendingTagWritesSafe();
         });
+    }
+
+    private void ProcessPendingTagWritesSafe()
+    {
+        try
+        {
+            if (_library is null) return;
+            var n = _library.ProcessPendingTagWrites();
+            if (n > 0)
+            {
+                AppLog.Info($"Applied {n} queued tag write(s)");
+                if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                    EnsureFlyout().ShowAction($"Tagged {n} queued track(s)");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("ProcessPendingTagWrites failed", ex);
+        }
     }
 
     /// <summary>
@@ -715,6 +765,8 @@ public partial class App : System.Windows.Application
         _showWindowEvent = null;
 
         _nightlyTimer?.Dispose();
+        _pendingTagTimer?.Dispose();
+        _pendingTagTimer = null;
         _wake?.Dispose();
         try { _library?.Dispose(); } catch { /* exit */ }
         try { _mcpHost?.StopAsync().Wait(TimeSpan.FromSeconds(2)); } catch { /* exit */ }

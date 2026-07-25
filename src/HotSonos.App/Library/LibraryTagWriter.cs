@@ -6,8 +6,12 @@ namespace HotSonos.App.Library;
 /// <summary>Optional fields to write into an audio file (null = leave unchanged).</summary>
 public sealed class TrackTagUpdate
 {
-    /// <summary><c>slow</c> | <c>medium</c> | <c>fast</c>, or empty string to clear.</summary>
-    public string? Tempo { get; init; }
+    /// <summary>
+    /// Full replacement set of opaque catalog keys for <c>HOTSONOS_TAGS</c>.
+    /// Null = leave unchanged; empty list = clear all HotSonos tags on the file.
+    /// </summary>
+    public IReadOnlyList<string>? TagKeys { get; init; }
+
     public string? Title { get; init; }
     public string? Artist { get; init; }
     public string? Album { get; init; }
@@ -16,38 +20,15 @@ public sealed class TrackTagUpdate
     public int? Year { get; init; }
     public double? Bpm { get; init; }
 
-    /// <summary>
-    /// Extra HOTSONOS_* (or other) custom fields. Key = storage name; value empty/null clears.
-    /// Do not use HOTSONOS_TEMPO here — use <see cref="Tempo"/>.
-    /// </summary>
-    public Dictionary<string, string?> CustomFields { get; init; } = new(StringComparer.OrdinalIgnoreCase);
-
     public bool HasAnyChange =>
-        Tempo is not null
+        TagKeys is not null
         || Title is not null
         || Artist is not null
         || Album is not null
         || Genre is not null
         || TrackNumber is not null
         || Year is not null
-        || Bpm is not null
-        || CustomFields.Count > 0;
-
-    /// <summary>Build an update from a tag preset (only keys in the preset are written).</summary>
-    public static TrackTagUpdate FromPreset(Models.TagPreset preset)
-    {
-        string? tempo = null;
-        var custom = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (key, value) in preset.Set)
-        {
-            if (string.Equals(key, LibraryTagReader.TempoField, StringComparison.OrdinalIgnoreCase))
-                tempo = value ?? "";
-            else
-                custom[key] = value ?? "";
-        }
-
-        return new TrackTagUpdate { Tempo = tempo, CustomFields = custom };
-    }
+        || Bpm is not null;
 }
 
 public sealed class TagWriteResult
@@ -60,6 +41,12 @@ public sealed class TagWriteResult
     public IReadOnlyList<string> Changes { get; init; } = [];
     public LibraryTrack? TrackAfter { get; init; }
 
+    /// <summary>True when write was deferred because the file was locked (e.g. Sonos playing it).</summary>
+    public bool Queued { get; init; }
+
+    /// <summary>True when failure is a share/lock violation (caller may queue).</summary>
+    public bool FileLocked { get; init; }
+
     // ---- Master dual-write (step 4) ----------------------------------------
     public bool UpdateMasterRequested { get; init; }
     public string? MasterPath { get; init; }
@@ -71,9 +58,21 @@ public sealed class TagWriteResult
     public IReadOnlyList<string> MasterCandidates { get; init; } = [];
 }
 
+/// <summary>Result of stripping one tag key from every matching track in the library cache.</summary>
+public sealed class TagPurgeResult
+{
+    public bool Ok { get; init; }
+    public int Matched { get; init; }
+    public int Written { get; init; }
+    public int Queued { get; init; }
+    public int Failed { get; init; }
+    public string Message { get; init; } = "";
+    public string? LastError { get; init; }
+}
+
 /// <summary>
 /// Writes tags into FLAC (Vorbis / Xiph) and MP3 (ID3v2) without re-encoding audio.
-/// Custom field: <see cref="LibraryTagReader.TempoField"/> = HOTSONOS_TEMPO.
+/// HotSonos field: <see cref="LibraryTagReader.TagsField"/> = semicolon-separated opaque keys.
 /// </summary>
 public static class LibraryTagWriter
 {
@@ -92,17 +91,15 @@ public static class LibraryTagWriter
         if (!LibraryTagReader.AudioExtensions.Contains(ext))
             return Fail(fullPath, $"Unsupported extension '{ext}' (FLAC/MP3 only).");
 
-        string? tempoNorm = null;
-        if (update.Tempo is not null)
-        {
-            if (!IsValidTempoOrClear(update.Tempo, out tempoNorm, out var tempoErr))
-                return Fail(fullPath, tempoErr!);
-        }
+        string? tagsNorm = null;
+        if (update.TagKeys is not null)
+            tagsNorm = LibraryTagReader.JoinTagKeys(update.TagKeys);
 
         try
         {
             var changes = new List<string>();
-            using var file = TagLib.File.Create(fullPath);
+            // Share-aware open + short retries: Sonos often holds the playing file open for read.
+            using var file = OpenTagLibFileWithRetry(fullPath);
             var tag = file.Tag;
 
             if (update.Title is not null)
@@ -177,35 +174,24 @@ public static class LibraryTagWriter
                 }
             }
 
-            if (update.Tempo is not null)
+            if (update.TagKeys is not null)
             {
-                var cur = ReadCustomField(file, LibraryTagReader.TempoField);
-                var next = tempoNorm; // null means clear
-                if (!string.Equals(cur, next, StringComparison.OrdinalIgnoreCase))
+                var cur = ReadCustomField(file, LibraryTagReader.TagsField);
+                var next = tagsNorm; // null means clear
+                // Normalize cur for compare
+                var curJoined = LibraryTagReader.JoinTagKeys(LibraryTagReader.ParseTagKeys(cur));
+                if (!string.Equals(curJoined, next, StringComparison.OrdinalIgnoreCase))
                 {
-                    changes.Add($"HOTSONOS_TEMPO → {next ?? "(clear)"}");
-                    WriteCustomField(file, LibraryTagReader.TempoField, next);
-                }
-            }
-
-            foreach (var (key, raw) in update.CustomFields)
-            {
-                if (string.IsNullOrWhiteSpace(key))
-                    continue;
-                if (string.Equals(key, LibraryTagReader.TempoField, StringComparison.OrdinalIgnoreCase))
-                    continue; // use Tempo property
-                if (!key.StartsWith("HOTSONOS_", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Still allow write but only HOTSONOS_* for safety in this product surface
-                    return Fail(fullPath, $"Custom field '{key}' must start with HOTSONOS_.");
+                    changes.Add($"{LibraryTagReader.TagsField} → {next ?? "(clear)"}");
+                    WriteCustomField(file, LibraryTagReader.TagsField, next);
                 }
 
-                var next = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
-                var cur = ReadCustomField(file, key);
-                if (!string.Equals(cur, next, StringComparison.OrdinalIgnoreCase))
+                // Strip legacy HOTSONOS_TEMPO whenever we touch tags (tempo is gone).
+                var legacyTempo = ReadCustomField(file, LibraryTagReader.LegacyTempoField);
+                if (!string.IsNullOrWhiteSpace(legacyTempo))
                 {
-                    changes.Add($"{key} → {next ?? "(clear)"}");
-                    WriteCustomField(file, key, next);
+                    changes.Add($"{LibraryTagReader.LegacyTempoField} → (clear)");
+                    WriteCustomField(file, LibraryTagReader.LegacyTempoField, null);
                 }
             }
 
@@ -253,6 +239,18 @@ public static class LibraryTagWriter
                 TrackAfter = after,
             };
         }
+        catch (Exception ex) when (IsFileLockException(ex))
+        {
+            AppLog.Warn($"Tag write locked (will queue if requested): {fullPath}", ex);
+            return new TagWriteResult
+            {
+                Ok = false,
+                Path = fullPath,
+                Error = ex.Message,
+                Message = ex.Message,
+                FileLocked = true,
+            };
+        }
         catch (Exception ex)
         {
             AppLog.Error($"Tag write failed: {fullPath}", ex);
@@ -260,25 +258,72 @@ public static class LibraryTagWriter
         }
     }
 
-    private static bool IsValidTempoOrClear(string raw, out string? normalized, out string? error)
+    /// <summary>
+    /// Open via TagLib with <see cref="FileShare.ReadWrite"/> so a reader (Sonos/SMB)
+    /// does not always block tag updates. Retries briefly on share violations.
+    /// </summary>
+    private static TagLib.File OpenTagLibFileWithRetry(string fullPath)
     {
-        normalized = null;
-        error = null;
-        if (string.IsNullOrWhiteSpace(raw))
+        const int attempts = 4;
+        Exception? last = null;
+        for (var i = 0; i < attempts; i++)
         {
-            normalized = null; // clear
-            return true;
+            try
+            {
+                var abs = new ShareAwareFileAbstraction(fullPath);
+                return TagLib.File.Create(abs);
+            }
+            catch (Exception ex) when (IsFileLockException(ex))
+            {
+                last = ex;
+                Thread.Sleep(80 * (i + 1));
+            }
         }
 
-        var t = raw.Trim().ToLowerInvariant();
-        if (t is "slow" or "medium" or "fast")
-        {
-            normalized = t;
-            return true;
-        }
+        throw last ?? new IOException($"Could not open for tag write: {fullPath}");
+    }
 
-        error = "tempo must be slow, medium, fast, or empty to clear.";
+    internal static bool IsFileLockException(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException!)
+        {
+            if (e is IOException)
+            {
+                var hr = e.HResult & 0xFFFF;
+                // ERROR_SHARING_VIOLATION=32, ERROR_LOCK_VIOLATION=33
+                if (hr is 32 or 33)
+                    return true;
+                if (e.Message.Contains("being used by another process", StringComparison.OrdinalIgnoreCase)
+                    || e.Message.Contains("cannot access the file", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
         return false;
+    }
+
+    /// <summary>TagLib abstraction that opens streams with share-read/write (not exclusive).</summary>
+    private sealed class ShareAwareFileAbstraction : TagLib.File.IFileAbstraction
+    {
+        private readonly string _path;
+
+        public ShareAwareFileAbstraction(string path) => _path = path;
+
+        public string Name => _path;
+
+        public Stream ReadStream => OpenStream();
+
+        public Stream WriteStream => OpenStream();
+
+        public void CloseStream(Stream stream) => stream.Dispose();
+
+        private Stream OpenStream() =>
+            new FileStream(
+                _path,
+                FileMode.Open,
+                FileAccess.ReadWrite,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 4096,
+                FileOptions.RandomAccess);
     }
 
     private static string? ReadCustomField(TagLib.File file, string field)

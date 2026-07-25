@@ -3,10 +3,14 @@ using HotSonos.App.Infrastructure;
 
 namespace HotSonos.App.Library;
 
-/// <summary>Reads tags + audio properties + optional HOTSONOS_TEMPO from FLAC/MP3 via TagLib#.</summary>
+/// <summary>Reads tags + audio properties + <c>HOTSONOS_TAGS</c> keys from FLAC/MP3 via TagLib#.</summary>
 public static class LibraryTagReader
 {
-    public const string TempoField = "HOTSONOS_TEMPO";
+    /// <summary>Single multi-value field: opaque catalog keys, semicolon-separated.</summary>
+    public const string TagsField = "HOTSONOS_TAGS";
+
+    /// <summary>Legacy field — never used for tags; cleared when rewriting HOTSONOS_TAGS.</summary>
+    public const string LegacyTempoField = "HOTSONOS_TEMPO";
 
     public static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -29,13 +33,7 @@ public static class LibraryTagReader
             if (tag.BeatsPerMinute > 0)
                 bpm = tag.BeatsPerMinute;
 
-            var customAll = ReadAllHotsonosFields(file);
-            string? tempo = null;
-            if (customAll.TryGetValue(TempoField, out var tempoRaw))
-            {
-                tempo = NormalizeTempo(tempoRaw);
-                customAll.Remove(TempoField);
-            }
+            var tagKeys = ReadTagKeys(file);
 
             string? relative = null;
             try
@@ -80,9 +78,8 @@ public static class LibraryTagReader
                 DurationMs = props.Duration.TotalMilliseconds > 0
                     ? (long)props.Duration.TotalMilliseconds
                     : null,
-                Tempo = tempo,
+                TagKeys = tagKeys,
                 Bpm = bpm,
-                CustomTags = customAll,
                 Codec = codec,
                 SampleRateHz = sampleRate,
                 BitsPerSample = bits is 0 ? null : bits,
@@ -113,31 +110,43 @@ public static class LibraryTagReader
         return string.IsNullOrEmpty(ext) ? null : ext;
     }
 
-    /// <summary>Known + discovered HOTSONOS_* fields (including tempo).</summary>
-    private static readonly string[] KnownHotsonosKeys =
-    [
-        TempoField,
-        "HOTSONOS_LANE",
-        "HOTSONOS_MOOD",
-        "HOTSONOS_FLAGS",
-        "HOTSONOS_ENERGY",
-    ];
-
-    /// <summary>All HOTSONOS_* user fields from FLAC/MP3 (including tempo).</summary>
-    private static Dictionary<string, string> ReadAllHotsonosFields(TagLib.File file)
+    /// <summary>Parse <see cref="TagsField"/> into ordered unique keys.</summary>
+    public static List<string> ReadTagKeys(TagLib.File file)
     {
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var raw = ReadCustomField(file, TagsField);
+        return ParseTagKeys(raw);
+    }
+
+    public static List<string> ParseTagKeys(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return [];
+        return raw.Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(p => p.Trim().ToLowerInvariant())
+            .Where(p => p.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public static string? JoinTagKeys(IEnumerable<string> keys)
+    {
+        var list = keys
+            .Select(k => k.Trim().ToLowerInvariant())
+            .Where(k => k.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return list.Count == 0 ? null : string.Join(';', list);
+    }
+
+    private static string? ReadCustomField(TagLib.File file, string field)
+    {
         try
         {
-            // Probe known keys on Xiph (enumeration API varies by TagLib version).
             if (file.GetTag(TagLib.TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph)
             {
-                foreach (var key in KnownHotsonosKeys)
-                {
-                    var values = xiph.GetField(key);
-                    if (values is { Length: > 0 } && !string.IsNullOrWhiteSpace(values[0]))
-                        map[key] = values[0].Trim();
-                }
+                var values = xiph.GetField(field);
+                if (values is { Length: > 0 } && !string.IsNullOrWhiteSpace(values[0]))
+                    return values[0].Trim();
             }
 
             if (file.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3)
@@ -145,25 +154,19 @@ public static class LibraryTagReader
                 foreach (var frame in id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>())
                 {
                     if (frame.Description is null
-                        || !frame.Description.StartsWith("HOTSONOS_", StringComparison.OrdinalIgnoreCase))
+                        || !string.Equals(frame.Description, field, StringComparison.OrdinalIgnoreCase))
                         continue;
                     if (frame.Text is { Length: > 0 } && !string.IsNullOrWhiteSpace(frame.Text[0]))
-                        map[frame.Description] = frame.Text[0].Trim();
+                        return frame.Text[0].Trim();
                 }
             }
         }
         catch (Exception ex)
         {
-            AppLog.Warn("HOTSONOS_* tag read failed", ex);
+            AppLog.Warn($"Read {field} failed", ex);
         }
 
-        return map;
-    }
-
-    private static string? NormalizeTempo(string raw)
-    {
-        var t = raw.Trim().ToLowerInvariant();
-        return t is "slow" or "medium" or "fast" ? t : raw.Trim();
+        return null;
     }
 
     private static string? NullIfEmpty(string? s) =>

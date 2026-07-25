@@ -30,9 +30,9 @@
 
 ## Loopback MCP (debug / agent tools)
 - While the tray app is running with MCP enabled: `http://127.0.0.1:42341/mcp`
-- Tools: discovery status (`deviceListPopulated`), groups/zones/offline, refresh_devices, volumes, now_playing, favorites, settings, logs; **library**: `discover_library_roots`, `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`, `track_set_tags`, `track_apply_preset`, `list_tag_presets`, `track_find_master`, `track_link_master`; **control**: play_pause, next/previous, volume_up/down, mute, level_volumes, shuffle_library, fresh_start, play_favorite_slot, set_active_room, wake_now, wake_cancel
+- Tools: discovery status (`deviceListPopulated`), groups/zones/offline, refresh_devices, volumes, now_playing, favorites, settings, logs; **library**: `discover_library_roots`, `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`, `list_tags`, `tag_create`, `tag_rename`, `tag_delete` (purge from all files), `track_toggle_tag`, `track_set_tags` (HOTSONOS_TAGS keys), `track_find_master`, `track_link_master`; **control**: play_pause, next/previous, volume_up/down, mute, level_volumes, shuffle_library, fresh_start, play_favorite_slot, set_active_room, wake_now, wake_cancel
 - Library scan/tag **write** needs this **PC** SMB access (read for scan, write for tags) to the UNC root Sonos reports; master dual-write also needs write access under `MasterLibraryRoot`.
-- **Quick tag**: global hotkey (default Ctrl+Alt+T) → overlay slots 1–9; Library grid context menu **Apply tag preset**; settings hotkey on Hotkeys tab.
-- **UI**: Main window tabs — Control / Hotkeys / Shuffle / Library / Wake / Options / MCP Debug. Tray: Library…, MCP Debug…
+- **Tags**: flat catalog (auto key + label); files store `HOTSONOS_TAGS=key1;key2`; rename label without rewrite. Quick-tag Ctrl+Alt+T; Library chips + keys 1–9; context menu Toggle tag.
+- **UI**: Main window tabs — Control / Hotkeys / Shuffle / Library / Tags / Wake / Options / MCP Debug. Tray: Library…, MCP Debug…
 - Register in `C:\Project\_mcp\mcp-servers.json` as `hotsonos`, then run `sync-mcp.ps1`
 - Product roadmap / live checklist: `spec.md` §0 (next: playlist create from filter / step 6)

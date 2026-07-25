@@ -93,7 +93,7 @@ public sealed class LibraryDb : IDisposable
         EnsureColumn(conn, "sonos_play_issue", "TEXT");
         // Manual / auto-linked twin under MasterLibraryRoot (not overwritten by rescan upsert).
         EnsureColumn(conn, "master_path", "TEXT");
-        // JSON object of HOTSONOS_* custom tags (excluding tempo column).
+        // JSON array of HOTSONOS_TAGS keys (opaque catalog ids).
         EnsureColumn(conn, "custom_tags", "TEXT");
 
         using (var cmd = conn.CreateCommand())
@@ -318,7 +318,8 @@ public sealed class LibraryDb : IDisposable
                 pTrack.Value = (object?)t.TrackNumber ?? DBNull.Value;
                 pYear.Value = (object?)t.Year ?? DBNull.Value;
                 pDur.Value = (object?)t.DurationMs ?? DBNull.Value;
-                pTempo.Value = (object?)t.Tempo ?? DBNull.Value;
+                // tempo column is legacy (HOTSONOS_TEMPO) — always clear; keys live in custom_tags only.
+                pTempo.Value = DBNull.Value;
                 pBpm.Value = (object?)t.Bpm ?? DBNull.Value;
                 pCodec.Value = (object?)t.Codec ?? DBNull.Value;
                 pSr.Value = (object?)t.SampleRateHz ?? DBNull.Value;
@@ -330,7 +331,7 @@ public sealed class LibraryDb : IDisposable
                 pSize.Value = t.FileSize;
                 pMtime.Value = t.FileMtimeUtc.ToString("o");
                 pScanned.Value = t.LastScannedUtc.ToString("o");
-                pCustom.Value = SerializeCustomTags(t.CustomTags);
+                pCustom.Value = SerializeTagKeys(t.TagKeys);
                 cmd.ExecuteNonQuery();
             }
 
@@ -389,7 +390,18 @@ public sealed class LibraryDb : IDisposable
         master_path, custom_tags
         """;
 
-    public IReadOnlyList<LibraryTrack> Search(string? query, int limit, int offset, bool sonosUnplayableOnly = false)
+    /// <param name="field">
+    /// Restricted field when using <c>T:</c> / <c>A:</c> / <c>TG:</c> / <c>F:</c>.
+    /// For <see cref="LibrarySearchField.Tags"/>, pass resolved catalog keys in <paramref name="tagKeys"/>
+    /// (query text is ignored); track must have <b>all</b> listed keys.
+    /// </param>
+    public IReadOnlyList<LibraryTrack> Search(
+        string? query,
+        int limit,
+        int offset,
+        bool sonosUnplayableOnly = false,
+        LibrarySearchField field = LibrarySearchField.All,
+        IReadOnlyList<string>? tagKeys = null)
     {
         limit = Math.Clamp(limit, 1, 200);
         offset = Math.Max(0, offset);
@@ -400,7 +412,49 @@ public sealed class LibraryDb : IDisposable
             EnsureOpen();
             using var cmd = _conn!.CreateCommand();
             var playFilter = sonosUnplayableOnly ? "sonos_playable = 0" : "1=1";
-            if (q is null)
+
+            if (field == LibrarySearchField.Tags)
+            {
+                var keys = (tagKeys ?? [])
+                    .Where(k => !string.IsNullOrWhiteSpace(k))
+                    .Select(k => k.Trim().ToLowerInvariant())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (keys.Count == 0)
+                    return [];
+
+                // Prefilter: every key must appear in custom_tags JSON; refine with HasTagKey in memory.
+                var parts = new List<string> { playFilter };
+                for (var i = 0; i < keys.Count; i++)
+                {
+                    parts.Add($"custom_tags LIKE $tk{i} ESCAPE '\\'");
+                    cmd.Parameters.AddWithValue($"$tk{i}", "%" + EscapeLike(keys[i]) + "%");
+                }
+
+                cmd.CommandText =
+                    $"""
+                    SELECT {SelectTrackCols}
+                    FROM tracks
+                    WHERE {string.Join(" AND ", parts)}
+                    ORDER BY artist, album, track_number, title
+                    LIMIT $lim OFFSET $off;
+                    """;
+                cmd.Parameters.AddWithValue("$lim", limit);
+                cmd.Parameters.AddWithValue("$off", offset);
+
+                var list = new List<LibraryTrack>();
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    var t = ReadTrack(reader);
+                    if (keys.All(t.HasTagKey))
+                        list.Add(t);
+                }
+
+                return list;
+            }
+
+            if (q is null && field == LibrarySearchField.All)
             {
                 cmd.CommandText =
                     $"""
@@ -411,37 +465,56 @@ public sealed class LibraryDb : IDisposable
                     LIMIT $lim OFFSET $off;
                     """;
             }
+            else if (q is null)
+            {
+                // Prefixed search with empty term (e.g. "T:") → no matches.
+                return [];
+            }
             else
             {
+                var columnFilter = field switch
+                {
+                    LibrarySearchField.Title => "title LIKE $q ESCAPE '\\'",
+                    LibrarySearchField.Artist => "artist LIKE $q ESCAPE '\\'",
+                    // codec description and path extension (e.g. flac, mp3, 24-bit if present in codec)
+                    LibrarySearchField.Format =>
+                        "(codec LIKE $q ESCAPE '\\' OR path LIKE $q ESCAPE '\\')",
+                    _ =>
+                        """
+                        (title LIKE $q ESCAPE '\'
+                         OR artist LIKE $q ESCAPE '\'
+                         OR album LIKE $q ESCAPE '\'
+                         OR genre LIKE $q ESCAPE '\'
+                         OR codec LIKE $q ESCAPE '\'
+                         OR sonos_play_issue LIKE $q ESCAPE '\'
+                         OR custom_tags LIKE $q ESCAPE '\'
+                         OR path LIKE $q ESCAPE '\')
+                        """,
+                };
+
                 cmd.CommandText =
                     $"""
                     SELECT {SelectTrackCols}
                     FROM tracks
                     WHERE {playFilter}
-                      AND (title LIKE $q ESCAPE '\'
-                       OR artist LIKE $q ESCAPE '\'
-                       OR album LIKE $q ESCAPE '\'
-                       OR genre LIKE $q ESCAPE '\'
-                       OR tempo LIKE $q ESCAPE '\'
-                       OR codec LIKE $q ESCAPE '\'
-                       OR sonos_play_issue LIKE $q ESCAPE '\'
-                       OR custom_tags LIKE $q ESCAPE '\'
-                       OR path LIKE $q ESCAPE '\')
+                      AND {columnFilter}
                     ORDER BY artist, album, track_number, title
                     LIMIT $lim OFFSET $off;
                     """;
-                var escaped = EscapeLike(q);
-                cmd.Parameters.AddWithValue("$q", $"%{escaped}%");
+                cmd.Parameters.AddWithValue("$q", $"%{EscapeLike(q)}%");
             }
 
             cmd.Parameters.AddWithValue("$lim", limit);
             cmd.Parameters.AddWithValue("$off", offset);
 
-            var list = new List<LibraryTrack>();
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-                list.Add(ReadTrack(reader));
-            return list;
+            var listAll = new List<LibraryTrack>();
+            using (var reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                    listAll.Add(ReadTrack(reader));
+            }
+
+            return listAll;
         }
     }
 
@@ -462,6 +535,96 @@ public sealed class LibraryDb : IDisposable
             cmd.Parameters.AddWithValue("$p", path.Trim());
             using var reader = cmd.ExecuteReader();
             return reader.Read() ? ReadTrack(reader) : null;
+        }
+    }
+
+    /// <summary>
+    /// Tracks whose cache row likely contains <paramref name="tagKey"/> in custom_tags JSON.
+    /// Caller should filter with <see cref="LibraryTrack.HasTagKey"/>.
+    /// </summary>
+    public IReadOnlyList<LibraryTrack> FindTracksPossiblyWithTagKey(string tagKey)
+    {
+        tagKey = (tagKey ?? "").Trim().ToLowerInvariant();
+        if (tagKey.Length == 0)
+            return [];
+
+        lock (_gate)
+        {
+            EnsureOpen();
+            using var cmd = _conn!.CreateCommand();
+            cmd.CommandText =
+                $"""
+                SELECT {SelectTrackCols}
+                FROM tracks
+                WHERE custom_tags LIKE $q ESCAPE '\'
+                   OR tempo LIKE $q ESCAPE '\';
+                """;
+            // Still match legacy tempo column once so purge/migrate can find old rows.
+            cmd.Parameters.AddWithValue("$q", "%" + EscapeLike(tagKey) + "%");
+            var list = new List<LibraryTrack>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var t = MergeLegacyTempoTokens(ReadTrack(reader), reader);
+                if (t.HasTagKey(tagKey))
+                    list.Add(t);
+            }
+
+            return list;
+        }
+    }
+
+    /// <summary>Tracks that have any tag keys in cache (custom_tags or leftover tempo column).</summary>
+    public IReadOnlyList<LibraryTrack> FindTracksWithAnyTagData()
+    {
+        lock (_gate)
+        {
+            EnsureOpen();
+            using var cmd = _conn!.CreateCommand();
+            cmd.CommandText =
+                $"""
+                SELECT {SelectTrackCols}
+                FROM tracks
+                WHERE (custom_tags IS NOT NULL AND TRIM(custom_tags) != '' AND custom_tags != '[]')
+                   OR (tempo IS NOT NULL AND TRIM(tempo) != '');
+                """;
+            var list = new List<LibraryTrack>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var t = MergeLegacyTempoTokens(ReadTrack(reader), reader);
+                if (t.TagKeys.Count > 0)
+                    list.Add(t);
+            }
+
+            return list;
+        }
+    }
+
+    /// <summary>One-time merge of old tempo-column tokens into TagKeys for migration/purge.</summary>
+    private static LibraryTrack MergeLegacyTempoTokens(LibraryTrack t, SqliteDataReader reader)
+    {
+        if (reader.IsDBNull(11))
+            return t;
+        var legacy = LibraryTagReader.ParseTagKeys(reader.GetString(11));
+        if (legacy.Count == 0)
+            return t;
+        var set = t.TagKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var k in legacy)
+            set.Add(k);
+        t.TagKeys = set.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        return t;
+    }
+
+    /// <summary>Wipe leftover HOTSONOS_TEMPO cache column (unused).</summary>
+    public int ClearLegacyTempoColumn()
+    {
+        lock (_gate)
+        {
+            EnsureOpen();
+            using var cmd = _conn!.CreateCommand();
+            cmd.CommandText = "UPDATE tracks SET tempo = NULL WHERE tempo IS NOT NULL;";
+            return cmd.ExecuteNonQuery();
         }
     }
 
@@ -529,7 +692,6 @@ public sealed class LibraryDb : IDisposable
         TrackNumber = reader.IsDBNull(8) ? null : reader.GetInt32(8),
         Year = reader.IsDBNull(9) ? null : reader.GetInt32(9),
         DurationMs = reader.IsDBNull(10) ? null : reader.GetInt64(10),
-        Tempo = reader.IsDBNull(11) ? null : reader.GetString(11),
         Bpm = reader.IsDBNull(12) ? null : reader.GetDouble(12),
         Codec = reader.IsDBNull(13) ? null : reader.GetString(13),
         SampleRateHz = reader.IsDBNull(14) ? null : reader.GetInt32(14),
@@ -542,35 +704,34 @@ public sealed class LibraryDb : IDisposable
         FileMtimeUtc = DateTime.Parse(reader.GetString(21), null, System.Globalization.DateTimeStyles.RoundtripKind),
         LastScannedUtc = DateTime.Parse(reader.GetString(22), null, System.Globalization.DateTimeStyles.RoundtripKind),
         MasterPath = reader.FieldCount > 23 && !reader.IsDBNull(23) ? reader.GetString(23) : null,
-        CustomTags = reader.FieldCount > 24 && !reader.IsDBNull(24)
-            ? DeserializeCustomTags(reader.GetString(24))
-            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+        // Tag keys only from custom_tags JSON — never the legacy tempo column.
+        TagKeys = ReadTagKeysFromCustomJson(
+            reader.FieldCount > 24 && !reader.IsDBNull(24) ? reader.GetString(24) : null),
     };
 
-    private static object SerializeCustomTags(Dictionary<string, string>? tags)
+    private static object SerializeTagKeys(List<string>? keys)
     {
-        if (tags is null || tags.Count == 0)
+        if (keys is null || keys.Count == 0)
             return DBNull.Value;
-        return JsonSerializer.Serialize(tags);
+        return JsonSerializer.Serialize(keys);
     }
 
-    private static Dictionary<string, string> DeserializeCustomTags(string? json)
+    /// <summary>Tag keys from custom_tags JSON array only (tempo column is unused legacy).</summary>
+    private static List<string> ReadTagKeysFromCustomJson(string? customJson)
     {
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(json))
-            return map;
+        if (string.IsNullOrWhiteSpace(customJson))
+            return [];
         try
         {
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-            if (parsed is null) return map;
-            foreach (var kv in parsed)
+            if (customJson.TrimStart().StartsWith('['))
             {
-                if (!string.IsNullOrWhiteSpace(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
-                    map[kv.Key] = kv.Value;
+                var arr = JsonSerializer.Deserialize<List<string>>(customJson);
+                if (arr is { Count: > 0 })
+                    return LibraryTagReader.ParseTagKeys(string.Join(';', arr));
             }
         }
-        catch { /* ignore corrupt */ }
-        return map;
+        catch { /* ignore */ }
+        return [];
     }
 
     /// <summary>

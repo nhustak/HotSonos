@@ -10,41 +10,79 @@
         ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
         WindowStartupLocation="CenterScreen"
-        PreviewKeyDown="Window_PreviewKeyDown"
-        Deactivated="Window_Deactivated">
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <!-- Esc only closes — not click/key apply, not deactivate (so multi-tag is easy). -->
     <Border Background="#F0141C28" BorderBrush="#FF2ECC71" BorderThickness="2" CornerRadius="12" Padding="18,14">
         <Border.Effect>
             <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.55" Color="#FF000000" />
         </Border.Effect>
-        <StackPanel MinWidth="360" MaxWidth="480">
-            <TextBlock Text="Quick tag" FontSize="18" FontWeight="SemiBold" Foreground="#FFE8EEF4" />
-            <TextBlock x:Name="NowPlayingText" Margin="0,6,0,4" FontSize="13" Foreground="#FFB8C4D0"
+        <StackPanel MinWidth="380" MaxWidth="500">
+            <DockPanel LastChildFill="False" Margin="0,0,0,4">
+                <TextBlock Text="Quick tag" FontSize="18" FontWeight="SemiBold" Foreground="#FFE8EEF4"
+                           DockPanel.Dock="Left" />
+                <TextBlock Text="Esc close" FontSize="11" Foreground="#FF708090"
+                           DockPanel.Dock="Right" VerticalAlignment="Center" />
+            </DockPanel>
+            <TextBlock x:Name="NowPlayingText" Margin="0,4,0,2" FontSize="13" Foreground="#FFB8C4D0"
                        TextWrapping="Wrap" Text="(resolving now playing…)" />
-            <TextBlock x:Name="PathText" FontSize="11" Foreground="#FF708090" TextWrapping="Wrap" Margin="0,0,0,10" />
-            <TextBlock x:Name="StatusText" FontSize="12" Foreground="#FFF0C040" TextWrapping="Wrap" Margin="0,0,0,8"
-                       Visibility="Collapsed" />
-            <ItemsControl x:Name="PresetList">
+            <TextBlock x:Name="PathText" FontSize="11" Foreground="#FF708090" TextWrapping="Wrap" Margin="0,0,0,6" />
+            <TextBlock x:Name="CurrentTagsText" FontSize="12" Foreground="#FF7DCEA0" TextWrapping="Wrap"
+                       Margin="0,0,0,8" FontWeight="SemiBold"
+                       Text="Current: —" />
+            <TextBlock x:Name="StatusText" FontSize="12" Foreground="#FF2ECC71" TextWrapping="Wrap" Margin="0,0,0,8"
+                       Visibility="Collapsed" FontWeight="SemiBold" />
+            <ItemsControl x:Name="TagList">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border Margin="0,3" Padding="10,8" CornerRadius="6" Background="#FF1C2536" BorderBrush="#FF3A4A5C" BorderThickness="1">
+                        <Button Margin="0,3" Padding="10,8" Cursor="Hand"
+                                HorizontalContentAlignment="Stretch"
+                                Background="{Binding RowBackground}"
+                                BorderBrush="{Binding RowBorder}"
+                                BorderThickness="1"
+                                Click="TagButton_Click"
+                                Tag="{Binding Key}"
+                                ToolTip="{Binding ToolTip}">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                            CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="BorderBrush" Value="#FF2ECC71" />
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="#FF1A5C3A" />
+                                        </Trigger>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter TargetName="Bd" Property="Opacity" Value="0.55" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="36" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="{Binding Slot}" FontSize="18" FontWeight="Bold"
+                                <TextBlock Grid.Column="0" Text="{Binding Digit}" FontSize="18" FontWeight="Bold"
                                            Foreground="#FF2ECC71" VerticalAlignment="Center" />
-                                <StackPanel Grid.Column="1">
-                                    <TextBlock Text="{Binding Label}" FontSize="14" FontWeight="SemiBold" Foreground="#FFE8EEF4" />
-                                    <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="#FF90A0B0" TextWrapping="Wrap" />
-                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="{Binding Label}" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="#FFE8EEF4" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="2" Text="{Binding ActiveMark}" FontSize="12" FontWeight="Bold"
+                                           Foreground="#FF2ECC71" VerticalAlignment="Center" Margin="8,0,0,0" />
                             </Grid>
-                        </Border>
+                        </Button>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
-            <TextBlock Margin="0,10,0,0" FontSize="11" Foreground="#FF708090"
-                       Text="1–9 apply · Esc cancel" HorizontalAlignment="Center" />
+            <TextBlock Margin="0,10,0,0" FontSize="11" Foreground="#FF708090" TextWrapping="Wrap"
+                       Text="Click or 1–9 toggles tags · labels renamable · Esc to close"
+                       HorizontalAlignment="Center" />
         </StackPanel>
     </Border>
 </Window>

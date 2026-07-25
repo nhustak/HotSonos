@@ -29,6 +29,9 @@ public sealed class LibraryService : IDisposable
     private int _lastRemoved;
     private int _lastErrors;
 
+    private readonly object _pendingGate = new();
+    private readonly List<PendingTagWrite> _pendingTags = [];
+
     public LibraryService(
         Func<AppSettings> settings,
         Func<CancellationToken, Task<IReadOnlyList<string>>>? discoverRootsFromSonos = null,
@@ -41,6 +44,12 @@ public sealed class LibraryService : IDisposable
         _db = new LibraryDb(databasePath);
         _db.Open();
         LoadLastScanMeta();
+    }
+
+    /// <summary>Number of tag writes waiting for a locked file to free up.</summary>
+    public int PendingTagWriteCount
+    {
+        get { lock (_pendingGate) return _pendingTags.Count; }
     }
 
     public string DatabasePath => _db.DatabasePath;
@@ -179,8 +188,21 @@ public sealed class LibraryService : IDisposable
         }
     }
 
-    public IReadOnlyList<LibraryTrack> Search(string? query, int limit = 25, int offset = 0, bool sonosUnplayableOnly = false) =>
-        _db.Search(query, limit, offset, sonosUnplayableOnly);
+    public IReadOnlyList<LibraryTrack> Search(string? query, int limit = 25, int offset = 0, bool sonosUnplayableOnly = false)
+    {
+        var (field, term) = LibrarySearchQuery.Parse(query);
+        if (field == LibrarySearchField.Tags)
+        {
+            var s = _settings().EnsureShape();
+            var keys = s.NormalizeTagKeys(LibrarySearchQuery.SplitTagList(term));
+            // Unknown tag names → empty result (don't fall back to free-text).
+            if (keys.Count == 0 && !string.IsNullOrWhiteSpace(term))
+                return [];
+            return _db.Search(null, limit, offset, sonosUnplayableOnly, LibrarySearchField.Tags, keys);
+        }
+
+        return _db.Search(term, limit, offset, sonosUnplayableOnly, field);
+    }
 
     public LibraryTrack? GetTrack(string path) => _db.GetByPath(path);
 
@@ -190,49 +212,261 @@ public sealed class LibraryService : IDisposable
         _db.CountTracks() > 0 && _db.HasTracksMissingAudioProps();
 
     /// <summary>
-    /// Apply a configured tag preset (slot 1–9) to a path/URI under Sonos library roots.
+    /// Toggle or force one catalog tag key on a track's <c>HOTSONOS_TAGS</c> set.
+    /// <paramref name="forceEnable"/> null = toggle; true/false = select-all bulk on/off.
     /// </summary>
-    public TagWriteResult ApplyPreset(string path, int slot, bool dryRun = false, bool? updateMaster = null)
+    public TagWriteResult SetTagFlag(
+        string path,
+        string tagKey,
+        bool? forceEnable = null,
+        bool dryRun = false,
+        bool? updateMaster = null)
     {
-        var s = _settings().EnsureShape();
-        var preset = s.TagPresets.FirstOrDefault(p => p.Slot == slot);
-        if (preset is null)
+        tagKey = (tagKey ?? "").Trim().ToLowerInvariant();
+        if (tagKey.Length == 0)
         {
             return new TagWriteResult
             {
                 Ok = false,
                 Path = path ?? "",
-                Error = $"No tag preset in slot {slot}.",
-                Message = $"No tag preset in slot {slot}.",
+                Error = "tag key is required",
+                Message = "tag key is required",
+            };
+        }
+
+        var s = _settings().EnsureShape();
+        // Accept label or key; store catalog key only.
+        var resolved = s.ResolveTagToken(tagKey);
+        if (resolved is null)
+        {
+            return new TagWriteResult
+            {
+                Ok = false,
+                Path = path ?? "",
+                Error = $"Unknown tag “{tagKey}”.",
+                Message = $"Unknown tag “{tagKey}”.",
+            };
+        }
+
+        tagKey = resolved;
+        var def = s.FindTag(tagKey);
+        var label = def?.Label ?? tagKey;
+
+        var current = ResolveTrackForTags(path ?? "");
+        var set = s.NormalizeTagKeys(current?.TagKeys)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var has = set.Contains(tagKey);
+        bool present;
+        if (forceEnable is null)
+            present = !has; // toggle
+        else
+            present = forceEnable.Value;
+
+        if (present)
+            set.Add(tagKey);
+        else
+            set.Remove(tagKey);
+
+        if (present == has && forceEnable is not null)
+        {
+            return new TagWriteResult
+            {
+                Ok = true,
+                Path = current?.Path ?? path ?? "",
+                Message = present ? "Already on." : "Already off.",
+                Changes = [],
+                TrackAfter = current,
             };
         }
 
         var master = updateMaster ?? s.TagUpdateMasterDefault;
-        var result = SetTags(path, TrackTagUpdate.FromPreset(preset), dryRun, master);
-        if (result.Ok)
+        var keys = set.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+        var result = SetTags(path ?? "", new TrackTagUpdate { TagKeys = keys }, dryRun, master);
+        if (!result.Ok)
+            return result;
+
+        var verb = present ? "on" : "off";
+        var msg = result.Queued
+            ? $"Tag “{label}” {verb}: queued (file locked — will apply when free)"
+            : $"Tag “{label}” {verb}: {result.Message}";
+        return new TagWriteResult
         {
-            var msg = $"Preset {slot} “{preset.Label}”: {result.Message}";
-            return new TagWriteResult
+            Ok = result.Ok,
+            Path = result.Path,
+            DryRun = result.DryRun,
+            Message = msg,
+            Error = result.Error,
+            Changes = result.Changes,
+            TrackAfter = result.TrackAfter,
+            Queued = result.Queued,
+            FileLocked = result.FileLocked,
+            UpdateMasterRequested = result.UpdateMasterRequested,
+            MasterPath = result.MasterPath,
+            MasterMatchKind = result.MasterMatchKind,
+            MasterMessage = result.MasterMessage,
+            MasterChanges = result.MasterChanges,
+            MasterError = result.MasterError,
+            MasterWritten = result.MasterWritten,
+            MasterCandidates = result.MasterCandidates,
+        };
+    }
+
+    /// <summary>Human-readable current tags using the catalog for labels.</summary>
+    public static string FormatCurrentTags(LibraryTrack? track, AppSettings? settings)
+    {
+        if (track is null)
+            return "Current: (unknown)";
+        if (track.TagKeys.Count == 0)
+            return "Current: (none)";
+
+        settings?.EnsureShape();
+        var labels = settings is null
+            ? track.TagKeys
+            : settings.NormalizeTagKeys(track.TagKeys).Select(settings.TagLabel).Where(l => l.Length > 0);
+        var joined = string.Join(" · ", labels);
+        return string.IsNullOrEmpty(joined) ? "Current: (none)" : "Current: " + joined;
+    }
+
+    /// <summary>
+    /// One-time fix: map label-like tokens (slow/medium/…) to catalog keys, rewrite HOTSONOS_TAGS,
+    /// clear legacy HOTSONOS_TEMPO on each file and wipe DB tempo column. No ongoing tempo support.
+    /// </summary>
+    public TagPurgeResult MigrateLegacyTagTokens(bool? updateMaster = null, Action<int, int>? progress = null)
+    {
+        var s = _settings().EnsureShape();
+        var tracks = _db.FindTracksWithAnyTagData();
+        var master = updateMaster ?? s.TagUpdateMasterDefault;
+        var written = 0;
+        var queued = 0;
+        var failed = 0;
+        var total = tracks.Count;
+        var i = 0;
+        string? lastError = null;
+
+        foreach (var t in tracks)
+        {
+            i++;
+            progress?.Invoke(i, total);
+            if (string.IsNullOrWhiteSpace(t.Path))
+                continue;
+
+            // Map "medium"/"Slow"/… → catalog keys; drop unknowns. Always write so HOTSONOS_TEMPO is cleared.
+            var normalized = s.NormalizeTagKeys(t.TagKeys);
+            var result = SetTags(t.Path, new TrackTagUpdate { TagKeys = normalized }, dryRun: false, updateMaster: master);
+            if (!result.Ok)
             {
-                Ok = result.Ok,
-                Path = result.Path,
-                DryRun = result.DryRun,
-                Message = msg,
-                Error = result.Error,
-                Changes = result.Changes,
-                TrackAfter = result.TrackAfter,
-                UpdateMasterRequested = result.UpdateMasterRequested,
-                MasterPath = result.MasterPath,
-                MasterMatchKind = result.MasterMatchKind,
-                MasterMessage = result.MasterMessage,
-                MasterChanges = result.MasterChanges,
-                MasterError = result.MasterError,
-                MasterWritten = result.MasterWritten,
-                MasterCandidates = result.MasterCandidates,
-            };
+                failed++;
+                lastError = result.Error ?? result.Message;
+                // Still clean cache row if file write failed.
+                try
+                {
+                    t.TagKeys = normalized;
+                    _db.UpsertTracks([t]);
+                }
+                catch { /* ignore */ }
+                continue;
+            }
+
+            if (result.Queued)
+                queued++;
+            else
+                written++;
         }
 
-        return result;
+        try
+        {
+            var cleared = _db.ClearLegacyTempoColumn();
+            if (cleared > 0)
+                AppLog.Info($"Cleared legacy tempo column on {cleared} cache row(s).");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Clear legacy tempo column failed", ex);
+        }
+
+        var msg =
+            $"Tag migrate (no tempo): {written} written, {queued} queued, {failed} failed ({total} tracks with tag data).";
+        AppLog.Info(msg + (lastError is null ? "" : " lastError=" + lastError));
+        return new TagPurgeResult
+        {
+            Ok = failed == 0,
+            Matched = total,
+            Written = written,
+            Queued = queued,
+            Failed = failed,
+            Message = msg,
+            LastError = lastError,
+        };
+    }
+
+    /// <summary>
+    /// Strip one tag key from every cached track that has it (writes files + updates cache).
+    /// Locked files are queued like normal tag writes.
+    /// </summary>
+    public TagPurgeResult PurgeTagKey(string tagKey, bool? updateMaster = null, Action<int, int>? progress = null)
+    {
+        tagKey = (tagKey ?? "").Trim().ToLowerInvariant();
+        if (tagKey.Length == 0)
+            return new TagPurgeResult { Message = "tag key is required" };
+
+        var tracks = _db.FindTracksPossiblyWithTagKey(tagKey);
+        var master = updateMaster ?? _settings().EnsureShape().TagUpdateMasterDefault;
+        var written = 0;
+        var queued = 0;
+        var failed = 0;
+        var total = tracks.Count;
+        var i = 0;
+        string? lastError = null;
+
+        foreach (var t in tracks)
+        {
+            i++;
+            progress?.Invoke(i, total);
+            if (string.IsNullOrWhiteSpace(t.Path))
+                continue;
+
+            var result = SetTagFlag(t.Path, tagKey, forceEnable: false, dryRun: false, updateMaster: master);
+            if (!result.Ok)
+            {
+                failed++;
+                lastError = result.Error ?? result.Message;
+                continue;
+            }
+
+            if (result.Queued)
+                queued++;
+            else
+                written++;
+        }
+
+        var msg = total == 0
+            ? "No tracks in cache had this tag."
+            : failed == 0
+                ? (queued > 0
+                    ? $"Removed from {written} file(s), {queued} queued (locked)."
+                    : $"Removed from {written} file(s).")
+                : $"Removed from {written}, queued {queued}, failed {failed}. {lastError}";
+
+        AppLog.Info($"Purge tag key {tagKey}: matched={total} written={written} queued={queued} failed={failed}");
+        return new TagPurgeResult
+        {
+            Ok = failed == 0,
+            Matched = total,
+            Written = written,
+            Queued = queued,
+            Failed = failed,
+            Message = msg,
+            LastError = lastError,
+        };
+    }
+
+    private LibraryTrack? ResolveTrackForTags(string path)
+    {
+        path = path.Trim();
+        return _db.GetByPath(path)
+               ?? _db.FindBySonosUriOrUnc(path)
+               ?? null;
     }
 
     /// <summary>
@@ -248,6 +482,22 @@ public sealed class LibraryService : IDisposable
 
         path = path.Trim();
         var s = _settings().EnsureShape();
+        // Always store catalog keys only (never labels / legacy tempo tokens).
+        if (update.TagKeys is not null)
+        {
+            update = new TrackTagUpdate
+            {
+                TagKeys = s.NormalizeTagKeys(update.TagKeys),
+                Title = update.Title,
+                Artist = update.Artist,
+                Album = update.Album,
+                Genre = update.Genre,
+                TrackNumber = update.TrackNumber,
+                Year = update.Year,
+                Bpm = update.Bpm,
+            };
+        }
+
         var roots = s.SonosLibraryRoots;
         if (roots.Count == 0)
             return new TagWriteResult
@@ -280,6 +530,24 @@ public sealed class LibraryService : IDisposable
 
         var root = roots.First(r => IsUnderRoot(fullPath, r));
         var result = LibraryTagWriter.Write(fullPath, update, dryRun, root);
+
+        // Playing track is often locked by Sonos/SMB — queue and retry when free.
+        if (!result.Ok && result.FileLocked && !dryRun)
+        {
+            EnqueuePendingTag(fullPath, update, updateMaster, label: null);
+            return new TagWriteResult
+            {
+                Ok = true,
+                Path = fullPath,
+                DryRun = false,
+                Queued = true,
+                FileLocked = true,
+                Message =
+                    "File is in use (likely playing on Sonos). Tag write queued — will apply when the file is free.",
+                Changes = [],
+                UpdateMasterRequested = updateMaster,
+            };
+        }
 
         LibraryTrack? trackAfter = result.TrackAfter;
         if (result.Ok && !result.DryRun)
@@ -715,6 +983,146 @@ public sealed class LibraryService : IDisposable
         {
             AppLog.Warn("Library meta load failed", ex);
         }
+    }
+
+    private void EnqueuePendingTag(string fullPath, TrackTagUpdate update, bool updateMaster, string? label)
+    {
+        lock (_pendingGate)
+        {
+            var existing = _pendingTags.FirstOrDefault(p =>
+                string.Equals(p.Path, fullPath, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                existing.Update = MergeTagUpdates(existing.Update, update);
+                existing.UpdateMaster = existing.UpdateMaster || updateMaster;
+                if (!string.IsNullOrWhiteSpace(label))
+                    existing.Label = label;
+            }
+            else
+            {
+                if (_pendingTags.Count >= 64)
+                    _pendingTags.RemoveAt(0);
+                _pendingTags.Add(new PendingTagWrite
+                {
+                    Path = fullPath,
+                    Update = update,
+                    UpdateMaster = updateMaster,
+                    Label = label,
+                    QueuedUtc = DateTime.UtcNow,
+                });
+            }
+        }
+
+        AppLog.Info($"Tag write queued (file locked): {fullPath}");
+    }
+
+    /// <summary>
+    /// Retry deferred tag writes (call on track change / timer). Returns how many succeeded.
+    /// Does not re-queue into itself when still locked — puts the item back on the list.
+    /// </summary>
+    public int ProcessPendingTagWrites()
+    {
+        List<PendingTagWrite> snapshot;
+        lock (_pendingGate)
+            snapshot = _pendingTags.ToList();
+
+        if (snapshot.Count == 0)
+            return 0;
+
+        var done = 0;
+        foreach (var item in snapshot)
+        {
+            lock (_pendingGate)
+                _pendingTags.RemoveAll(p => string.Equals(p.Path, item.Path, StringComparison.OrdinalIgnoreCase));
+
+            var s = _settings().EnsureShape();
+            var roots = s.SonosLibraryRoots;
+            if (roots.Count == 0 || !IsUnderAnyRoot(item.Path, roots))
+            {
+                AppLog.Warn($"Pending tag write dropped (not under roots): {item.Path}");
+                continue;
+            }
+
+            var root = roots.First(r => IsUnderRoot(item.Path, r));
+            var write = LibraryTagWriter.Write(item.Path, item.Update, dryRun: false, root);
+            if (write.FileLocked || (!write.Ok && LibraryTagWriter.IsFileLockException(new IOException(write.Error ?? ""))))
+            {
+                EnqueuePendingTag(item.Path, item.Update, item.UpdateMaster, item.Label);
+                continue;
+            }
+
+            if (!write.Ok)
+            {
+                AppLog.Warn($"Pending tag write failed: {item.Path} — {write.Error}");
+                continue;
+            }
+
+            var trackAfter = write.TrackAfter ?? LibraryTagReader.TryRead(item.Path, root, DateTime.UtcNow);
+            if (trackAfter is not null)
+            {
+                var cached = _db.GetByPath(item.Path);
+                trackAfter.MasterPath = cached?.MasterPath ?? trackAfter.MasterPath;
+                try { _db.UpsertTracks([trackAfter]); }
+                catch (Exception ex) { AppLog.Warn("Cache refresh after pending tag failed", ex); }
+            }
+
+            if (item.UpdateMaster)
+            {
+                // Master dual-write only (Sonos file already written). Reuse SetTags path with
+                // a no-op-ish second pass: write again (usually no changes) + master match.
+                // Prefer direct matcher write to avoid re-queue if Sonos file somehow locks again.
+                try
+                {
+                    var match = LibraryMasterMatcher.Find(
+                        trackAfter ?? _db.GetByPath(item.Path),
+                        s.MasterLibraryRoot,
+                        trackAfter?.MasterPath ?? _db.GetByPath(item.Path)?.MasterPath);
+                    if (match.Found && match.Path is not null)
+                    {
+                        var mw = LibraryTagWriter.Write(match.Path, item.Update, dryRun: false, rootForRescan: null);
+                        if (mw.Ok && !mw.DryRun)
+                        {
+                            try { _db.SetMasterPath(item.Path, match.Path); } catch { /* ignore */ }
+                            AppLog.Info($"Pending master dual-write: {match.Path}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Pending master dual-write failed", ex);
+                }
+            }
+
+            done++;
+            AppLog.Info($"Pending tag write applied: {item.Path} ({string.Join("; ", write.Changes)})");
+        }
+
+        return done;
+    }
+
+    private static TrackTagUpdate MergeTagUpdates(TrackTagUpdate a, TrackTagUpdate b)
+    {
+        // Later update wins for TagKeys (full set replacement).
+        return new TrackTagUpdate
+        {
+            TagKeys = b.TagKeys ?? a.TagKeys,
+            Title = b.Title ?? a.Title,
+            Artist = b.Artist ?? a.Artist,
+            Album = b.Album ?? a.Album,
+            Genre = b.Genre ?? a.Genre,
+            TrackNumber = b.TrackNumber ?? a.TrackNumber,
+            Year = b.Year ?? a.Year,
+            Bpm = b.Bpm ?? a.Bpm,
+        };
+    }
+
+    private sealed class PendingTagWrite
+    {
+        public required string Path { get; init; }
+        public required TrackTagUpdate Update { get; set; }
+        public bool UpdateMaster { get; set; }
+        public string? Label { get; set; }
+        public DateTime QueuedUtc { get; set; }
     }
 
     public void Dispose()

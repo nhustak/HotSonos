@@ -331,9 +331,9 @@ public sealed class HotSonosDebugTools
         }, category: "library");
 
     [McpServerTool(Name = "library_search")]
-    [Description("Search library cache (title/artist/album/genre/tempo/codec/path). Includes bit depth, sample rate, bitrate, SonosPlayable heuristic. Max 200.")]
+    [Description("Search library cache. Default: title/artist/album/genre/tags/path. Prefixes (one only): T: title, A: artist, TG: tags (all must match), F: format (codec/extension). Max 200.")]
     public string LibrarySearch(
-        [Description("Substring match; empty = browse")] string? query = null,
+        [Description("Substring or T:/A:/TG:/F: restricted query; empty = browse")] string? query = null,
         [Description("Max rows (default 25, max 200)")] int limit = 25,
         [Description("Offset for paging")] int offset = 0,
         [Description("If true, only tracks flagged as outside Sonos local-library format limits")] bool sonosUnplayableOnly = false) =>
@@ -343,6 +343,7 @@ public sealed class HotSonosDebugTools
             if (lib is null)
                 return JsonSerializer.Serialize(new { ok = false, error = "Library service not available." }, JsonOptions);
 
+            var s = _state.Settings().EnsureShape();
             limit = Math.Clamp(limit, 1, 200);
             offset = Math.Max(0, offset);
             var tracks = lib.Search(query, limit, offset, sonosUnplayableOnly);
@@ -368,7 +369,8 @@ public sealed class HotSonosDebugTools
                     t.TrackNumber,
                     t.Year,
                     t.DurationMs,
-                    t.Tempo,
+                    tagKeys = t.TagKeys,
+                    tagsLabel = t.FormatTagLabels(k => s.TagLabel(k)),
                     t.Bpm,
                     t.Codec,
                     t.SampleRateHz,
@@ -444,47 +446,106 @@ public sealed class HotSonosDebugTools
             }, JsonOptions);
         }, category: "library");
 
-    [McpServerTool(Name = "list_tag_presets")]
-    [Description("List configured quick-tag presets (slots 1–9) and custom tag definitions.")]
-    public string ListTagPresets() =>
-        McpActivityLog.Run("list_tag_presets", null, () =>
+    [McpServerTool(Name = "list_tags")]
+    [Description("List the flat tag catalog (opaque keys + renamable labels). Files store only keys in HOTSONOS_TAGS.")]
+    public string ListTags() =>
+        McpActivityLog.Run("list_tags", null, () =>
         {
             var s = _state.Settings().EnsureShape();
             return JsonSerializer.Serialize(new
             {
                 ok = true,
                 updateMasterDefault = s.TagUpdateMasterDefault,
-                definitions = s.CustomTagDefinitions.Select(d => new
-                {
-                    d.Id,
-                    d.Label,
-                    d.StorageKey,
-                    d.Multi,
-                }),
-                presets = s.TagPresets.Select(p => new
-                {
-                    p.Slot,
-                    p.Label,
-                    set = p.Set,
-                    summary = p.Summary,
-                }),
+                tags = s.Tags.Select(t => new { t.Key, t.Label }),
             }, JsonOptions);
         }, category: "library");
 
-    [McpServerTool(Name = "track_apply_preset")]
-    [Description("Apply a quick-tag preset (slot 1–9) to a Sonos-library track path. Writes HOTSONOS_* fields into the file and updates cache; optional master dual-write.")]
-    public string TrackApplyPreset(
+    [McpServerTool(Name = "tag_create")]
+    [Description("Create a catalog tag with a fresh auto-generated key. Label is display-only.")]
+    public string TagCreate(
+        [Description("User-facing label")] string label) =>
+        McpActivityLog.Run("tag_create", new { label }, () =>
+        {
+            var s = _state.Settings().EnsureShape();
+            var tag = s.AddTag(label);
+            if (tag is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "Label is required." }, JsonOptions);
+            try { _state.PersistSettings?.Invoke(); }
+            catch { /* best effort */ }
+            return JsonSerializer.Serialize(new { ok = true, tag = new { tag.Key, tag.Label } }, JsonOptions);
+        }, category: "library");
+
+    [McpServerTool(Name = "tag_rename")]
+    [Description("Rename a catalog tag label by key. Files keep the same key — no rewrite.")]
+    public string TagRename(
+        [Description("Opaque tag key")] string key,
+        [Description("New display label")] string label) =>
+        McpActivityLog.Run("tag_rename", new { key, label }, () =>
+        {
+            var s = _state.Settings().EnsureShape();
+            if (!s.RenameTag(key, label))
+                return JsonSerializer.Serialize(new { ok = false, error = "Unknown key or empty label." }, JsonOptions);
+            try { _state.PersistSettings?.Invoke(); }
+            catch { /* best effort */ }
+            var t = s.FindTag(key);
+            return JsonSerializer.Serialize(new { ok = true, tag = t is null ? null : new { t.Key, t.Label } }, JsonOptions);
+        }, category: "library");
+
+    [McpServerTool(Name = "tag_delete")]
+    [Description("Delete a catalog tag and strip its key from every library track that has it (writes HOTSONOS_TAGS).")]
+    public string TagDelete(
+        [Description("Opaque tag key from list_tags")] string key,
+        [Description("Dual-write master when configured (default: settings)")] bool? updateMaster = null) =>
+        McpActivityLog.Run("tag_delete", new { key, updateMaster }, () =>
+        {
+            var s = _state.Settings().EnsureShape();
+            var def = s.FindTag(key);
+            var label = def?.Label ?? key;
+            TagPurgeResult? purge = null;
+            var lib = _state.Library;
+            if (lib is not null)
+                purge = lib.PurgeTagKey(key, updateMaster);
+
+            if (!s.RemoveTag(key) && def is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "Unknown tag key.", purge }, JsonOptions);
+
+            try { _state.PersistSettings?.Invoke(); }
+            catch { /* best effort */ }
+
+            return JsonSerializer.Serialize(new
+            {
+                ok = purge?.Ok != false,
+                deleted = label,
+                key,
+                purge = purge is null
+                    ? null
+                    : new
+                    {
+                        purge.Matched,
+                        purge.Written,
+                        purge.Queued,
+                        purge.Failed,
+                        purge.Message,
+                    },
+            }, JsonOptions);
+        }, category: "library");
+
+    [McpServerTool(Name = "track_toggle_tag")]
+    [Description("Toggle or force one catalog tag on a track (writes HOTSONOS_TAGS keys). forceEnable null=toggle, true/false=on/off.")]
+    public string TrackToggleTag(
         [Description("Absolute/UNC path (or Sonos URI) to the track")] string path,
-        [Description("Preset slot number 1–9")] int slot,
+        [Description("Opaque tag key from list_tags")] string key,
+        [Description("null=toggle; true=force on; false=force off")] bool? forceEnable = null,
         [Description("If true, preview only")] bool dryRun = false,
-        [Description("Dual-write to master twin when configured (default: settings TagUpdateMasterDefault)")] bool? updateMaster = null) =>
-        McpActivityLog.Run("track_apply_preset", new { path, slot, dryRun, updateMaster }, () =>
+        [Description("Dual-write master when configured")] bool? updateMaster = null) =>
+        McpActivityLog.Run("track_toggle_tag", new { path, key, forceEnable, dryRun, updateMaster }, () =>
         {
             var lib = _state.Library;
             if (lib is null)
                 return JsonSerializer.Serialize(new { ok = false, error = "Library service not available." }, JsonOptions);
 
-            var result = lib.ApplyPreset(path, slot, dryRun, updateMaster);
+            var s = _state.Settings().EnsureShape();
+            var result = lib.SetTagFlag(path, key, forceEnable, dryRun, updateMaster);
             return JsonSerializer.Serialize(new
             {
                 ok = result.Ok,
@@ -493,6 +554,7 @@ public sealed class HotSonosDebugTools
                 message = result.Message,
                 error = result.Error,
                 changes = result.Changes,
+                queued = result.Queued,
                 master = new
                 {
                     path = result.MasterPath,
@@ -506,18 +568,17 @@ public sealed class HotSonosDebugTools
                     result.TrackAfter.Path,
                     result.TrackAfter.Title,
                     result.TrackAfter.Artist,
-                    result.TrackAfter.Tempo,
-                    result.TrackAfter.CustomTags,
-                    result.TrackAfter.CustomTagsLabel,
+                    tagKeys = result.TrackAfter.TagKeys,
+                    tagsLabel = result.TrackAfter.FormatTagLabels(k => s.TagLabel(k)),
                 },
             }, JsonOptions);
         }, category: "library");
 
     [McpServerTool(Name = "track_set_tags")]
-    [Description("Write tags into a FLAC/MP3 on the Sonos library share (HOTSONOS_TEMPO and/or standard fields). Optionally dual-writes the same tags to a matched master twin (updateMaster, default true). dryRun=true previews both.")]
+    [Description("Replace HOTSONOS_TAGS key set and/or standard metadata fields on a Sonos-library track. tagKeys null=leave; empty array=clear all HotSonos tags.")]
     public string TrackSetTags(
         [Description("Absolute/UNC path to the audio file (same as library_search path)")] string path,
-        [Description("slow | medium | fast, or empty string to clear HOTSONOS_TEMPO")] string? tempo = null,
+        [Description("Full replacement list of opaque tag keys (null = leave HOTSONOS_TAGS unchanged)")] string[]? tagKeys = null,
         [Description("Title (null = leave unchanged)")] string? title = null,
         [Description("Artist (null = leave unchanged)")] string? artist = null,
         [Description("Album (null = leave unchanged)")] string? album = null,
@@ -527,17 +588,16 @@ public sealed class HotSonosDebugTools
         [Description("BPM (null = leave unchanged)")] double? bpm = null,
         [Description("If true, do not write the file — return planned changes only")] bool dryRun = false,
         [Description("If true (default), also write the same tags to a matched master twin when MasterLibraryRoot is set")] bool updateMaster = true) =>
-        McpActivityLog.Run("track_set_tags", new { path, tempo, title, artist, album, genre, trackNumber, year, bpm, dryRun, updateMaster }, () =>
+        McpActivityLog.Run("track_set_tags", new { path, tagKeys, title, artist, album, genre, trackNumber, year, bpm, dryRun, updateMaster }, () =>
         {
             var lib = _state.Library;
             if (lib is null)
                 return JsonSerializer.Serialize(new { ok = false, error = "Library service not available." }, JsonOptions);
 
-            // Only pass fields that were explicitly intended: MCP may send default nulls.
-            // Convention: any non-null string (including "") is intentional; tempo "" clears.
+            var s = _state.Settings().EnsureShape();
             var update = new TrackTagUpdate
             {
-                Tempo = tempo,
+                TagKeys = tagKeys,
                 Title = title,
                 Artist = artist,
                 Album = album,
@@ -547,7 +607,6 @@ public sealed class HotSonosDebugTools
                 Bpm = bpm,
             };
 
-            // If caller only wants dry-run probe with no fields, still call for validation.
             var result = lib.SetTags(path, update, dryRun, updateMaster);
             return JsonSerializer.Serialize(new
             {
@@ -577,7 +636,8 @@ public sealed class HotSonosDebugTools
                     result.TrackAfter.Genre,
                     result.TrackAfter.TrackNumber,
                     result.TrackAfter.Year,
-                    result.TrackAfter.Tempo,
+                    tagKeys = result.TrackAfter.TagKeys,
+                    tagsLabel = result.TrackAfter.FormatTagLabels(k => s.TagLabel(k)),
                     result.TrackAfter.Bpm,
                     result.TrackAfter.MasterPath,
                     result.TrackAfter.AudioFormatLabel,

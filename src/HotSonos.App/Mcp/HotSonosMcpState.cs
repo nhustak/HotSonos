@@ -28,4 +28,7 @@ public sealed class HotSonosMcpState
 
     public string Endpoint { get; set; } = "";
     public bool IsRunning { get; set; }
+
+    /// <summary>Persist settings after catalog edits from MCP (tag create/rename).</summary>
+    public Action? PersistSettings { get; set; }
 }

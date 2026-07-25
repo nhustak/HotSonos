@@ -123,18 +123,18 @@ public sealed class AppSettings
     /// </summary>
     public string? MasterLibraryRoot { get; set; }
 
-    // ---- Custom tags / quick-tag presets -----------------------------------
+    // ---- Tags (flat catalog; keys on files, labels in settings) ------------
 
-    /// <summary>Declared HOTSONOS_* dimensions (beyond built-in tempo).</summary>
-    public List<CustomTagDefinition> CustomTagDefinitions { get; set; } = [];
-
-    /// <summary>Quick-tag slots 1–9 (overlay digit keys + library context menu).</summary>
-    public List<TagPreset> TagPresets { get; set; } = [];
+    /// <summary>
+    /// User tag catalog. Files store only <see cref="TagDefinition.Key"/> in <c>HOTSONOS_TAGS</c>;
+    /// labels live here and can be renamed without rewriting files.
+    /// </summary>
+    public List<TagDefinition> Tags { get; set; } = [];
 
     /// <summary>Global hotkey that opens the quick-tag overlay for the playing track.</summary>
     public HotkeyConfig QuickTag { get; set; } = new();
 
-    /// <summary>When true, quick-tag / library preset apply also dual-writes to master when linked.</summary>
+    /// <summary>When true, tag writes also dual-write to master when linked.</summary>
     public bool TagUpdateMasterDefault { get; set; } = true;
 
     // ---- Library shuffle / play history ------------------------------------
@@ -253,50 +253,156 @@ public sealed class AppSettings
         return this;
     }
 
-    /// <summary>Seeds default definitions + presets when missing; cleans slots to 1–9.</summary>
+    /// <summary>Normalizes the flat tag catalog; seeds starter tags when empty.</summary>
     public void EnsureTagCatalog()
     {
-        CustomTagDefinitions ??= [];
-        TagPresets ??= [];
+        Tags ??= [];
 
-        if (CustomTagDefinitions.Count == 0)
+        // Drop invalid entries; generate keys if somehow missing.
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var cleaned = new List<TagDefinition>();
+        foreach (var t in Tags)
         {
-            CustomTagDefinitions =
-            [
-                new CustomTagDefinition { Id = "lane", Label = "Lane", StorageKey = "HOTSONOS_LANE" },
-                new CustomTagDefinition { Id = "mood", Label = "Mood", StorageKey = "HOTSONOS_MOOD" },
-            ];
+            var label = (t.Label ?? "").Trim();
+            if (label.Length == 0)
+                continue;
+            var key = (t.Key ?? "").Trim().ToLowerInvariant();
+            if (key.Length == 0 || !IsValidTagKey(key) || used.Contains(key))
+                key = NewTagKey(used);
+            used.Add(key);
+            cleaned.Add(new TagDefinition { Key = key, Label = label });
         }
 
-        if (TagPresets.Count == 0)
-        {
-            TagPresets =
-            [
-                new TagPreset { Slot = 1, Label = "Slow", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "slow" } },
-                new TagPreset { Slot = 2, Label = "Medium", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "medium" } },
-                new TagPreset { Slot = 3, Label = "Fast", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "fast" } },
-                new TagPreset { Slot = 4, Label = "Dinner", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "slow", ["HOTSONOS_LANE"] = "dinner" } },
-                new TagPreset { Slot = 5, Label = "Drive", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "fast", ["HOTSONOS_LANE"] = "drive" } },
-                new TagPreset { Slot = 6, Label = "Focus", Set = new(StringComparer.OrdinalIgnoreCase) { ["HOTSONOS_TEMPO"] = "medium", ["HOTSONOS_LANE"] = "focus" } },
-            ];
-        }
+        Tags = cleaned;
 
-        // Normalize presets
-        foreach (var p in TagPresets)
+        if (Tags.Count == 0)
         {
-            p.Label = string.IsNullOrWhiteSpace(p.Label) ? $"Slot {p.Slot}" : p.Label.Trim();
-            p.Set ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            // Rebuild with ordinal-ignore comparer
-            p.Set = new Dictionary<string, string>(p.Set, StringComparer.OrdinalIgnoreCase);
+            // Starter set only — all are plain tags (no kinds). User can rename/delete.
+            foreach (var label in new[] { "Slow", "Medium", "Fast", "Dinner", "Drive", "Focus" })
+                Tags.Add(new TagDefinition { Key = NewTagKey(used), Label = label });
         }
-
-        TagPresets = TagPresets
-            .Where(p => p.Slot is >= 1 and <= 9)
-            .GroupBy(p => p.Slot)
-            .Select(g => g.First())
-            .OrderBy(p => p.Slot)
-            .ToList();
     }
+
+    /// <summary>Add a tag with a fresh auto key. Returns null if label empty.</summary>
+    public TagDefinition? AddTag(string label)
+    {
+        label = (label ?? "").Trim();
+        if (label.Length == 0)
+            return null;
+        EnsureTagCatalog();
+        var used = new HashSet<string>(Tags.Select(t => t.Key), StringComparer.OrdinalIgnoreCase);
+        var tag = new TagDefinition { Key = NewTagKey(used), Label = label };
+        Tags.Add(tag);
+        return tag;
+    }
+
+    /// <summary>Rename by key; files unchanged. Returns false if key unknown or label empty.</summary>
+    public bool RenameTag(string key, string newLabel)
+    {
+        newLabel = (newLabel ?? "").Trim();
+        if (newLabel.Length == 0 || string.IsNullOrWhiteSpace(key))
+            return false;
+        EnsureTagCatalog();
+        var tag = Tags.FirstOrDefault(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (tag is null)
+            return false;
+        tag.Label = newLabel;
+        return true;
+    }
+
+    /// <summary>Remove from catalog only (file keys remain until rewritten).</summary>
+    public bool RemoveTag(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return false;
+        EnsureTagCatalog();
+        var n = Tags.RemoveAll(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase));
+        return n > 0;
+    }
+
+    /// <summary>Reorder catalog (affects Library / quick-tag chip order and keys 1–9).</summary>
+    public bool MoveTag(string key, int delta)
+    {
+        if (string.IsNullOrWhiteSpace(key) || delta == 0)
+            return false;
+        EnsureTagCatalog();
+        var i = Tags.FindIndex(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (i < 0)
+            return false;
+        var j = i + delta;
+        if (j < 0 || j >= Tags.Count)
+            return false;
+        (Tags[i], Tags[j]) = (Tags[j], Tags[i]);
+        return true;
+    }
+
+    public TagDefinition? FindTag(string key) =>
+        Tags.FirstOrDefault(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase));
+
+    public string TagLabel(string key) =>
+        FindTag(key)?.Label ?? "";
+
+    /// <summary>
+    /// Map a token to a catalog key: exact key, else label match (e.g. "medium" → Medium's id).
+    /// Returns null if unknown (caller drops it — no tempo/legacy leftovers in UI).
+    /// </summary>
+    public string? ResolveTagToken(string? token)
+    {
+        token = (token ?? "").Trim();
+        if (token.Length == 0)
+            return null;
+        EnsureTagCatalog();
+        var byKey = FindTag(token);
+        if (byKey is not null)
+            return byKey.Key;
+        var byLabel = Tags.FirstOrDefault(t =>
+            string.Equals(t.Label, token, StringComparison.OrdinalIgnoreCase));
+        return byLabel?.Key;
+    }
+
+    /// <summary>Rewrite mixed key/label tokens to catalog keys; drop unknowns.</summary>
+    public List<string> NormalizeTagKeys(IEnumerable<string>? tokens)
+    {
+        EnsureTagCatalog();
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (tokens is null)
+            return result;
+        foreach (var raw in tokens)
+        {
+            var key = ResolveTagToken(raw);
+            if (key is null || !seen.Add(key))
+                continue;
+            result.Add(key);
+        }
+
+        return result;
+    }
+
+    /// <summary>8-char lowercase hex; unique within <paramref name="used"/>.</summary>
+    public static string NewTagKey(ISet<string>? used = null)
+    {
+        used ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < 32; i++)
+        {
+            var key = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(4))
+                .ToLowerInvariant();
+            if (!used.Contains(key))
+            {
+                used.Add(key);
+                return key;
+            }
+        }
+
+        // Extremely unlikely fallback
+        var fallback = Guid.NewGuid().ToString("N")[..8];
+        used.Add(fallback);
+        return fallback;
+    }
+
+    public static bool IsValidTagKey(string key) =>
+        key.Length is >= 4 and <= 32
+        && key.All(c => char.IsAsciiLetterOrDigit(c));
 
     /// <summary>Sensible first-run defaults: Ctrl+Alt chords that rarely collide.</summary>
     public static AppSettings CreateDefault() => new AppSettings

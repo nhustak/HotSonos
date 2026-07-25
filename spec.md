@@ -16,9 +16,9 @@
 | Item | State |
 |------|--------|
 | **Git HEAD** | See git log — step 4 shipped; quick-tag / custom tags in progress |
-| **App version** | `1.0.0.10` |
+| **App version** | `1.0.0.18` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
-| **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Wake · Options · MCP Debug |
+| **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug |
 | **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** on this PC |
 | **Library DB** | `%LocalAppData%\HotSonos\library.db`; `master_path` + `custom_tags` JSON |
 
@@ -29,9 +29,9 @@
 | **1. Config: Sonos library root(s) + optional master root** | **DONE** | Settings + MCP; discover from Sonos |
 | **2. Scanner → SQLite cache (FLAC/MP3 tags)** | **DONE** | TagLib read; rescan/search |
 | **2b. Audio props + Sonos-unplayable flag** | **DONE** | Format heuristic + UI/MCP filter |
-| **3. Read/write `HOTSONOS_TEMPO` (+ standard fields)** | **DONE** | `LibraryTagWriter`; MCP `track_set_tags` |
+| **3. Read/write tags (+ standard fields)** | **DONE** | Flat tags → `HOTSONOS_TAGS` keys; MCP `track_toggle_tag` / `track_set_tags` |
 | **4. Master match + optional dual write** | **DONE** | `LibraryMasterMatcher`; `updateMaster`; find/link master |
-| **4b. Custom tags + presets + quick-tag overlay** | **DONE (this task)** | HOTSONOS_* fields; presets 1–9; Ctrl+Alt+T overlay; library context menu; MCP apply preset |
+| **4b. Flat tag catalog + quick-tag** | **DONE** | Catalog `Tags` (auto key + label); no kinds/presets; Library chips + Ctrl+Alt+T; rename label without file rewrite |
 | **5. MCP polish** | Partial | search/get/set_tags/master/presets shipped |
 | **6. Playlist create from filter + play on Sonos** | **NEXT** | After multi-tag filters are in daily use |
 | **7. Optional Sonos `SQ:` create** | Pending | |

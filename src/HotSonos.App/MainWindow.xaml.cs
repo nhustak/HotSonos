@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Windows;
@@ -94,22 +95,31 @@ public partial class MainWindow : Window
         Closed += OnClosed;
     }
 
-    /// <summary>Select Settings, Library, or MCP Debug tab by name.</summary>
+    /// <summary>Select Settings, Library, Tags, or MCP Debug tab by name.</summary>
     public void SelectTab(string tab)
     {
         if (string.Equals(tab, "library", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = LibraryTab;
+        else if (string.Equals(tab, "tags", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "tag", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedItem = TagsTab;
         else if (string.Equals(tab, "mcp", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "mcp debug", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = McpTab;
         else if (string.Equals(tab, "shuffle", StringComparison.OrdinalIgnoreCase))
-            MainTabs.SelectedIndex = 2;
+            MainTabs.SelectedItem = MainTabs.Items.OfType<TabItem>()
+                .FirstOrDefault(t => string.Equals(t.Header?.ToString(), "Shuffle", StringComparison.OrdinalIgnoreCase))
+                ?? MainTabs.Items[2] as TabItem;
         else if (string.Equals(tab, "hotkeys", StringComparison.OrdinalIgnoreCase))
-            MainTabs.SelectedIndex = 1;
+            MainTabs.SelectedItem = MainTabs.Items.OfType<TabItem>()
+                .FirstOrDefault(t => string.Equals(t.Header?.ToString(), "Hotkeys", StringComparison.OrdinalIgnoreCase))
+                ?? MainTabs.Items[1] as TabItem;
         else if (string.Equals(tab, "wake", StringComparison.OrdinalIgnoreCase))
-            MainTabs.SelectedIndex = 4;
+            MainTabs.SelectedItem = MainTabs.Items.OfType<TabItem>()
+                .FirstOrDefault(t => string.Equals(t.Header?.ToString(), "Wake", StringComparison.OrdinalIgnoreCase));
         else if (string.Equals(tab, "options", StringComparison.OrdinalIgnoreCase))
-            MainTabs.SelectedIndex = 5;
+            MainTabs.SelectedItem = MainTabs.Items.OfType<TabItem>()
+                .FirstOrDefault(t => string.Equals(t.Header?.ToString(), "Options", StringComparison.OrdinalIgnoreCase));
         else
             MainTabs.SelectedItem = ControlTab; // Control / Settings default
     }
@@ -217,6 +227,8 @@ public partial class MainWindow : Window
         LoadWakeUiFromSettings();
         LoadStartupPreference();
         RefreshLibraryStatusUi();
+        RebuildLibraryPresetButtons();
+        RefreshTagsCatalogGrid();
         StartLibraryStatusTimer();
         HookMcpActivityUi();
         RefreshMcpEndpointUi();
@@ -316,6 +328,13 @@ public partial class MainWindow : Window
     private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_loaded) return;
+        // SelectionChanged bubbles from every ComboBox/DataGrid inside tabs.
+        // Only react when the left TabControl itself changed pages — otherwise
+        // e.g. TagsCatalogGrid selection re-enters RefreshTagsCatalogGrid forever
+        // (System.StackOverflowException / process dies, tray gone).
+        if (!ReferenceEquals(e.OriginalSource, MainTabs))
+            return;
+
         if (MainTabs.SelectedItem == McpTab)
         {
             RefreshMcpEndpointUi();
@@ -323,6 +342,8 @@ public partial class MainWindow : Window
         }
         else if (MainTabs.SelectedItem == LibraryTab)
             RefreshLibraryStatusUi();
+        else if (MainTabs.SelectedItem == TagsTab)
+            RefreshTagsCatalogGrid();
     }
 
     private void RefreshMcpEndpointUi()
@@ -441,59 +462,326 @@ public partial class MainWindow : Window
         }
     }
 
-    private void LibrarySetTempoButton_Click(object sender, RoutedEventArgs e)
+    private bool _libraryTempoUiBusy;
+    private bool _libraryTempoUiSyncing;
+    /// <summary>Live library grid rows — mutated in place so tag updates don't rebind/jump selection.</summary>
+    private ObservableCollection<LibraryResultRow>? _libraryRows;
+
+    private void LibraryResultsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        SyncLibraryPresetButtonsFromSelection();
+
+    /// <summary>Build toggle buttons from the flat tag catalog (labels only; keys stay internal).</summary>
+    private void RebuildLibraryPresetButtons()
     {
+        LibraryPresetButtonsHost.Children.Clear();
+        var tags = _settings.EnsureShape().Tags.ToList();
+        for (var i = 0; i < tags.Count; i++)
+        {
+            var t = tags[i];
+            var digitHint = i < 9 ? $"{i + 1}  " : "";
+            var btn = new System.Windows.Controls.Primitives.ToggleButton
+            {
+                Content = $"{digitHint}{t.Label}",
+                Tag = t.Key,
+                MinWidth = 72,
+                Height = 28,
+                Margin = new Thickness(0, 0, 6, 4),
+                Padding = new Thickness(10, 0, 10, 0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = i < 9
+                    ? $"Toggle “{t.Label}” (key {i + 1}). Select-all on multi-select."
+                    : $"Toggle “{t.Label}”. Select-all on multi-select.",
+                Focusable = false,
+            };
+            btn.Click += LibraryTagButton_Click;
+            LibraryPresetButtonsHost.Children.Add(btn);
+        }
+
+        SyncLibraryPresetButtonsFromSelection();
+    }
+
+    /// <summary>
+    /// Lit = every selected track has that tag key. Multi: select-all style (not invert).
+    /// </summary>
+    private void SyncLibraryPresetButtonsFromSelection()
+    {
+        if (_libraryTempoUiSyncing)
+            return;
+
+        var rows = LibraryResultsGrid.SelectedItems.OfType<LibraryResultRow>().ToList();
+        _libraryTempoUiSyncing = true;
+        try
+        {
+            var tracks = new List<LibraryTrack?>();
+            if (_library is not null)
+            {
+                foreach (var r in rows)
+                {
+                    if (string.IsNullOrWhiteSpace(r.Path))
+                    {
+                        tracks.Add(null);
+                        continue;
+                    }
+
+                    tracks.Add(_library.GetTrack(r.Path!) ?? _library.FindBySonosUri(r.Path));
+                }
+            }
+
+            foreach (var child in LibraryPresetButtonsHost.Children)
+            {
+                if (child is not System.Windows.Controls.Primitives.ToggleButton { Tag: string key } btn)
+                    continue;
+                if (rows.Count == 0 || tracks.Count == 0)
+                {
+                    btn.IsChecked = false;
+                    continue;
+                }
+
+                btn.IsChecked = tracks.All(t => t is not null && t.HasTagKey(key));
+            }
+
+            if (rows.Count == 0)
+            {
+                LibraryTempoSelectionHint.Text =
+                    "Select track(s) — click tags (or keys 1–9 for first nine). Lit = all selected have that tag.";
+            }
+            else if (rows.Count == 1)
+            {
+                var t = tracks.FirstOrDefault();
+                LibraryTempoSelectionHint.Text = t is null
+                    ? "Selected row not in cache — rescan?"
+                    : LibraryService.FormatCurrentTags(t, _settings);
+            }
+            else
+            {
+                LibraryTempoSelectionHint.Text =
+                    $"{rows.Count} selected — lit = all have tag; click turns on for all (or off if all already have it)";
+            }
+        }
+        finally
+        {
+            _libraryTempoUiSyncing = false;
+        }
+    }
+
+    private void LibraryTagButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Primitives.ToggleButton { Tag: string key })
+        {
+            SyncLibraryPresetButtonsFromSelection();
+            return;
+        }
+
+        ApplyLibraryTagToSelection(key);
+    }
+
+    /// <summary>
+    /// Keys 1–9 toggle the first nine catalog tags when Library tab is active.
+    /// </summary>
+    private void LibraryTab_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.OriginalSource is System.Windows.Controls.TextBox)
+            return;
+
+        var index = e.Key switch
+        {
+            Key.D1 or Key.NumPad1 => 0,
+            Key.D2 or Key.NumPad2 => 1,
+            Key.D3 or Key.NumPad3 => 2,
+            Key.D4 or Key.NumPad4 => 3,
+            Key.D5 or Key.NumPad5 => 4,
+            Key.D6 or Key.NumPad6 => 5,
+            Key.D7 or Key.NumPad7 => 6,
+            Key.D8 or Key.NumPad8 => 7,
+            Key.D9 or Key.NumPad9 => 8,
+            _ => -1,
+        };
+        if (index < 0)
+            return;
+        var tags = _settings.EnsureShape().Tags;
+        if (index >= tags.Count)
+            return;
+
+        e.Handled = true;
+        ApplyLibraryTagToSelection(tags[index].Key);
+    }
+
+    /// <summary>Select-all style toggle for one tag key on the grid selection.</summary>
+    private void ApplyLibraryTagToSelection(string tagKey)
+    {
+        if (_libraryTempoUiBusy)
+            return;
+
         if (_library is null)
         {
             SetStatus("Library service not available.", warn: true);
+            SyncLibraryPresetButtonsFromSelection();
             return;
         }
 
-        if (LibraryResultsGrid.SelectedItem is not LibraryResultRow row
-            || string.IsNullOrWhiteSpace(row.Path))
+        var def = _settings.EnsureShape().FindTag(tagKey);
+        if (def is null)
         {
-            SetStatus("Select a track in the results grid first.", warn: true);
+            SetStatus("Unknown tag.", warn: true);
             return;
         }
 
-        var tempoChoice = (LibraryTempoCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "medium";
-        var tempo = string.Equals(tempoChoice, "(clear)", StringComparison.OrdinalIgnoreCase)
-            ? ""
-            : tempoChoice;
-
-        var result = _library.SetTags(row.Path, new TrackTagUpdate { Tempo = tempo }, dryRun: false, updateMaster: true);
-        if (!result.Ok)
+        var rows = LibraryResultsGrid.SelectedItems.OfType<LibraryResultRow>()
+            .Where(r => !string.IsNullOrWhiteSpace(r.Path))
+            .ToList();
+        if (rows.Count == 0)
         {
-            SetStatus(result.Error ?? result.Message ?? "Tag write failed", warn: true);
+            SetStatus("Select one or more tracks first.", warn: true);
+            SyncLibraryPresetButtonsFromSelection();
             return;
         }
 
-        var sonosPart = result.Changes.Count > 0
-            ? string.Join("; ", result.Changes)
-            : result.Message ?? "ok";
-        var masterPart = result.UpdateMasterRequested
-            ? result.MasterWritten
-                ? $" | master: {result.MasterPath} ({string.Join("; ", result.MasterChanges)})"
-                : result.MasterError is not null
-                    ? $" | master: {result.MasterError}"
-                    : result.MasterMessage is not null
-                        ? $" | master: {result.MasterMessage}"
-                        : ""
-            : "";
-        SetStatus($"Tags: {sonosPart}{masterPart}", warn: result.MasterError is not null && result.MasterWritten == false);
-        // Refresh the visible row if we re-read the track.
-        if (result.TrackAfter is not null)
+        // Select-all: if every selected already has tag → turn OFF for all; else turn ON for all.
+        var tracks = rows
+            .Select(r => _library.GetTrack(r.Path!) ?? _library.FindBySonosUri(r.Path))
+            .ToList();
+        var allHave = tracks.Count > 0 && tracks.All(t => t is not null && t.HasTagKey(tagKey));
+        var turnOn = !allHave;
+        var verb = turnOn ? "on" : "off";
+
+        KeepLibraryGridKeyboardFocus();
+        var heavy = rows.Count > 1;
+        SetLibraryTagBusy(true, $"“{def.Label}” {verb} ({rows.Count})…", heavy);
+
+        Dispatcher.BeginInvoke(new Action(() =>
         {
-            var list = (LibraryResultsGrid.ItemsSource as IEnumerable<LibraryResultRow>)?.ToList() ?? [];
-            var idx = list.FindIndex(r => string.Equals(r.Path, row.Path, StringComparison.OrdinalIgnoreCase));
-            if (idx >= 0)
+            try
             {
-                list[idx] = new LibraryResultRow(result.TrackAfter);
-                LibraryResultsGrid.ItemsSource = null;
-                LibraryResultsGrid.ItemsSource = list;
-                LibraryResultsGrid.SelectedIndex = idx;
+                var ok = 0;
+                var fail = 0;
+                var queued = 0;
+                string? lastMsg = null;
+                var updated = new Dictionary<string, LibraryTrack>(StringComparer.OrdinalIgnoreCase);
+                var total = rows.Count;
+                var i = 0;
+
+                foreach (var row in rows)
+                {
+                    i++;
+                    if (heavy)
+                        SetLibraryBusyProgress(i, total, $"“{def.Label}” {verb} — {i} of {total}…");
+                    else
+                        LibraryTempoActionFeedback.Text = "Working…";
+
+                    var result = _library.SetTagFlag(
+                        row.Path!, tagKey, forceEnable: turnOn,
+                        dryRun: false, updateMaster: _settings.TagUpdateMasterDefault);
+                    if (result.Ok)
+                    {
+                        ok++;
+                        if (result.Queued) queued++;
+                        lastMsg = result.Message;
+                        var after = result.TrackAfter ?? (result.Queued ? null : _library.GetTrack(row.Path!));
+                        if (after is not null)
+                            updated[row.Path!] = after;
+                    }
+                    else
+                    {
+                        fail++;
+                        lastMsg = result.Error ?? result.Message;
+                    }
+                }
+
+                if (updated.Count > 0)
+                    PatchLibraryGridRows(updated);
+
+                var msg = fail == 0
+                    ? (queued > 0
+                        ? $"“{def.Label}” {verb}: {ok} ok ({queued} queued). {lastMsg}"
+                        : $"“{def.Label}” {verb}: updated {ok}. {lastMsg}")
+                    : $"“{def.Label}” {verb}: {ok} ok, {fail} failed. {lastMsg}";
+                SetStatus(msg, warn: fail > 0);
+                LibraryTempoActionFeedback.Text = fail == 0
+                    ? (queued > 0 ? $"Queued {queued}/{ok}" : $"Done ({ok})")
+                    : $"Failed {fail}";
+                LibraryTempoActionFeedback.Foreground = fail > 0
+                    ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0x70, 0x20))
+                    : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1C, 0x8E, 0x54));
             }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, warn: true);
+                LibraryTempoActionFeedback.Text = "Error";
+            }
+            finally
+            {
+                SetLibraryTagBusy(false, null, heavy: false);
+                SyncLibraryPresetButtonsFromSelection();
+                KeepLibraryGridKeyboardFocus();
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// Busy chrome. Light = status text only; heavy = multi progress banner.
+    /// Never disables the grid (keeps selection + arrow keys stable).
+    /// </summary>
+    private void SetLibraryTagBusy(bool busy, string? message, bool heavy)
+    {
+        _libraryTempoUiBusy = busy;
+        foreach (var child in LibraryPresetButtonsHost.Children)
+        {
+            if (child is System.Windows.Controls.Primitives.ToggleButton btn)
+                btn.IsHitTestVisible = !busy;
         }
+
+        if (busy)
+        {
+            LibraryTempoActionFeedback.Text = message ?? "Working…";
+            LibraryTempoActionFeedback.Foreground = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x1C, 0x8E, 0x54));
+            SetStatus(message ?? "Working…", warn: false);
+
+            if (heavy)
+            {
+                LibraryBusyBanner.Visibility = Visibility.Visible;
+                LibraryBusyProgress.IsIndeterminate = true;
+                LibraryBusyBannerText.Text = message ?? "Working…";
+            }
+            else
+            {
+                LibraryBusyBanner.Visibility = Visibility.Collapsed;
+            }
+
+            Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        }
+        else
+        {
+            LibraryBusyBanner.Visibility = Visibility.Collapsed;
+            LibraryBusyProgress.IsIndeterminate = false;
+            LibraryBusyBannerText.Text = "";
+            Mouse.OverrideCursor = null;
+        }
+    }
+
+    private void SetLibraryBusyProgress(int current, int total, string message)
+    {
+        LibraryBusyBanner.Visibility = Visibility.Visible;
+        LibraryBusyProgress.IsIndeterminate = false;
+        LibraryBusyProgress.Minimum = 0;
+        LibraryBusyProgress.Maximum = Math.Max(1, total);
+        LibraryBusyProgress.Value = current;
+        LibraryBusyBannerText.Text = message;
+        LibraryTempoActionFeedback.Text = $"{current}/{total}";
+        Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+    }
+
+    /// <summary>Put keyboard focus on the grid without changing which row is selected.</summary>
+    private void KeepLibraryGridKeyboardFocus()
+    {
+        try
+        {
+            if (LibraryResultsGrid.IsKeyboardFocusWithin)
+                return;
+            LibraryResultsGrid.Focus();
+            Keyboard.Focus(LibraryResultsGrid);
+        }
+        catch { /* ignore */ }
     }
 
     private void RunLibrarySearch(string? query, bool browse)
@@ -507,14 +795,25 @@ public partial class MainWindow : Window
         var q = browse || string.IsNullOrWhiteSpace(query) ? null : query.Trim();
         var unplayableOnly = LibraryUnplayableOnlyCheck.IsChecked == true;
         var tracks = _library.Search(q, limit: 100, offset: 0, sonosUnplayableOnly: unplayableOnly);
-        LibraryResultsGrid.ItemsSource = tracks.Select(t => new LibraryResultRow(t)).ToList();
+        _libraryRows = new ObservableCollection<LibraryResultRow>(tracks.Select(ToLibraryResultRow));
+        LibraryResultsGrid.ItemsSource = _libraryRows;
         var st = _library.GetStatus();
         var filter = unplayableOnly ? " [Sonos-unplayable only]" : "";
+        var (field, _) = LibrarySearchQuery.Parse(q);
+        var mode = field switch
+        {
+            LibrarySearchField.Title => " [title]",
+            LibrarySearchField.Artist => " [artist]",
+            LibrarySearchField.Tags => " [tags]",
+            LibrarySearchField.Format => " [format]",
+            _ => "",
+        };
         LibraryResultsMetaText.Text = q is null
             ? $"Browse{filter}: {tracks.Count} shown · cache {st.TrackCount} · unplayable {st.SonosUnplayableCount}."
-            : $"Search “{q}”{filter}: {tracks.Count} hit(s) · cache {st.TrackCount} · unplayable {st.SonosUnplayableCount}.";
+            : $"Search “{q}”{mode}{filter}: {tracks.Count} hit(s) · cache {st.TrackCount} · unplayable {st.SonosUnplayableCount}.";
         LibraryMcpResultBox.Visibility = Visibility.Collapsed;
         SetStatus(LibraryResultsMetaText.Text, warn: false);
+        SyncLibraryPresetButtonsFromSelection();
     }
 
     private void ApplyMcpLibraryPayload(string tool, string? json)
@@ -532,16 +831,21 @@ public partial class MainWindow : Window
             var root = doc.RootElement;
             if (root.TryGetProperty("tracks", out var tracksEl) && tracksEl.ValueKind == JsonValueKind.Array)
             {
-                var rows = new List<LibraryResultRow>();
+                var rows = new ObservableCollection<LibraryResultRow>();
                 foreach (var t in tracksEl.EnumerateArray())
-                    rows.Add(LibraryResultRow.FromJson(t));
-                LibraryResultsGrid.ItemsSource = rows;
+                    rows.Add(LibraryResultRow.FromJson(t, k => _settings.TagLabel(k)));
+                _libraryRows = rows;
+                LibraryResultsGrid.ItemsSource = _libraryRows;
                 LibraryResultsMetaText.Text =
                     $"MCP {tool}: {rows.Count} track row(s) · {DateTime.Now:T}";
             }
             else if (root.TryGetProperty("track", out var one) && one.ValueKind == JsonValueKind.Object)
             {
-                LibraryResultsGrid.ItemsSource = new[] { LibraryResultRow.FromJson(one) };
+                _libraryRows = new ObservableCollection<LibraryResultRow>
+                {
+                    LibraryResultRow.FromJson(one, k => _settings.TagLabel(k)),
+                };
+                LibraryResultsGrid.ItemsSource = _libraryRows;
             }
 
             // Soft-hint: if user is on Settings, status line still updates; switch optional.
@@ -560,74 +864,368 @@ public partial class MainWindow : Window
     private void LibraryContextMenu_Opened(object sender, RoutedEventArgs e)
     {
         LibraryApplyPresetMenu.Items.Clear();
-        var presets = _settings.EnsureShape().TagPresets.OrderBy(p => p.Slot).ToList();
-        if (presets.Count == 0)
+        var tags = _settings.EnsureShape().Tags.ToList();
+        if (tags.Count == 0)
         {
-            LibraryApplyPresetMenu.Items.Add(new MenuItem { Header = "(no presets)", IsEnabled = false });
+            LibraryApplyPresetMenu.Items.Add(new MenuItem { Header = "(no tags)", IsEnabled = false });
             return;
         }
 
-        foreach (var p in presets)
+        foreach (var t in tags)
         {
             var item = new MenuItem
             {
-                Header = $"{p.Slot}. {p.Label} — {p.Summary}",
-                Tag = p.Slot,
+                Header = t.Label,
+                Tag = t.Key,
             };
-            item.Click += LibraryApplyPresetMenuItem_Click;
+            item.Click += LibraryApplyTagMenuItem_Click;
             LibraryApplyPresetMenu.Items.Add(item);
         }
     }
 
-    private void LibraryApplyPresetMenuItem_Click(object sender, RoutedEventArgs e)
+    private void LibraryApplyTagMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        if (_library is null)
+        if (sender is not MenuItem { Tag: string key })
+            return;
+        ApplyLibraryTagToSelection(key);
+    }
+
+    private void LibraryAddTagButton_Click(object sender, RoutedEventArgs e)
+    {
+        var label = LibraryNewTagBox.Text?.Trim() ?? "";
+        if (label.Length == 0)
         {
-            SetStatus("Library service not available.", warn: true);
+            SetStatus("Enter a tag name first.", warn: true);
             return;
         }
 
-        if (sender is not MenuItem { Tag: int slot })
-            return;
-
-        var rows = LibraryResultsGrid.SelectedItems.OfType<LibraryResultRow>()
-            .Where(r => !string.IsNullOrWhiteSpace(r.Path))
-            .ToList();
-        if (rows.Count == 0)
+        if (!AddTagAndPersist(label, out var err))
         {
-            SetStatus("Select one or more tracks first.", warn: true);
+            SetStatus(err ?? "Could not add tag.", warn: true);
             return;
         }
 
-        var ok = 0;
-        var fail = 0;
-        string? lastMsg = null;
-        LibraryTrack? lastTrack = null;
-        foreach (var row in rows)
+        LibraryNewTagBox.Text = "";
+        SetStatus($"Tag “{label}” added.", warn: false);
+    }
+
+    // ---- Tags catalog maintenance tab ---------------------------------------
+
+    private ObservableCollection<TagCatalogRow> _tagCatalogRows = [];
+    private bool _tagsCatalogSyncing;
+
+    private void RefreshTagsCatalogGrid(string? selectKey = null)
+    {
+        _settings.EnsureShape();
+        _tagsCatalogSyncing = true;
+        try
         {
-            var result = _library.ApplyPreset(row.Path!, slot, dryRun: false, updateMaster: _settings.TagUpdateMasterDefault);
-            if (result.Ok)
+            var keepKey = selectKey
+                          ?? (TagsCatalogGrid.SelectedItem as TagCatalogRow)?.Key;
+            _tagCatalogRows = new ObservableCollection<TagCatalogRow>(
+                _settings.Tags.Select((t, i) => new TagCatalogRow(i + 1, t.Key, t.Label)));
+            TagsCatalogGrid.ItemsSource = _tagCatalogRows;
+            if (!string.IsNullOrWhiteSpace(keepKey))
             {
-                ok++;
-                lastMsg = result.Message;
-                lastTrack = result.TrackAfter;
+                var row = _tagCatalogRows.FirstOrDefault(r =>
+                    string.Equals(r.Key, keepKey, StringComparison.OrdinalIgnoreCase));
+                if (row is not null)
+                    TagsCatalogGrid.SelectedItem = row;
             }
-            else
+
+            TagsCatalogStatusText.Text =
+                $"{_tagCatalogRows.Count} tag(s) · edit Label in place · order drives chips & keys 1–9";
+        }
+        finally
+        {
+            _tagsCatalogSyncing = false;
+        }
+    }
+
+    private bool PersistTagCatalog(string okMessage)
+    {
+        try
+        {
+            _store.Save(_settings);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Tag catalog save failed: {ex.Message}", warn: true);
+            TagsCatalogStatusText.Text = $"Save failed: {ex.Message}";
+            return false;
+        }
+
+        RebuildLibraryPresetButtons();
+        SetStatus(okMessage, warn: false);
+        return true;
+    }
+
+    private bool AddTagAndPersist(string label, out string? error)
+    {
+        error = null;
+        var tag = _settings.AddTag(label);
+        if (tag is null)
+        {
+            error = "Enter a non-empty label.";
+            return false;
+        }
+
+        if (!PersistTagCatalog($"Tag “{tag.Label}” added."))
+        {
+            error = "Save failed.";
+            return false;
+        }
+
+        RefreshTagsCatalogGrid(tag.Key);
+        return true;
+    }
+
+    private void TagsAddButton_Click(object sender, RoutedEventArgs e)
+    {
+        var label = TagsNewLabelBox.Text?.Trim() ?? "";
+        if (label.Length == 0)
+        {
+            TagsCatalogStatusText.Text = "Enter a label to add.";
+            SetStatus("Enter a tag name first.", warn: true);
+            return;
+        }
+
+        if (!AddTagAndPersist(label, out var err))
+        {
+            TagsCatalogStatusText.Text = err ?? "Could not add tag.";
+            return;
+        }
+
+        TagsNewLabelBox.Text = "";
+        TagsNewLabelBox.Focus();
+    }
+
+    private void TagsNewLabelBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            TagsAddButton_Click(sender, e);
+        }
+    }
+
+    private void TagsDeleteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (TagsCatalogGrid.SelectedItem is not TagCatalogRow row)
+        {
+            TagsCatalogStatusText.Text = "Select a tag to delete.";
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"Delete “{row.Label}”?\n\n" +
+            "This removes it from the catalog and from every library track that has it " +
+            "(writes HOTSONOS_TAGS on each file; locked/playing files are queued).",
+            "Delete tag",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes)
+            return;
+
+        var key = row.Key;
+        var label = row.Label;
+        TagsDeleteButton.IsEnabled = false;
+        TagsCatalogStatusText.Text = $"Removing “{label}” from library files…";
+        SetStatus($"Deleting tag “{label}” from library…", warn: false);
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            try
             {
-                fail++;
-                lastMsg = result.Error ?? result.Message;
+                TagPurgeResult? purge = null;
+                if (_library is not null)
+                {
+                    purge = _library.PurgeTagKey(
+                        key,
+                        updateMaster: _settings.TagUpdateMasterDefault,
+                        progress: (done, total) =>
+                        {
+                            Dispatcher.Invoke(() =>
+                            {
+                                TagsCatalogStatusText.Text =
+                                    $"Removing “{label}” — {done} of {total}…";
+                            });
+                        });
+                }
+
+                if (!_settings.RemoveTag(key))
+                {
+                    TagsCatalogStatusText.Text = "Tag not found in catalog.";
+                    return;
+                }
+
+                var catalogMsg = $"Tag “{label}” deleted.";
+                if (purge is not null)
+                    catalogMsg += " " + purge.Message;
+                else
+                    catalogMsg += " (library offline — catalog only.)";
+
+                PersistTagCatalog(catalogMsg);
+                TagsCatalogStatusText.Text = catalogMsg;
+                RefreshTagsCatalogGrid();
+
+                // Refresh library grid labels if rows are showing.
+                if (_libraryRows is { Count: > 0 } && _library is not null)
+                {
+                    var updated = new Dictionary<string, LibraryTrack>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var r in _libraryRows)
+                    {
+                        if (string.IsNullOrWhiteSpace(r.Path)) continue;
+                        var t = _library.GetTrack(r.Path!);
+                        if (t is not null)
+                            updated[r.Path!] = t;
+                    }
+                    if (updated.Count > 0)
+                        PatchLibraryGridRows(updated);
+                }
+            }
+            catch (Exception ex)
+            {
+                TagsCatalogStatusText.Text = $"Delete failed: {ex.Message}";
+                SetStatus(ex.Message, warn: true);
+            }
+            finally
+            {
+                TagsDeleteButton.IsEnabled = true;
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private void TagsMoveUpButton_Click(object sender, RoutedEventArgs e) => MoveSelectedTag(-1);
+
+    private void TagsMoveDownButton_Click(object sender, RoutedEventArgs e) => MoveSelectedTag(1);
+
+    private void MoveSelectedTag(int delta)
+    {
+        if (TagsCatalogGrid.SelectedItem is not TagCatalogRow row)
+        {
+            TagsCatalogStatusText.Text = "Select a tag to reorder.";
+            return;
+        }
+
+        if (!_settings.MoveTag(row.Key, delta))
+        {
+            TagsCatalogStatusText.Text = delta < 0 ? "Already at top." : "Already at bottom.";
+            return;
+        }
+
+        PersistTagCatalog($"Moved “{row.Label}”.");
+        RefreshTagsCatalogGrid(row.Key);
+    }
+
+    private void TagsCatalogGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_tagsCatalogSyncing) return;
+        if (TagsCatalogGrid.SelectedItem is TagCatalogRow row)
+            TagsCatalogStatusText.Text = $"Selected “{row.Label}”";
+    }
+
+    private void TagsCatalogGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
+    {
+        if (_tagsCatalogSyncing || e.EditAction != DataGridEditAction.Commit)
+            return;
+        if (e.Row.Item is not TagCatalogRow row)
+            return;
+        if (e.Column is not DataGridTextColumn { Header: "Label" })
+            return;
+
+        // Read the edited value from the TextBox (binding may not have pushed yet).
+        var newLabel = row.Label;
+        if (e.EditingElement is TextBox tb)
+            newLabel = tb.Text?.Trim() ?? "";
+
+        if (string.IsNullOrWhiteSpace(newLabel))
+        {
+            e.Cancel = true;
+            TagsCatalogStatusText.Text = "Label cannot be empty.";
+            return;
+        }
+
+        if (string.Equals(newLabel, _settings.FindTag(row.Key)?.Label, StringComparison.Ordinal))
+            return;
+
+        if (!_settings.RenameTag(row.Key, newLabel))
+        {
+            e.Cancel = true;
+            TagsCatalogStatusText.Text = "Rename failed.";
+            return;
+        }
+
+        row.Label = newLabel;
+        PersistTagCatalog($"Renamed to “{newLabel}”.");
+        // Defer grid refresh so edit commit finishes.
+        Dispatcher.BeginInvoke(() => RefreshTagsCatalogGrid(row.Key), DispatcherPriority.Background);
+    }
+
+    private sealed class TagCatalogRow : INotifyPropertyChanged
+    {
+        private string _label;
+
+        public TagCatalogRow(int index, string key, string label)
+        {
+            Index = index;
+            Key = key;
+            _label = label;
+        }
+
+        public int Index { get; }
+        public string Key { get; }
+        public string HotkeyHint => Index is >= 1 and <= 9 ? Index.ToString() : "—";
+
+        public string Label
+        {
+            get => _label;
+            set
+            {
+                if (_label == value) return;
+                _label = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Label)));
             }
         }
 
-        SetStatus(
-            fail == 0
-                ? $"Preset {slot}: tagged {ok} track(s). {lastMsg}"
-                : $"Preset {slot}: {ok} ok, {fail} failed. {lastMsg}",
-            warn: fail > 0);
+        public event PropertyChangedEventHandler? PropertyChanged;
+    }
 
-        // Refresh grid rows from cache when possible
-        if (ok > 0)
-            RunLibrarySearch(LibrarySearchBox.Text, browse: string.IsNullOrWhiteSpace(LibrarySearchBox.Text));
+    /// <summary>
+    /// Update existing grid rows in place by path — never rebind ItemsSource
+    /// (rebind jumps selection / eats arrow-key navigation).
+    /// </summary>
+    private void PatchLibraryGridRows(IReadOnlyDictionary<string, LibraryTrack> updatedByPath)
+    {
+        if (_libraryRows is null || _libraryRows.Count == 0 || updatedByPath.Count == 0)
+            return;
+
+        for (var i = 0; i < _libraryRows.Count; i++)
+        {
+            var path = _libraryRows[i].Path;
+            if (path is null || !updatedByPath.TryGetValue(path, out var track))
+                continue;
+            // Replace item in ObservableCollection — selection stays on the same indices.
+            _libraryRows[i] = ToLibraryResultRow(track);
+        }
+
+        SyncLibraryPresetButtonsFromSelection();
+    }
+
+    private LibraryResultRow ToLibraryResultRow(LibraryTrack t)
+    {
+        var labels = _settings.NormalizeTagKeys(t.TagKeys)
+            .Select(k => _settings.TagLabel(k))
+            .Where(l => l.Length > 0);
+        return new(
+            t.Title,
+            t.Artist,
+            t.Album,
+            t.AudioFormatLabel,
+            t.SonosPlayable ? "OK" : "NO",
+            t.SonosPlayIssue,
+            string.Join(" · ", labels),
+            t.Path);
     }
 
     private sealed record LibraryResultRow(
@@ -637,24 +1235,10 @@ public partial class MainWindow : Window
         string? Format,
         string SonosOk,
         string? Issue,
-        string? Tempo,
         string? Tags,
         string Path)
     {
-        public LibraryResultRow(LibraryTrack t)
-            : this(
-                t.Title,
-                t.Artist,
-                t.Album,
-                t.AudioFormatLabel,
-                t.SonosPlayable ? "OK" : "NO",
-                t.SonosPlayIssue,
-                t.Tempo,
-                t.CustomTagsLabel,
-                t.Path)
-        { }
-
-        public static LibraryResultRow FromJson(JsonElement t)
+        public static LibraryResultRow FromJson(JsonElement t, Func<string, string>? labelForKey = null)
         {
             var playable = true;
             if (t.TryGetProperty("SonosPlayable", out var sp) || t.TryGetProperty("sonosPlayable", out sp))
@@ -664,6 +1248,19 @@ public partial class MainWindow : Window
                 else if (sp.ValueKind is JsonValueKind.Number) playable = sp.GetInt32() != 0;
             }
 
+            string? tags = GetStr(t, "tagsLabel") ?? GetStr(t, "Tags") ?? GetStr(t, "tags");
+            if (tags is null && t.TryGetProperty("tagKeys", out var keysEl) && keysEl.ValueKind == JsonValueKind.Array)
+            {
+                var parts = new List<string>();
+                foreach (var k in keysEl.EnumerateArray())
+                {
+                    var key = k.GetString();
+                    if (string.IsNullOrWhiteSpace(key)) continue;
+                    parts.Add(labelForKey?.Invoke(key) ?? key);
+                }
+                tags = string.Join(" · ", parts);
+            }
+
             return new LibraryResultRow(
                 GetStr(t, "Title") ?? GetStr(t, "title"),
                 GetStr(t, "Artist") ?? GetStr(t, "artist"),
@@ -671,8 +1268,7 @@ public partial class MainWindow : Window
                 GetStr(t, "audio") ?? GetStr(t, "Audio") ?? GetStr(t, "Codec") ?? GetStr(t, "codec"),
                 playable ? "OK" : "NO",
                 GetStr(t, "SonosPlayIssue") ?? GetStr(t, "sonosPlayIssue"),
-                GetStr(t, "Tempo") ?? GetStr(t, "tempo"),
-                GetStr(t, "CustomTagsLabel") ?? GetStr(t, "customTagsLabel") ?? GetStr(t, "Tags") ?? GetStr(t, "tags"),
+                tags,
                 GetStr(t, "Path") ?? GetStr(t, "path") ?? "");
         }
     }
