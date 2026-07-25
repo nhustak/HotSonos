@@ -16,7 +16,7 @@
 | Item | State |
 |------|--------|
 | **Git HEAD** | See git log — step 4 shipped; quick-tag / custom tags in progress |
-| **App version** | `1.0.0.18` |
+| **App version** | `1.0.0.20` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
 | **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug |
 | **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** on this PC |

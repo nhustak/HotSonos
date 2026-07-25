@@ -220,6 +220,7 @@ public partial class MainWindow : Window
         ShuffleTopUpRemainingBox.Text = _settings.ShuffleTopUpWhenRemaining.ToString();
         ShuffleExcludePlayedCheckBox.IsChecked = _settings.ShuffleExcludePlayed;
         ShuffleAutoTopUpCheckBox.IsChecked = _settings.ShuffleAutoTopUp;
+        ContinueShuffleAfterSpecialPlayCheckBox.IsChecked = _settings.ContinueLibraryShuffleAfterSpecialPlay;
         ShuffleArtistSpreadCheckBox.IsChecked = _settings.ShuffleArtistSpread;
         RefreshPlayHistoryStatus();
         SonosLibraryRootsBox.Text = string.Join(Environment.NewLine, _settings.SonosLibraryRoots);
@@ -1714,6 +1715,7 @@ public partial class MainWindow : Window
             _settings.ShuffleTopUpWhenRemaining = rem;
         _settings.ShuffleExcludePlayed = ShuffleExcludePlayedCheckBox.IsChecked == true;
         _settings.ShuffleAutoTopUp = ShuffleAutoTopUpCheckBox.IsChecked == true;
+        _settings.ContinueLibraryShuffleAfterSpecialPlay = ContinueShuffleAfterSpecialPlayCheckBox.IsChecked == true;
         _settings.ShuffleArtistSpread = ShuffleArtistSpreadCheckBox.IsChecked == true;
 
         _settings.SonosLibraryRoots = SplitLibraryRoots(SonosLibraryRootsBox.Text);

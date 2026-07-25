@@ -189,6 +189,9 @@ public partial class App : System.Windows.Application
                 try { _store.Save(_settings); }
                 catch (Exception ex) { AppLog.Warn("Settings save from MCP failed", ex); }
             },
+            PlayLibraryTrackAsync = McpPlayLibraryTrackAsync,
+            ResumeShuffleAsync = McpResumeShuffleAsync,
+            PlayTaggedTracksAsync = McpPlayTaggedTracksAsync,
         };
         _mcpHost = new HotSonosMcpHost();
 
@@ -291,6 +294,69 @@ public partial class App : System.Windows.Application
     }
 
     /// <summary>MCP control path: same gate/flyout behavior as hotkeys (marshaled to UI thread).</summary>
+    private async Task<string> McpPlayLibraryTrackAsync(
+        string path, string? title, string? artist, CancellationToken ct)
+    {
+        await _actionGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            AppLog.Info($"MCP play_library_track: {path}");
+            var toast = await _sonos.PlayLibraryTrackAsync(path, title, artist, ct).ConfigureAwait(false);
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
+            return toast;
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
+    private async Task<string> McpResumeShuffleAsync(CancellationToken ct)
+    {
+        if (!await _actionGate.WaitAsync(0).ConfigureAwait(false))
+            return "Busy — already re-syncing / shuffling…";
+
+        try
+        {
+            AppLog.Info("MCP resume_shuffle");
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction("🔀 Resume shuffle…"));
+            var toast = await _sonos.ResumeShuffleAsync(ct).ConfigureAwait(false);
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
+            return toast;
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
+    private async Task<string> McpPlayTaggedTracksAsync(string tag, bool shuffle, CancellationToken ct)
+    {
+        if (_library is null)
+            throw new InvalidOperationException("Library service not available.");
+
+        if (!await _actionGate.WaitAsync(0).ConfigureAwait(false))
+            return "Busy — already re-syncing / shuffling…";
+
+        try
+        {
+            AppLog.Info($"MCP play_tag: {tag} shuffle={shuffle}");
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction($"▶ {tag}…"));
+            var toast = await _sonos.PlayTaggedTracksAsync(_library, tag, shuffle, ct).ConfigureAwait(false);
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
+            return toast;
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
     private Task<string?> McpExecuteActionAsync(HotsonosAction action)
     {
         var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);

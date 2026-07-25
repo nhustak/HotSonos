@@ -1,4 +1,5 @@
 using HotSonos.App.Infrastructure;
+using HotSonos.App.Library;
 using HotSonos.App.Models;
 using HotSonos.Core;
 using HotSonos.Core.Models;
@@ -43,6 +44,28 @@ public sealed class SonosManager
     private IReadOnlyList<string> _offline = [];
     private bool _topologySeen;
     private int _topUpInFlight; // 0/1
+
+    /// <summary>Last exclusive library playback mode (for MCP / top-up policy).</summary>
+    private string _playbackMode = "none"; // none | shuffle | special (one-shot or tag queue)
+
+    /// <summary>True after a library shuffle until a special play replaces the queue.</summary>
+    public bool ShuffleSessionActive =>
+        string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when shuffle or special play is active (resume_shuffle is meaningful).</summary>
+    public bool CanResumeShuffle =>
+        string.Equals(_playbackMode, "special", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(_playbackMode, "one_shot", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase);
+
+    public object GetPlaybackSessionSnapshot() => new
+    {
+        mode = _playbackMode,
+        shuffleSessionActive = ShuffleSessionActive,
+        canResumeShuffle = CanResumeShuffle,
+        continueLibraryShuffleAfterSpecialPlay = _settings().EnsureShape().ContinueLibraryShuffleAfterSpecialPlay,
+        note = "special = one track or tag queue (e.g. Favs). Top-up uses full library when setting allows.",
+    };
 
     /// <summary>Raised when the active coordinator pushes a now-playing change.</summary>
     public event Action<NowPlaying>? NowPlayingChanged;
@@ -99,6 +122,7 @@ public sealed class SonosManager
 
             var s = _settings().EnsureShape();
             if (s.ShuffleAutoTopUp
+                && ShouldAutoTopUp(s)
                 && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning
                 && np.IsNearQueueEnd(s.ShuffleTopUpWhenRemaining))
             {
@@ -215,6 +239,7 @@ public sealed class SonosManager
                 throw new InvalidOperationException("No Sonos speakers found. Check the speakers are powered on and on the network.");
             await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
             var fresh = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
+            _playbackMode = "shuffle";
             return $"🔄 Fresh start: re-synced + shuffle ({fresh})";
         }
 
@@ -245,6 +270,7 @@ public sealed class SonosManager
             case HotsonosAction.ShuffleLibrary:
                 await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
                 var shuffleSummary = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
+                _playbackMode = "shuffle";
                 return $"🔀 Shuffling library → all speakers ({shuffleSummary})";
             case HotsonosAction.VolumeUp:
                 return $"🔊 Volume {await ChangeVolumeAsync(settings.VolumeStep, ct).ConfigureAwait(false)}%";
@@ -565,12 +591,123 @@ public sealed class SonosManager
             },
             ct).ConfigureAwait(false);
 
+        _playbackMode = "shuffle";
         var msg =
             $"browsed {result.Browsed}, queued {result.Enqueued} " +
             $"(candidates {result.CandidateCount}, excluded played {result.ExcludedCount}, " +
             $"history keys {_playHistory.PlayedDistinctCount}, history days {s.ShuffleHistoryDays})";
         AppLog.Info($"Shuffle rebuild: {msg}");
         return msg;
+    }
+
+    /// <summary>
+    /// Play one library track (UNC or x-file-cifs). Replaces the queue.
+    /// Does not wipe play history — resume_shuffle can start a fresh shuffle afterward.
+    /// </summary>
+    public async Task<string> PlayLibraryTrackAsync(
+        string pathOrUri,
+        string? title = null,
+        string? artist = null,
+        CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+
+        if (!SonosPath.TryToCifsUri(pathOrUri, out var cifs))
+            throw new ArgumentException("Path must be a UNC path or x-file-cifs URI under the Sonos library.", nameof(pathOrUri));
+
+        await _controller.PlayLibraryUriAsync(cifs, title, artist, ct).ConfigureAwait(false);
+        _playbackMode = "special";
+        var label = string.IsNullOrWhiteSpace(title)
+            ? System.IO.Path.GetFileName(pathOrUri)
+            : (string.IsNullOrWhiteSpace(artist) ? title : $"{title} — {artist}");
+        AppLog.Info($"Play library track: {cifs}");
+        return $"▶ {label}";
+    }
+
+    /// <summary>
+    /// Queue all library tracks with a catalog tag (label or key), optionally shuffled, and play.
+    /// With <see cref="AppSettings.ContinueLibraryShuffleAfterSpecialPlay"/>, auto top-up
+    /// continues into full-library shuffle when the tag queue runs low (same as one-shot).
+    /// </summary>
+    public async Task<string> PlayTaggedTracksAsync(
+        LibraryService library,
+        string tagToken,
+        bool shuffle = true,
+        CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+        if (library is null)
+            throw new ArgumentNullException(nameof(library));
+
+        var s = _settings().EnsureShape();
+        var key = s.ResolveTagToken(tagToken);
+        if (key is null)
+            throw new InvalidOperationException($"Unknown tag “{tagToken}”. Use list_tags for labels.");
+
+        var def = s.FindTag(key);
+        var tagLabel = def?.Label ?? tagToken;
+        var tracks = library.GetTracksWithTag(key);
+        if (tracks.Count == 0)
+            throw new InvalidOperationException($"No tracks in cache with tag “{tagLabel}”. Tag some music first.");
+
+        var items = new List<(string CifsUri, string? Title, string? Artist)>(tracks.Count);
+        foreach (var t in tracks)
+        {
+            if (!SonosPath.TryToCifsUri(t.Path, out var cifs))
+                continue;
+            items.Add((cifs, t.Title, t.Artist));
+        }
+
+        if (items.Count == 0)
+            throw new InvalidOperationException($"Tag “{tagLabel}” matched tracks but none had a Sonos-playable path.");
+
+        if (shuffle)
+        {
+            for (var i = items.Count - 1; i > 0; i--)
+            {
+                var j = Random.Shared.Next(i + 1);
+                (items[i], items[j]) = (items[j], items[i]);
+            }
+        }
+
+        await _controller.PlayLibraryUrisAsync(items, ct).ConfigureAwait(false);
+        _playbackMode = "special";
+        var continueHint = s.ContinueLibraryShuffleAfterSpecialPlay
+            ? " · will top-up into library shuffle near end"
+            : " · no library top-up after this queue";
+        AppLog.Info($"Play tag “{tagLabel}”: queued {items.Count} (shuffle={shuffle})");
+        return $"▶ {tagLabel}: {items.Count} track(s){(shuffle ? " shuffled" : "")}{continueHint}";
+    }
+
+    /// <summary>
+    /// Return to library shuffle after a one-shot (or anytime). Starts a <b>new</b>
+    /// history-aware shuffle — not a restore of the previous queue order.
+    /// </summary>
+    public async Task<string> ResumeShuffleAsync(CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+
+        await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
+        var summary = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
+        return $"🔀 Resume shuffle → all speakers ({summary})";
+    }
+
+    /// <summary>
+    /// Whether auto top-up may run for the current playback mode.
+    /// Shuffle: always (if auto top-up on). Special (one track / tag queue): only when
+    /// <see cref="AppSettings.ContinueLibraryShuffleAfterSpecialPlay"/> is true.
+    /// </summary>
+    private bool ShouldAutoTopUp(AppSettings s)
+    {
+        if (string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (string.Equals(_playbackMode, "special", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(_playbackMode, "one_shot", StringComparison.OrdinalIgnoreCase))
+            return s.ContinueLibraryShuffleAfterSpecialPlay;
+        return false;
     }
 
     /// <summary>
@@ -587,7 +724,7 @@ public sealed class SonosManager
                 return;
 
             var s = _settings().EnsureShape();
-            if (!s.ShuffleAutoTopUp)
+            if (!s.ShuffleAutoTopUp || !ShouldAutoTopUp(s))
                 return;
 
             IReadOnlyCollection<string>? exclude = s.ShuffleExcludePlayed ? _playHistory.GetPlayedKeys() : null;
@@ -600,6 +737,10 @@ public sealed class SonosManager
                     ArtistSpread = s.ShuffleArtistSpread,
                 },
                 ct).ConfigureAwait(false);
+
+            // Once library top-up has run, treat session as normal shuffle for further top-ups.
+            if (!string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase))
+                _playbackMode = "shuffle";
 
             AppLog.Info(
                 $"Shuffle top-up: appended {result.Enqueued} " +

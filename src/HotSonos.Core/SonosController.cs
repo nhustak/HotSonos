@@ -542,6 +542,83 @@ public sealed class SonosController
     }
 
     /// <summary>
+    /// Clear the queue, enqueue one local-library URI (<c>x-file-cifs://…</c>), play it.
+    /// Optional title/artist improve the queue display; empty metadata is accepted.
+    /// </summary>
+    public Task PlayLibraryUriAsync(
+        string cifsUri,
+        string? title = null,
+        string? artist = null,
+        CancellationToken ct = default) =>
+        PlayLibraryUrisAsync([(cifsUri, title, artist)], ct);
+
+    /// <summary>
+    /// Clear the queue, enqueue many local-library URIs in order, point at queue, play.
+    /// Used for one-shot tracks and “play Favs” style tag queues.
+    /// </summary>
+    public async Task PlayLibraryUrisAsync(
+        IReadOnlyList<(string CifsUri, string? Title, string? Artist)> tracks,
+        CancellationToken ct = default)
+    {
+        if (tracks is null || tracks.Count == 0)
+            throw new ArgumentException("At least one track URI is required.", nameof(tracks));
+
+        var prepared = tracks
+            .Where(t => !string.IsNullOrWhiteSpace(t.CifsUri))
+            .Select(t => (
+                Uri: t.CifsUri.Trim(),
+                Meta: BuildMinimalTrackMetadata(t.CifsUri.Trim(), t.Title, t.Artist)))
+            .ToList();
+        if (prepared.Count == 0)
+            throw new ArgumentException("No valid track URIs.", nameof(tracks));
+
+        await InvokeAvTransport("RemoveAllTracksFromQueue", ct, ("InstanceID", "0")).ConfigureAwait(false);
+
+        foreach (var batch in prepared.Chunk(EnqueueBatchSize))
+        {
+            await InvokeAvTransport("AddMultipleURIsToQueue", ct,
+                ("InstanceID", "0"),
+                ("UpdateID", "0"),
+                ("NumberOfURIs", batch.Length.ToString()),
+                ("EnqueuedURIs", string.Join(' ', batch.Select(t => t.Uri))),
+                ("EnqueuedURIsMetaData", string.Join(' ', batch.Select(t => t.Meta))),
+                ("ContainerURI", ""),
+                ("ContainerMetaData", ""),
+                ("DesiredFirstTrackNumberEnqueued", "0"),
+                ("EnqueueAsNext", "0")).ConfigureAwait(false);
+        }
+
+        await InvokeAvTransport("SetAVTransportURI", ct,
+            ("InstanceID", "0"),
+            ("CurrentURI", $"x-rincon-queue:{CoordinatorUuid}#0"),
+            ("CurrentURIMetaData", "")).ConfigureAwait(false);
+
+        await InvokeAvTransport("SetPlayMode", ct, ("InstanceID", "0"), ("NewPlayMode", "NORMAL")).ConfigureAwait(false);
+        await PlayAsync(ct).ConfigureAwait(false);
+    }
+
+    private static string BuildMinimalTrackMetadata(string uri, string? title, string? artist)
+    {
+        static string Esc(string? s) =>
+            System.Security.SecurityElement.Escape(string.IsNullOrWhiteSpace(s) ? "" : s.Trim()) ?? "";
+
+        var t = string.IsNullOrWhiteSpace(title) ? "Track" : title.Trim();
+        var a = string.IsNullOrWhiteSpace(artist) ? "" : artist.Trim();
+        // Sonos is tolerant of minimal DIDL for local file URIs.
+        return
+            "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" " +
+            "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" " +
+            "xmlns:r=\"urn:schemas-rinconnetworks-com:metadata-1-0/\" " +
+            "xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\">" +
+            "<item id=\"-1\" parentID=\"-1\" restricted=\"true\">" +
+            $"<res protocolInfo=\"x-file-cifs:*:*:*\">{Esc(uri)}</res>" +
+            $"<dc:title>{Esc(t)}</dc:title>" +
+            (a.Length > 0 ? $"<dc:creator>{Esc(a)}</dc:creator>" : "") +
+            "<upnp:class>object.item.audioItem.musicTrack</upnp:class>" +
+            "</item></DIDL-Lite>";
+    }
+
+    /// <summary>
     /// Plays a saved Sonos Playlist by enqueuing its container (the server
     /// expands all tracks in one call), then playing the queue.
     /// </summary>

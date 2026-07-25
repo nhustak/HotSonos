@@ -53,9 +53,10 @@ public sealed class HotSonosDebugTools
                 wakeNextFireLocal = _state.Wake?.GetNextFireLocal()?.ToString("yyyy-MM-dd HH:mm"),
                 anythingPlaying = playing,
                 lastNowPlaying = FormatNowPlaying(_state.GetLastNowPlaying()),
+                playback = sonos.GetPlaybackSessionSnapshot(),
                 hint = groupCount == 0
                     ? "Device list empty — call refresh_devices, then list_groups / list_zones. Check get_logs if still empty."
-                    : "Device list has groups; use list_groups or list_zones for details.",
+                    : "Device list has groups; use list_groups or list_zones for details. Play a library track with play_library_track; return via resume_shuffle.",
             };
             return JsonSerializer.Serialize(payload, JsonOptions);
         });
@@ -247,6 +248,7 @@ public sealed class HotSonosDebugTools
                 s.ShuffleTopUpWhenRemaining,
                 s.ShuffleExcludePlayed,
                 s.ShuffleAutoTopUp,
+                s.ContinueLibraryShuffleAfterSpecialPlay,
                 s.ShuffleArtistSpread,
                 playHistoryDistinct = _state.Sonos.PlayHistory.PlayedDistinctCount,
                 sonosLibraryRoots = s.SonosLibraryRoots,
@@ -703,6 +705,98 @@ public sealed class HotSonosDebugTools
     [Description("Group all speakers under the active coordinator and client-side shuffle the full Music Library.")]
     public Task<string> ShuffleLibrary(CancellationToken ct) =>
         McpActivityLog.RunAsync("shuffle_library", null, () => RunActionAsync(HotsonosAction.ShuffleLibrary), category: "control");
+
+    [McpServerTool(Name = "play_library_track")]
+    [Description("Play one local library track on the active group (replaces the queue). Pass path from library_search. Use resume_shuffle afterward to return to library shuffle (fresh history-aware queue, not the exact prior order).")]
+    public Task<string> PlayLibraryTrack(
+        [Description("Absolute UNC path or x-file-cifs URI (library_search path)")] string path,
+        [Description("Optional title for Sonos display")] string? title = null,
+        [Description("Optional artist for Sonos display")] string? artist = null,
+        CancellationToken ct = default) =>
+        McpActivityLog.RunAsync("play_library_track", new { path, title, artist }, async () =>
+        {
+            if (_state.PlayLibraryTrackAsync is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "Play library track not wired." }, JsonOptions);
+            if (string.IsNullOrWhiteSpace(path))
+                return JsonSerializer.Serialize(new { ok = false, error = "path is required" }, JsonOptions);
+
+            try
+            {
+                var toast = await _state.PlayLibraryTrackAsync(path.Trim(), title, artist, ct).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    toast,
+                    path,
+                    playback = _state.Sonos.GetPlaybackSessionSnapshot(),
+                    activeRoom = _state.Sonos.ActiveRoom,
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("MCP play_library_track failed", ex);
+                return JsonSerializer.Serialize(new { ok = false, error = ex.Message, path }, JsonOptions);
+            }
+        }, category: "control");
+
+    [McpServerTool(Name = "resume_shuffle")]
+    [Description("Return to Music Library shuffle after play_library_track (or anytime). Starts a fresh history-aware shuffle (not the exact previous queue). Groups all speakers like shuffle_library.")]
+    public Task<string> ResumeShuffle(CancellationToken ct = default) =>
+        McpActivityLog.RunAsync("resume_shuffle", null, async () =>
+        {
+            if (_state.ResumeShuffleAsync is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "Resume shuffle not wired." }, JsonOptions);
+
+            try
+            {
+                var toast = await _state.ResumeShuffleAsync(ct).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    toast,
+                    playback = _state.Sonos.GetPlaybackSessionSnapshot(),
+                    activeRoom = _state.Sonos.ActiveRoom,
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("MCP resume_shuffle failed", ex);
+                return JsonSerializer.Serialize(new { ok = false, error = ex.Message }, JsonOptions);
+            }
+        }, category: "control");
+
+    [McpServerTool(Name = "play_tag")]
+    [Description("Play all library tracks with a catalog tag (e.g. Favs, Let's Rock), shuffled by default. Replaces the queue. When ContinueLibraryShuffleAfterSpecialPlay is true (default), auto top-up continues into full-library shuffle near the end of the tag queue — same as after play_library_track.")]
+    public Task<string> PlayTag(
+        [Description("Tag label or key from list_tags (e.g. Favs)")] string tag,
+        [Description("Shuffle the tag queue (default true)")] bool shuffle = true,
+        CancellationToken ct = default) =>
+        McpActivityLog.RunAsync("play_tag", new { tag, shuffle }, async () =>
+        {
+            if (_state.PlayTaggedTracksAsync is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "play_tag not wired." }, JsonOptions);
+            if (string.IsNullOrWhiteSpace(tag))
+                return JsonSerializer.Serialize(new { ok = false, error = "tag is required" }, JsonOptions);
+
+            try
+            {
+                var toast = await _state.PlayTaggedTracksAsync(tag.Trim(), shuffle, ct).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    toast,
+                    tag = tag.Trim(),
+                    shuffle,
+                    playback = _state.Sonos.GetPlaybackSessionSnapshot(),
+                    activeRoom = _state.Sonos.ActiveRoom,
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("MCP play_tag failed", ex);
+                return JsonSerializer.Serialize(new { ok = false, error = ex.Message, tag }, JsonOptions);
+            }
+        }, category: "control");
 
     [McpServerTool(Name = "fresh_start")]
     [Description("Re-discover, regroup all speakers, and shuffle the library (Fresh Start).")]

@@ -188,6 +188,16 @@ public sealed class LibraryService : IDisposable
         }
     }
 
+    /// <summary>All cached tracks that have the given catalog tag (label or key).</summary>
+    public IReadOnlyList<LibraryTrack> GetTracksWithTag(string tagToken)
+    {
+        var s = _settings().EnsureShape();
+        var key = s.ResolveTagToken(tagToken);
+        if (key is null)
+            return [];
+        return _db.FindTracksPossiblyWithTagKey(key);
+    }
+
     public IReadOnlyList<LibraryTrack> Search(string? query, int limit = 25, int offset = 0, bool sonosUnplayableOnly = false)
     {
         var (field, term) = LibrarySearchQuery.Parse(query);

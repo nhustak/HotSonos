@@ -309,6 +309,10 @@
                         </Grid>
                         <CheckBox x:Name="ShuffleExcludePlayedCheckBox" Content="Exclude recently played tracks from new batches" Margin="0,12,0,0" />
                         <CheckBox x:Name="ShuffleAutoTopUpCheckBox" Content="Auto top-up when the queue is nearly empty" Margin="0,6,0,0" />
+                        <CheckBox x:Name="ContinueShuffleAfterSpecialPlayCheckBox"
+                                  Content="After one track or tag queue (e.g. Favs), top-up into full library shuffle"
+                                  Margin="0,6,0,0"
+                                  ToolTip="Default on. When off, a one-shot or play_tag queue ends without appending house shuffle." />
                         <CheckBox x:Name="ShuffleArtistSpreadCheckBox" Content="Avoid same artist back-to-back when building a batch" Margin="0,6,0,0" />
                         <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
                             <Button Content="Clear play history" Height="30" Padding="14,0"

@@ -157,6 +157,12 @@ public sealed class AppSettings
     /// <summary>When near the end of the queue, append another random batch automatically.</summary>
     public bool ShuffleAutoTopUp { get; set; } = true;
 
+    /// <summary>
+    /// After a one-shot track or tag queue (e.g. play Favs), when the queue runs low,
+    /// auto top-up with full-library shuffle. Default true — “play this, then keep going.”
+    /// </summary>
+    public bool ContinueLibraryShuffleAfterSpecialPlay { get; set; } = true;
+
     /// <summary>Prefer not placing the same artist back-to-back when building a batch.</summary>
     public bool ShuffleArtistSpread { get; set; } = true;
 
