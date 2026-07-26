@@ -68,7 +68,7 @@ public partial class QuickPlayOverlay : Window
                 payload: t.Key));
         }
 
-        if (_library is not null)
+        if (_settings.ShowGenresInPlaySources && _library is not null)
         {
             foreach (var (genre, count) in _library.ListGenres())
             {

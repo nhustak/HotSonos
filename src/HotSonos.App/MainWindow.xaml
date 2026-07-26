@@ -92,17 +92,23 @@
                             <Border Background="#FFEAF8F0" CornerRadius="6" Padding="12" Margin="0,0,0,8"
                                     BorderBrush="#FF2ECC71" BorderThickness="1">
                                 <StackPanel>
-                                    <TextBlock Text="🔀 Shuffle my Music Library" FontSize="15" FontWeight="SemiBold"
+                                    <TextBlock Text="🔀 Shuffle" FontSize="15" FontWeight="SemiBold"
                                                Foreground="#FF1C2536" />
-                                    <TextBlock Text="History-aware shuffle of your Sonos Music Library to the selected speakers."
+                                    <TextBlock Text="Pick All (whole library), a tag, or a genre — then start. History-aware top-up applies to full-library shuffle."
                                                Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
                                     <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="From" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold" />
+                                        <ComboBox x:Name="ControlShuffleSourceCombo" Height="32" Width="220" MinWidth="160"
+                                                  VerticalContentAlignment="Center" Margin="0,0,10,0"
+                                                  SelectionChanged="ControlShuffleSourceCombo_SelectionChanged" />
                                         <Button Content="🔀  Start shuffle now" Height="32" Padding="14,0" Margin="0,0,12,0"
                                                 Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
                                                 Click="ShuffleLibraryButton_Click" />
-                                        <TextBlock Text="Hotkey" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                        <TextBox x:Name="ShuffleHotkeyBox" Style="{StaticResource HotkeyBox}" Width="130"
-                                                 PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                                        <TextBlock Text="Hotkey" VerticalAlignment="Center" Margin="0,0,6,0"
+                                                   ToolTip="Always full library shuffle (All)" />
+                                        <TextBox x:Name="ShuffleHotkeyBox" Style="{StaticResource HotkeyBox}" Width="110"
+                                                 PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus"
+                                                 ToolTip="Always full library shuffle (All)" />
                                         <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="Shuffle" Click="ClearHotkey_Click" />
                                     </StackPanel>
                                     <Separator Margin="0,12,0,10" Background="#FF2ECC71" Opacity="0.4" />
@@ -429,6 +435,10 @@
                                   Margin="0,6,0,0"
                                   ToolTip="Default on. When off, a one-shot or play_tag queue ends without appending house shuffle." />
                         <CheckBox x:Name="ShuffleArtistSpreadCheckBox" Content="Avoid same artist back-to-back when building a batch" Margin="0,6,0,0" />
+                        <CheckBox x:Name="ShowGenresInPlaySourcesCheckBox"
+                                  Content="Show genres in shuffle / play lists (Control, Quick Play, favorite slots)"
+                                  Margin="0,12,0,0"
+                                  ToolTip="Off for users who only want All + HotSonos tags + Sonos favorites. Genres come from standard file Genre tags." />
                         <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
                             <Button Content="Clear play history" Height="30" Padding="14,0"
                                     Click="ClearPlayHistoryButton_Click" />

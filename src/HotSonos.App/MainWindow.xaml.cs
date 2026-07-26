@@ -236,6 +236,7 @@ public partial class MainWindow : Window
         ShuffleAutoTopUpCheckBox.IsChecked = _settings.ShuffleAutoTopUp;
         ContinueShuffleAfterSpecialPlayCheckBox.IsChecked = _settings.ContinueLibraryShuffleAfterSpecialPlay;
         ShuffleArtistSpreadCheckBox.IsChecked = _settings.ShuffleArtistSpread;
+        ShowGenresInPlaySourcesCheckBox.IsChecked = _settings.ShowGenresInPlaySources;
         RefreshPlayHistoryStatus();
         SonosLibraryRootsBox.Text = string.Join(Environment.NewLine, _settings.SonosLibraryRoots);
         MasterLibraryRootBox.Text = _settings.MasterLibraryRoot ?? string.Empty;
@@ -252,6 +253,7 @@ public partial class MainWindow : Window
         PopulateRooms();
         _ = LoadFavoritesAsync();
         _ = LoadSpeakerVolumesAsync();
+        RefreshControlShuffleSourceCombo();
         RefreshControlPlayList();
         _loaded = true;
 
@@ -361,7 +363,10 @@ public partial class MainWindow : Window
         else if (MainTabs.SelectedItem == TagsTab)
             RefreshTagsCatalogGrid();
         else if (MainTabs.SelectedItem == ControlTab)
+        {
+            RefreshControlShuffleSourceCombo();
             RefreshControlPlayList();
+        }
     }
 
     private void RefreshMcpEndpointUi()
@@ -1561,15 +1566,97 @@ public partial class MainWindow : Window
 
         RefreshControlPlayList();
 
-        var genreCount = _library?.ListGenres().Count ?? 0;
+        var genreCount = GetPlayGenres().Count;
         if (titles.Count == 0 && _settings.Tags.Count == 0 && genreCount == 0)
             SetStatus("No tags, genres, or Sonos playlists yet. Rescan Library; add tags on Tags tab; Refresh for Sonos favorites.", warn: true);
+
+        RefreshControlShuffleSourceCombo();
+    }
+
+    /// <summary>Genres for UI pickers when the option is enabled; empty when disabled.</summary>
+    private IReadOnlyList<(string Genre, int Count)> GetPlayGenres()
+    {
+        if (!_settings.ShowGenresInPlaySources || _library is null)
+            return [];
+        return _library.ListGenres();
     }
 
     /// <summary>Slot picker entry: Sonos favorite/playlist, HotSonos tag, or genre.</summary>
     private sealed record SlotPick(string Display, string Source, string? SonosName, string? TagKey, string? GenreName = null)
     {
         public override string ToString() => Display;
+    }
+
+    private sealed record ControlShufflePick(string Display, string Token)
+    {
+        public override string ToString() => Display;
+    }
+
+    private bool _suppressControlShufflePick;
+
+    private void RefreshControlShuffleSourceCombo()
+    {
+        if (ControlShuffleSourceCombo is null)
+            return;
+
+        _suppressControlShufflePick = true;
+        try
+        {
+            var want = (_settings.ControlShuffleSource ?? AppSettings.ControlShuffleAll).Trim();
+            ControlShuffleSourceCombo.Items.Clear();
+            ControlShuffleSourceCombo.Items.Add(new ControlShufflePick("All · Music Library", AppSettings.ControlShuffleAll));
+
+            foreach (var t in _settings.EnsureShape().Tags)
+            {
+                var count = _library?.GetTracksWithTag(t.Key).Count ?? 0;
+                ControlShuffleSourceCombo.Items.Add(new ControlShufflePick(
+                    count > 0 ? $"Tag · {t.Label} ({count})" : $"Tag · {t.Label}",
+                    $"tag:{t.Key}"));
+            }
+
+            foreach (var (genre, count) in GetPlayGenres())
+            {
+                ControlShuffleSourceCombo.Items.Add(new ControlShufflePick(
+                    $"Genre · {genre} ({count})",
+                    $"genre:{genre}"));
+            }
+
+            // Keep a bound selection even if genres are currently hidden or counts changed.
+            object? select = ControlShuffleSourceCombo.Items.OfType<ControlShufflePick>()
+                .FirstOrDefault(p => string.Equals(p.Token, want, StringComparison.OrdinalIgnoreCase));
+
+            if (select is null && want.StartsWith("tag:", StringComparison.OrdinalIgnoreCase))
+            {
+                var key = want["tag:".Length..].Trim();
+                var label = _settings.FindTag(key)?.Label ?? key;
+                select = new ControlShufflePick($"Tag · {label}", want);
+                ControlShuffleSourceCombo.Items.Add(select);
+            }
+            else if (select is null && want.StartsWith("genre:", StringComparison.OrdinalIgnoreCase))
+            {
+                var name = want["genre:".Length..].Trim();
+                select = new ControlShufflePick($"Genre · {name}", want);
+                ControlShuffleSourceCombo.Items.Add(select);
+            }
+
+            ControlShuffleSourceCombo.SelectedItem = select ?? ControlShuffleSourceCombo.Items[0];
+        }
+        finally
+        {
+            _suppressControlShufflePick = false;
+        }
+    }
+
+    private void ControlShuffleSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressControlShufflePick || !_loaded)
+            return;
+        if (ControlShuffleSourceCombo.SelectedItem is not ControlShufflePick pick)
+            return;
+
+        _settings.ControlShuffleSource = pick.Token;
+        try { _store.Save(_settings); }
+        catch (Exception ex) { AppLog.Warn("Save ControlShuffleSource failed", ex); }
     }
 
     private void PopulateSlotCombo(ComboBox combo, IReadOnlyList<string> sonosTitles, FavoriteSlot bound)
@@ -1580,15 +1667,14 @@ public partial class MainWindow : Window
         foreach (var t in _settings.EnsureShape().Tags)
             combo.Items.Add(new SlotPick($"Tag · {t.Label}", FavoriteSlot.SourceTag, null, t.Key));
 
-        if (_library is not null)
+        foreach (var (genre, count) in GetPlayGenres())
         {
-            foreach (var (genre, count) in _library.ListGenres())
-                combo.Items.Add(new SlotPick(
-                    $"Genre · {genre} ({count})",
-                    FavoriteSlot.SourceGenre,
-                    null,
-                    null,
-                    genre));
+            combo.Items.Add(new SlotPick(
+                $"Genre · {genre} ({count})",
+                FavoriteSlot.SourceGenre,
+                null,
+                null,
+                genre));
         }
 
         foreach (var title in sonosTitles)
@@ -1632,14 +1718,14 @@ public partial class MainWindow : Window
         combo.SelectedItem = select;
     }
 
-    /// <summary>Build Control-tab list: tags, genres, Sonos favorites/playlists with one-click Play.</summary>
+    /// <summary>Build Control-tab list: tags, genres (if enabled), Sonos favorites/playlists with one-click Play.</summary>
     private void RefreshControlPlayList()
     {
         if (ControlPlayListBox is null)
             return;
 
         var rows = new List<ControlPlayRow>();
-        var genres = _library?.ListGenres() ?? [];
+        var genres = GetPlayGenres();
 
         foreach (var t in _settings.EnsureShape().Tags)
         {
@@ -1675,13 +1761,17 @@ public partial class MainWindow : Window
         }
 
         ControlPlayListBox.ItemsSource = rows;
+        var genreBit = _settings.ShowGenresInPlaySources
+            ? $" · {genres.Count} genre(s)"
+            : " · genres hidden";
         ControlPlayListStatus.Text = rows.Count == 0
-            ? "No tags, genres, or Sonos playlists yet. Rescan Library; add tags on Tags; Refresh for Sonos favorites."
-            : $"{_settings.Tags.Count} tag(s) · {genres.Count} genre(s) · {_sonosPlayableTitles.Count} Sonos item(s)";
+            ? "No tags or Sonos playlists yet. Rescan Library; add tags on Tags; Refresh for Sonos favorites."
+            : $"{_settings.Tags.Count} tag(s){genreBit} · {_sonosPlayableTitles.Count} Sonos item(s)";
     }
 
     private void ControlPlayListRefresh_Click(object sender, RoutedEventArgs e)
     {
+        RefreshControlShuffleSourceCombo();
         RefreshControlPlayList();
         _ = LoadFavoritesAsync();
         SetStatus("Refreshed tags, genres & Sonos playlists list.", warn: false);
@@ -1828,10 +1918,16 @@ public partial class MainWindow : Window
         if (failures.Count > 0)
         {
             SetStatus($"Saved, but these hotkeys are in use elsewhere: {string.Join(", ", failures)}", warn: true);
-            return;
+        }
+        else
+        {
+            SetStatus("Saved. Hotkeys are active.", warn: false);
         }
 
-        SetStatus("Saved. Hotkeys are active.", warn: false);
+        // Genre visibility / shuffle picker may have changed.
+        RefreshControlShuffleSourceCombo();
+        RefreshControlPlayList();
+        _ = LoadFavoritesAsync();
     }
 
     private void HideButton_Click(object sender, RoutedEventArgs e)
@@ -1955,6 +2051,9 @@ public partial class MainWindow : Window
         _settings.ShuffleExcludePlayed = ShuffleExcludePlayedCheckBox.IsChecked == true;
         _settings.ShuffleAutoTopUp = ShuffleAutoTopUpCheckBox.IsChecked == true;
         _settings.ContinueLibraryShuffleAfterSpecialPlay = ContinueShuffleAfterSpecialPlayCheckBox.IsChecked == true;
+        _settings.ShowGenresInPlaySources = ShowGenresInPlaySourcesCheckBox.IsChecked == true;
+        if (ControlShuffleSourceCombo.SelectedItem is ControlShufflePick shufflePick)
+            _settings.ControlShuffleSource = shufflePick.Token;
         _settings.ShuffleArtistSpread = ShuffleArtistSpreadCheckBox.IsChecked == true;
 
         _settings.SonosLibraryRoots = SplitLibraryRoots(SonosLibraryRootsBox.Text);
@@ -2028,7 +2127,85 @@ public partial class MainWindow : Window
 
     private void ShuffleLibraryButton_Click(object sender, RoutedEventArgs e)
     {
-        SetStatus("Starting library shuffle…", warn: false);
+        // Persist picker selection immediately.
+        if (ControlShuffleSourceCombo.SelectedItem is ControlShufflePick pick)
+            _settings.ControlShuffleSource = pick.Token;
+
+        var token = (_settings.ControlShuffleSource ?? AppSettings.ControlShuffleAll).Trim();
+        if (string.IsNullOrEmpty(token) ||
+            string.Equals(token, AppSettings.ControlShuffleAll, StringComparison.OrdinalIgnoreCase))
+        {
+            SetStatus("Starting full library shuffle…", warn: false);
+            _runAction(HotsonosAction.ShuffleLibrary);
+            return;
+        }
+
+        if (token.StartsWith("tag:", StringComparison.OrdinalIgnoreCase))
+        {
+            var key = token["tag:".Length..].Trim();
+            if (key.Length == 0)
+            {
+                SetStatus("Pick a tag in the shuffle From list.", warn: true);
+                return;
+            }
+
+            if (_library is null)
+            {
+                SetStatus("Library service not available.", warn: true);
+                return;
+            }
+
+            var label = _settings.FindTag(key)?.Label ?? key;
+            SetStatus($"Shuffling tag “{label}”…", warn: false);
+            Dispatcher.BeginInvoke(new Action(async () =>
+            {
+                try
+                {
+                    var toast = await _sonos.PlayTaggedTracksAsync(_library, key, shuffle: true);
+                    SetStatus(toast, warn: false);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Control shuffle tag failed", ex);
+                    SetStatus(ex.Message, warn: true);
+                }
+            }), DispatcherPriority.Background);
+            return;
+        }
+
+        if (token.StartsWith("genre:", StringComparison.OrdinalIgnoreCase))
+        {
+            var genre = token["genre:".Length..].Trim();
+            if (genre.Length == 0)
+            {
+                SetStatus("Pick a genre in the shuffle From list.", warn: true);
+                return;
+            }
+
+            if (_library is null)
+            {
+                SetStatus("Library service not available.", warn: true);
+                return;
+            }
+
+            SetStatus($"Shuffling genre “{genre}”…", warn: false);
+            Dispatcher.BeginInvoke(new Action(async () =>
+            {
+                try
+                {
+                    var toast = await _sonos.PlayGenreTracksAsync(_library, genre, shuffle: true);
+                    SetStatus(toast, warn: false);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Control shuffle genre failed", ex);
+                    SetStatus(ex.Message, warn: true);
+                }
+            }), DispatcherPriority.Background);
+            return;
+        }
+
+        SetStatus("Starting full library shuffle…", warn: false);
         _runAction(HotsonosAction.ShuffleLibrary);
     }
 

@@ -4,7 +4,7 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.26** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
+**Version 1.0.0.27** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
@@ -13,10 +13,10 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
 
 ### Product direction
-- **Today:** history-aware daily shuffle, transport/volume hotkeys, favorite slots (Sonos, tag, or **genre**), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), **shuffle by Genre**, Control play list, Quick Tag / Quick Play overlays, loopback MCP for agents.
+- **Today:** history-aware shuffle (**All**, **tag**, or **genre** from Control), transport/volume hotkeys, favorite slots (Sonos / tag / genre), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play, optional **hide genres** for simpler installs, loopback MCP for agents.
 - **Settings UI:** left vertical nav — **Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug**.
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
-- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/master, play track/tag, logs).
+- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre, logs).
 
 ---
 
@@ -25,9 +25,19 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 ### 🔀 History-aware library shuffle
 Groups speakers and builds a short random mix from your music library, leaves out songs you’ve already heard recently, and plays that list straight through. When the list is almost done, it adds another fresh batch the same way. That starts music quickly and keeps the day from repeating what you already listened to.
 
-Trigger with **double-click tray icon** (configurable), hotkey, Control **Start shuffle**, Quick Play slot **1**, or MCP `shuffle_library`. Optional **artist spacing** and all parameters (queue size, top-up size, history days, clear history) live under **Shuffle**.
+**Control → Shuffle** is no longer “always everything.” Use the **From** dropdown, then **Start shuffle now**:
 
-**After a special play** (one track, tag queue, or favorite slot): by default HotSonos **continues into full-library shuffle** when the special queue runs low (same auto top-up machinery). Turn that off under **Shuffle** if you want special plays to end cleanly.
+| From | What plays |
+|------|------------|
+| **All · Music Library** | History-aware full-library shuffle (same as the shuffle hotkey / tray double-click default) |
+| **Tag · …** | Shuffled HotSonos tag set (optional top-up into full library when enabled) |
+| **Genre · …** | Shuffled tracks matching the standard Genre field (same top-up rules; hidden if genres are off) |
+
+Also: **double-click tray icon** (configurable), **hotkey** (always **All**), Quick Play slot **1**, MCP `shuffle_library` / `play_tag` / `play_genre`. Optional **artist spacing** and queue/history parameters live under **Shuffle**.
+
+**Hide genres for another user:** **Shuffle → Show genres in shuffle / play lists** — off removes genres from Control **From**, Control play list, Quick Play, and favorite-slot dropdowns (tags + All + Sonos stay).
+
+**After a special play** (one track, tag, or genre queue): by default HotSonos **continues into full-library shuffle** when the special queue runs low. Turn that off under **Shuffle** if you want special plays to end cleanly.
 
 #### Shuffle FAQ
 
@@ -68,7 +78,7 @@ Flat tag catalog: each tag has an **opaque key** (stored in files) and a **renam
 - **New install seed:** Slow, Medium, Fast, Dinner, Drive, Focus (editable on the **Tags** tab).
 - **Library:** select tracks → click chips (or keys **1–9**) to toggle tags. Create/rename/reorder/delete on **Tags** only.
 - **Play a tag:** Control list, Quick Play (**2–9**), favorite slot bound to a tag, or MCP `play_tag` — shuffles matching tracks, then (by default) top-ups into house shuffle.
-- **Play a genre:** same places as tags, using the standard **Genre** field from your files (from the library cache after scan). Control list, Quick Play, favorite slots, MCP `list_genres` / `play_genre`.
+- **Play a genre:** same places as tags, using the standard **Genre** field from your files (library cache after scan). Control **From** + play list, Quick Play, favorite slots, MCP `list_genres` / `play_genre`. Optional — hide via **Shuffle** for installs that don’t want genre UI.
 - Search prefixes: free text, or `T:` title · `A:` artist · `TG:` tag · `F:` format (one prefix at a time).
 
 > Legacy `HOTSONOS_TEMPO` is no longer a special case; leftover tempo tokens are migrated into the flat catalog where needed.
@@ -83,8 +93,9 @@ Flat tag catalog: each tag has an **opaque key** (stored in files) and a **renam
 Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **library genre**, with its own hotkey. Same playback path as Control Play / `play_favorite_slot`.
 
 ### 🎮 Control page
-- Start shuffle / Restart fresh, level-all, target room, **full-width speakers** (volume + mute; list grows with window height).
+- **From** dropdown (All / tag / genre) + **Start shuffle now** / Restart fresh, level-all, target room, **full-width speakers**.
 - **Play tags, genres & Sonos playlists** — one-click play; list shares vertical space with speakers.
+- Hide genres for other users under **Shuffle → Show genres in shuffle / play lists**.
 - Layout keeps **labels + fields + buttons grouped left** (no stretch-to-far-right action buttons).
 
 ### 📚 Local library cache
@@ -199,7 +210,8 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 - **Control** — SOAP on TCP **1400** to group coordinators.  
 - **Shuffle** — browse `A:TRACKS`, exclude recently **played** tracks, short queue (~80 default), auto **top-up** near end, play in `NORMAL` mode.  
 - **Tags** — catalog in settings; keys written into audio files as `HOTSONOS_TAGS`; SQLite is a rebuildable cache only.  
-- **Tag / one-shot play** — client builds a queue from the library cache; optional continue into full-library top-up (`ContinueLibraryShuffleAfterSpecialPlay`).  
+- **Tag / genre / one-shot play** — client builds a queue from the library cache; optional continue into full-library top-up (`ContinueLibraryShuffleAfterSpecialPlay`).  
+- **Control shuffle From** — `ControlShuffleSource` = `all` | `tag:{key}` | `genre:{name}`; genres gated by `ShowGenresInPlaySources`.  
 - **Library** — filesystem scan under discovered UNC roots; optional master match for dual-write.  
 - **MCP** — Kestrel loopback host inside the tray process.  
 - **GENA** — local listener for now-playing and topology.
@@ -218,6 +230,11 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 ---
 
 ## Changelog
+
+### 1.0.0.27
+- **Control shuffle From:** dropdown (All · tags · genres) before **Start shuffle now** — not always full library  
+- **Shuffle → Show genres…** option to hide genres from all play/shuffle pickers (other-user installs)  
+- Hotkey shuffle remains full library (All)
 
 ### 1.0.0.26
 - **Shuffle by genre:** play/shuffle all tracks with a standard Genre label (from library cache)  

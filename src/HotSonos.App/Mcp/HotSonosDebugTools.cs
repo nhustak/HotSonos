@@ -250,6 +250,8 @@ public sealed class HotSonosDebugTools
                 s.ShuffleAutoTopUp,
                 s.ContinueLibraryShuffleAfterSpecialPlay,
                 s.ShuffleArtistSpread,
+                s.ShowGenresInPlaySources,
+                s.ControlShuffleSource,
                 playHistoryDistinct = _state.Sonos.PlayHistory.PlayedDistinctCount,
                 sonosLibraryRoots = s.SonosLibraryRoots,
                 s.MasterLibraryRoot,

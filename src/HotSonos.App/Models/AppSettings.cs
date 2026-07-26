@@ -222,6 +222,20 @@ public sealed class AppSettings
     /// <summary>Prefer not placing the same artist back-to-back when building a batch.</summary>
     public bool ShuffleArtistSpread { get; set; } = true;
 
+    /// <summary>
+    /// When true (default), standard Genre values appear in Control / Quick Play / favorite-slot
+    /// pickers. Turn off for installs that only want All + HotSonos tags (+ Sonos).
+    /// </summary>
+    public bool ShowGenresInPlaySources { get; set; } = true;
+
+    /// <summary>
+    /// Control-tab shuffle picker: <c>all</c>, <c>tag:{key}</c>, or <c>genre:{name}</c>.
+    /// Hotkey shuffle remains full library; this only affects the Start shuffle button.
+    /// </summary>
+    public string ControlShuffleSource { get; set; } = "all";
+
+    public const string ControlShuffleAll = "all";
+
     /// <summary>Exactly <see cref="FavoriteSlotCount"/> favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
 
@@ -315,6 +329,9 @@ public sealed class AppSettings
         if (ShuffleTopUpTracks is < 10 or > 300) ShuffleTopUpTracks = 60;
         if (ShuffleHistoryDays is < 1 or > 90) ShuffleHistoryDays = 14;
         if (ShuffleTopUpWhenRemaining is < 1 or > 30) ShuffleTopUpWhenRemaining = 4;
+        ControlShuffleSource = string.IsNullOrWhiteSpace(ControlShuffleSource)
+            ? ControlShuffleAll
+            : ControlShuffleSource.Trim();
         FavoriteSlots ??= [];
         while (FavoriteSlots.Count < FavoriteSlotCount)
             FavoriteSlots.Add(new FavoriteSlot());
