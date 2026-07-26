@@ -539,6 +539,92 @@ public sealed class LibraryDb : IDisposable
     }
 
     /// <summary>
+    /// Distinct genre labels from the cache (splits multi-value genre fields on ; and |).
+    /// Ordered by track count descending, then name.
+    /// </summary>
+    public IReadOnlyList<(string Genre, int Count)> ListGenres(int minCount = 1)
+    {
+        if (minCount < 1) minCount = 1;
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        lock (_gate)
+        {
+            EnsureOpen();
+            using var cmd = _conn!.CreateCommand();
+            cmd.CommandText =
+                """
+                SELECT genre FROM tracks
+                WHERE genre IS NOT NULL AND TRIM(genre) != '';
+                """;
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                if (reader.IsDBNull(0)) continue;
+                foreach (var g in SplitGenreLabels(reader.GetString(0)))
+                {
+                    counts.TryGetValue(g, out var n);
+                    counts[g] = n + 1;
+                }
+            }
+        }
+
+        return counts
+            .Where(kv => kv.Value >= minCount)
+            .OrderByDescending(kv => kv.Value)
+            .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+            // Canonical casing: first-seen key is already stored; re-key for display stability
+            .Select(kv => (Genre: kv.Key, Count: kv.Value))
+            .ToList();
+    }
+
+    /// <summary>Tracks whose genre field contains <paramref name="genre"/> as a whole label (case-insensitive).</summary>
+    public IReadOnlyList<LibraryTrack> FindTracksWithGenre(string genre)
+    {
+        genre = (genre ?? "").Trim();
+        if (genre.Length == 0)
+            return [];
+
+        lock (_gate)
+        {
+            EnsureOpen();
+            using var cmd = _conn!.CreateCommand();
+            // Prefilter with LIKE; exact label match after split (handles multi-genre files).
+            cmd.CommandText =
+                $"""
+                SELECT {SelectTrackCols}
+                FROM tracks
+                WHERE genre IS NOT NULL AND genre LIKE $q ESCAPE '\';
+                """;
+            cmd.Parameters.AddWithValue("$q", "%" + EscapeLike(genre) + "%");
+            var list = new List<LibraryTrack>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var t = ReadTrack(reader);
+                if (TrackHasGenreLabel(t.Genre, genre))
+                    list.Add(t);
+            }
+
+            return list;
+        }
+    }
+
+    /// <summary>Split free-text / multi-value genre fields into discrete labels.</summary>
+    public static IEnumerable<string> SplitGenreLabels(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            yield break;
+        foreach (var part in raw.Split([';', '|'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (part.Length > 0)
+                yield return part;
+        }
+    }
+
+    public static bool TrackHasGenreLabel(string? trackGenre, string genre) =>
+        SplitGenreLabels(trackGenre)
+            .Any(g => string.Equals(g, genre, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Tracks whose cache row likely contains <paramref name="tagKey"/> in custom_tags JSON.
     /// Caller should filter with <see cref="LibraryTrack.HasTagKey"/>.
     /// </summary>

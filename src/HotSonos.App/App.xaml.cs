@@ -192,6 +192,7 @@ public partial class App : System.Windows.Application
             PlayLibraryTrackAsync = McpPlayLibraryTrackAsync,
             ResumeShuffleAsync = McpResumeShuffleAsync,
             PlayTaggedTracksAsync = McpPlayTaggedTracksAsync,
+            PlayGenreTracksAsync = McpPlayGenreTracksAsync,
         };
         _mcpHost = new HotSonosMcpHost();
 
@@ -348,6 +349,30 @@ public partial class App : System.Windows.Application
             if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                 await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction($"▶ {tag}…"));
             var toast = await _sonos.PlayTaggedTracksAsync(_library, tag, shuffle, ct).ConfigureAwait(false);
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
+            return toast;
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
+    private async Task<string> McpPlayGenreTracksAsync(string genre, bool shuffle, CancellationToken ct)
+    {
+        if (_library is null)
+            throw new InvalidOperationException("Library service not available.");
+
+        if (!await _actionGate.WaitAsync(0).ConfigureAwait(false))
+            return "Busy — already re-syncing / shuffling…";
+
+        try
+        {
+            AppLog.Info($"MCP play_genre: {genre} shuffle={shuffle}");
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction($"▶ Genre · {genre}…"));
+            var toast = await _sonos.PlayGenreTracksAsync(_library, genre, shuffle, ct).ConfigureAwait(false);
             if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                 await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
             return toast;

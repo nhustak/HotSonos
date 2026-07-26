@@ -40,4 +40,7 @@ public sealed class HotSonosMcpState
 
     /// <summary>Queue all tracks with a tag (label/key), optional shuffle; toast string.</summary>
     public Func<string, bool, CancellationToken, Task<string>>? PlayTaggedTracksAsync { get; set; }
+
+    /// <summary>Queue all tracks with a standard Genre label, optional shuffle; toast string.</summary>
+    public Func<string, bool, CancellationToken, Task<string>>? PlayGenreTracksAsync { get; set; }
 }

@@ -4,7 +4,7 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.25** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
+**Version 1.0.0.26** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
@@ -13,7 +13,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
 
 ### Product direction
-- **Today:** history-aware daily shuffle, transport/volume hotkeys, favorite slots (Sonos or tag), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play overlays, loopback MCP for agents.
+- **Today:** history-aware daily shuffle, transport/volume hotkeys, favorite slots (Sonos, tag, or **genre**), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), **shuffle by Genre**, Control play list, Quick Tag / Quick Play overlays, loopback MCP for agents.
 - **Settings UI:** left vertical nav — **Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug**.
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/master, play track/tag, logs).
@@ -68,6 +68,7 @@ Flat tag catalog: each tag has an **opaque key** (stored in files) and a **renam
 - **New install seed:** Slow, Medium, Fast, Dinner, Drive, Focus (editable on the **Tags** tab).
 - **Library:** select tracks → click chips (or keys **1–9**) to toggle tags. Create/rename/reorder/delete on **Tags** only.
 - **Play a tag:** Control list, Quick Play (**2–9**), favorite slot bound to a tag, or MCP `play_tag` — shuffles matching tracks, then (by default) top-ups into house shuffle.
+- **Play a genre:** same places as tags, using the standard **Genre** field from your files (from the library cache after scan). Control list, Quick Play, favorite slots, MCP `list_genres` / `play_genre`.
 - Search prefixes: free text, or `T:` title · `A:` artist · `TG:` tag · `F:` format (one prefix at a time).
 
 > Legacy `HOTSONOS_TEMPO` is no longer a special case; leftover tempo tokens are migrated into the flat catalog where needed.
@@ -76,14 +77,14 @@ Flat tag catalog: each tag has an **opaque key** (stored in files) and a **renam
 | Overlay | Default | What it does |
 |---|---|---|
 | **Quick Tag** | `Ctrl + Alt + T` | Tag the currently playing library track (keys 1–9 = catalog order). |
-| **Quick Play** | `Ctrl + Alt + P` | **1** = library shuffle; **2–9** = tags & Sonos playlists (same idea as Control Play). |
+| **Quick Play** | `Ctrl + Alt + P` | **1** = library shuffle; **2–9** = tags, genres & Sonos playlists (same idea as Control Play). |
 
 ### ⭐ Favorite slots (1–6)
-Each slot can be a **Sonos favorite/playlist** *or* a **HotSonos tag**, with its own hotkey. Same playback path as Control Play / `play_favorite_slot`.
+Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **library genre**, with its own hotkey. Same playback path as Control Play / `play_favorite_slot`.
 
 ### 🎮 Control page
 - Start shuffle / Restart fresh, level-all, target room, **full-width speakers** (volume + mute; list grows with window height).
-- **Play tags & Sonos playlists** — one-click play; list shares vertical space with speakers.
+- **Play tags, genres & Sonos playlists** — one-click play; list shares vertical space with speakers.
 - Layout keeps **labels + fields + buttons grouped left** (no stretch-to-far-right action buttons).
 
 ### 📚 Local library cache
@@ -109,9 +110,9 @@ Configurable under **Options**: start shuffle (default), open Control, or open L
 ### 🤖 Loopback MCP
 While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery, control, library, tags, play, logs. Live command log on **MCP Debug**. Register via `C:\Project\_mcp` if you use the multi-agent MCP hub.
 
-**Library / tags (examples):** `discover_library_roots`, `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`, `list_tags`, `tag_create`, `tag_rename`, `tag_delete`, `track_toggle_tag`, `track_set_tags`, `track_find_master`, `track_link_master`
+**Library / tags (examples):** `discover_library_roots`, `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`, `list_tags`, `list_genres`, `tag_create`, `tag_rename`, `tag_delete`, `track_toggle_tag`, `track_set_tags`, `track_find_master`, `track_link_master`
 
-**Control (examples):** `play_pause`, next/previous, volume/mute/level, `shuffle_library`, `play_library_track`, `play_tag`, `resume_shuffle`, `fresh_start`, `play_favorite_slot`, `set_active_room`, wake tools
+**Control (examples):** `play_pause`, next/previous, volume/mute/level, `shuffle_library`, `play_library_track`, `play_tag`, `play_genre`, `resume_shuffle`, `fresh_start`, `play_favorite_slot`, `set_active_room`, wake tools
 
 ### Other
 - Single-instance tray app; second launch activates the running window  
@@ -148,8 +149,6 @@ Download the latest **`HotSonos-x.y.z.msi`** from the [Releases page](https://gi
 > The MSI is **unsigned**, so SmartScreen may prompt **More info → Run anyway**.
 
 Each [GitHub Release](https://github.com/nhustak/HotSonos/releases) is produced by CI when a version tag (`v*`) is pushed. Pushes to `master` run [build + test + MSI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml).
-
-> **Note:** GitHub Releases currently go through **v1.0.0.9**. App version in tree is **1.0.0.25** (tags, play, overlays, MCP play tools, Control UX). Tag/push a release when you want an MSI that matches.
 
 ## Requirements
 
@@ -219,6 +218,11 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 ---
 
 ## Changelog
+
+### 1.0.0.26
+- **Shuffle by genre:** play/shuffle all tracks with a standard Genre label (from library cache)  
+- Genres appear in Control Play list, Quick Play (2–9), favorite-slot dropdowns, MCP `list_genres` / `play_genre`  
+- Same optional top-up into full library shuffle as tag play  
 
 ### 1.0.0.25
 - **Control UX:** speakers full-width, grow with window and share height with Play list; mute column no longer clipped  

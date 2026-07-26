@@ -259,6 +259,7 @@ public sealed class HotSonosDebugTools
                     source = f.Source,
                     f.FavoriteName,
                     f.TagKey,
+                    f.GenreName,
                     label = f.DisplayLabel(s),
                     hotkey = f.Hotkey.ToString(),
                 }),
@@ -806,13 +807,65 @@ public sealed class HotSonosDebugTools
             }
         }, category: "control");
 
+    [McpServerTool(Name = "list_genres")]
+    [Description("List distinct Genre field values from the library cache with track counts (standard metadata, not HotSonos tags). Use before play_genre.")]
+    public string ListGenres(
+        [Description("Minimum track count to include (default 1)")] int minCount = 1) =>
+        McpActivityLog.Run("list_genres", new { minCount }, () =>
+        {
+            var lib = _state.Library;
+            if (lib is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "Library not available." }, JsonOptions);
+
+            var genres = lib.ListGenres(minCount);
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                count = genres.Count,
+                genres = genres.Select(g => new { genre = g.Genre, tracks = g.Count }),
+            }, JsonOptions);
+        });
+
+    [McpServerTool(Name = "play_genre")]
+    [Description("Play all library tracks whose standard Genre field matches (case-insensitive label). Shuffled by default. Replaces the queue. When ContinueLibraryShuffleAfterSpecialPlay is true (default), auto top-up continues into full-library shuffle near the end — same as play_tag.")]
+    public Task<string> PlayGenre(
+        [Description("Genre label from list_genres (e.g. Rock, Jazz)")] string genre,
+        [Description("Shuffle the genre queue (default true)")] bool shuffle = true,
+        CancellationToken ct = default) =>
+        McpActivityLog.RunAsync("play_genre", new { genre, shuffle }, async () =>
+        {
+            if (_state.PlayGenreTracksAsync is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "play_genre not wired." }, JsonOptions);
+            if (string.IsNullOrWhiteSpace(genre))
+                return JsonSerializer.Serialize(new { ok = false, error = "genre is required" }, JsonOptions);
+
+            try
+            {
+                var toast = await _state.PlayGenreTracksAsync(genre.Trim(), shuffle, ct).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    toast,
+                    genre = genre.Trim(),
+                    shuffle,
+                    playback = _state.Sonos.GetPlaybackSessionSnapshot(),
+                    activeRoom = _state.Sonos.ActiveRoom,
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("MCP play_genre failed", ex);
+                return JsonSerializer.Serialize(new { ok = false, error = ex.Message, genre }, JsonOptions);
+            }
+        }, category: "control");
+
     [McpServerTool(Name = "fresh_start")]
     [Description("Re-discover, regroup all speakers, and shuffle the library (Fresh Start).")]
     public Task<string> FreshStart(CancellationToken ct) =>
         McpActivityLog.RunAsync("fresh_start", null, () => RunActionAsync(HotsonosAction.FreshStart), category: "control");
 
     [McpServerTool(Name = "play_favorite_slot")]
-    [Description("Play favorite/playlist/tag hotkey slot 1-6 (must be assigned in Settings).")]
+    [Description("Play favorite/playlist/tag/genre hotkey slot 1-6 (must be assigned in Settings).")]
     public Task<string> PlayFavoriteSlot(
         [Description("Slot number 1 through 6")] int slot,
         CancellationToken ct) =>

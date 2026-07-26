@@ -1561,12 +1561,13 @@ public partial class MainWindow : Window
 
         RefreshControlPlayList();
 
-        if (titles.Count == 0 && _settings.Tags.Count == 0)
-            SetStatus("No tags or Sonos playlists yet. Add tags on Tags tab; Sonos favorites after Refresh.", warn: true);
+        var genreCount = _library?.ListGenres().Count ?? 0;
+        if (titles.Count == 0 && _settings.Tags.Count == 0 && genreCount == 0)
+            SetStatus("No tags, genres, or Sonos playlists yet. Rescan Library; add tags on Tags tab; Refresh for Sonos favorites.", warn: true);
     }
 
-    /// <summary>Slot picker entry: Sonos favorite/playlist or HotSonos tag.</summary>
-    private sealed record SlotPick(string Display, string Source, string? SonosName, string? TagKey)
+    /// <summary>Slot picker entry: Sonos favorite/playlist, HotSonos tag, or genre.</summary>
+    private sealed record SlotPick(string Display, string Source, string? SonosName, string? TagKey, string? GenreName = null)
     {
         public override string ToString() => Display;
     }
@@ -1579,6 +1580,17 @@ public partial class MainWindow : Window
         foreach (var t in _settings.EnsureShape().Tags)
             combo.Items.Add(new SlotPick($"Tag · {t.Label}", FavoriteSlot.SourceTag, null, t.Key));
 
+        if (_library is not null)
+        {
+            foreach (var (genre, count) in _library.ListGenres())
+                combo.Items.Add(new SlotPick(
+                    $"Genre · {genre} ({count})",
+                    FavoriteSlot.SourceGenre,
+                    null,
+                    null,
+                    genre));
+        }
+
         foreach (var title in sonosTitles)
             combo.Items.Add(new SlotPick($"Sonos · {title}", FavoriteSlot.SourceSonos, title, null));
 
@@ -1589,6 +1601,25 @@ public partial class MainWindow : Window
                 .FirstOrDefault(p => p.Source == FavoriteSlot.SourceTag
                     && string.Equals(p.TagKey, bound.TagKey, StringComparison.OrdinalIgnoreCase))
                 ?? select;
+        }
+        else if (bound.IsGenre)
+        {
+            select = combo.Items.OfType<SlotPick>()
+                .FirstOrDefault(p => p.Source == FavoriteSlot.SourceGenre
+                    && string.Equals(p.GenreName, bound.GenreName, StringComparison.OrdinalIgnoreCase))
+                ?? select;
+            // Bound genre not currently in cache — still show/select a synthetic entry.
+            if (select == combo.Items[0] && !string.IsNullOrWhiteSpace(bound.GenreName))
+            {
+                var orphan = new SlotPick(
+                    $"Genre · {bound.GenreName}",
+                    FavoriteSlot.SourceGenre,
+                    null,
+                    null,
+                    bound.GenreName);
+                combo.Items.Insert(1, orphan);
+                select = orphan;
+            }
         }
         else if (bound.IsSonos)
         {
@@ -1601,13 +1632,14 @@ public partial class MainWindow : Window
         combo.SelectedItem = select;
     }
 
-    /// <summary>Build Control-tab list: HotSonos tags + Sonos favorites/playlists with one-click Play.</summary>
+    /// <summary>Build Control-tab list: tags, genres, Sonos favorites/playlists with one-click Play.</summary>
     private void RefreshControlPlayList()
     {
         if (ControlPlayListBox is null)
             return;
 
         var rows = new List<ControlPlayRow>();
+        var genres = _library?.ListGenres() ?? [];
 
         foreach (var t in _settings.EnsureShape().Tags)
         {
@@ -1622,6 +1654,16 @@ public partial class MainWindow : Window
                 Payload: t.Key));
         }
 
+        foreach (var (genre, count) in genres)
+        {
+            rows.Add(new ControlPlayRow(
+                Kind: ControlPlayKind.Genre,
+                KindLabel: "Genre",
+                Title: genre,
+                Detail: $"{count} track(s) · shuffled play · library top-up if enabled",
+                Payload: genre));
+        }
+
         foreach (var title in _sonosPlayableTitles)
         {
             rows.Add(new ControlPlayRow(
@@ -1634,15 +1676,15 @@ public partial class MainWindow : Window
 
         ControlPlayListBox.ItemsSource = rows;
         ControlPlayListStatus.Text = rows.Count == 0
-            ? "No tags or Sonos playlists yet. Add tags on the Tags tab; favorites come from the Sonos app (then Refresh)."
-            : $"{_settings.Tags.Count} tag(s) · {_sonosPlayableTitles.Count} Sonos item(s)";
+            ? "No tags, genres, or Sonos playlists yet. Rescan Library; add tags on Tags; Refresh for Sonos favorites."
+            : $"{_settings.Tags.Count} tag(s) · {genres.Count} genre(s) · {_sonosPlayableTitles.Count} Sonos item(s)";
     }
 
     private void ControlPlayListRefresh_Click(object sender, RoutedEventArgs e)
     {
         RefreshControlPlayList();
         _ = LoadFavoritesAsync();
-        SetStatus("Refreshed tags & Sonos playlists list.", warn: false);
+        SetStatus("Refreshed tags, genres & Sonos playlists list.", warn: false);
     }
 
     private void ControlPlayItem_Click(object sender, RoutedEventArgs e)
@@ -1661,7 +1703,7 @@ public partial class MainWindow : Window
             try
             {
                 string toast;
-                if (row.Kind == ControlPlayKind.Tag)
+                if (row.Kind is ControlPlayKind.Tag or ControlPlayKind.Genre)
                 {
                     if (_library is null)
                     {
@@ -1670,7 +1712,9 @@ public partial class MainWindow : Window
                         return;
                     }
 
-                    toast = await _sonos.PlayTaggedTracksAsync(_library, row.Payload, shuffle: true);
+                    toast = row.Kind == ControlPlayKind.Tag
+                        ? await _sonos.PlayTaggedTracksAsync(_library, row.Payload, shuffle: true)
+                        : await _sonos.PlayGenreTracksAsync(_library, row.Payload, shuffle: true);
                 }
                 else
                 {
@@ -1696,6 +1740,7 @@ public partial class MainWindow : Window
     private enum ControlPlayKind
     {
         Tag,
+        Genre,
         Sonos,
     }
 
@@ -1862,18 +1907,28 @@ public partial class MainWindow : Window
                     _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceTag;
                     _settings.FavoriteSlots[i].TagKey = slotPick.TagKey;
                     _settings.FavoriteSlots[i].FavoriteName = null;
+                    _settings.FavoriteSlots[i].GenreName = null;
+                }
+                else if (slotPick.Source == FavoriteSlot.SourceGenre && !string.IsNullOrWhiteSpace(slotPick.GenreName))
+                {
+                    _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceGenre;
+                    _settings.FavoriteSlots[i].GenreName = slotPick.GenreName;
+                    _settings.FavoriteSlots[i].FavoriteName = null;
+                    _settings.FavoriteSlots[i].TagKey = null;
                 }
                 else if (!string.IsNullOrWhiteSpace(slotPick.SonosName))
                 {
                     _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceSonos;
                     _settings.FavoriteSlots[i].FavoriteName = slotPick.SonosName;
                     _settings.FavoriteSlots[i].TagKey = null;
+                    _settings.FavoriteSlots[i].GenreName = null;
                 }
                 else
                 {
                     _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceSonos;
                     _settings.FavoriteSlots[i].FavoriteName = null;
                     _settings.FavoriteSlots[i].TagKey = null;
+                    _settings.FavoriteSlots[i].GenreName = null;
                 }
             }
             else
@@ -1881,6 +1936,7 @@ public partial class MainWindow : Window
                 _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceSonos;
                 _settings.FavoriteSlots[i].FavoriteName = null;
                 _settings.FavoriteSlots[i].TagKey = null;
+                _settings.FavoriteSlots[i].GenreName = null;
             }
         }
 

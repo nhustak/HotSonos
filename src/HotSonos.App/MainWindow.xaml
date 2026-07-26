@@ -169,13 +169,13 @@
                         <DockPanel LastChildFill="True">
                             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="Play tags &amp; Sonos playlists" FontSize="15" FontWeight="SemiBold"
+                                    <TextBlock Text="Play tags, genres &amp; Sonos playlists" FontSize="15" FontWeight="SemiBold"
                                                VerticalAlignment="Center" />
                                     <Button Content="Refresh list" Height="28" Padding="12,0" Margin="12,0,0,0"
                                             Click="ControlPlayListRefresh_Click" />
                                 </StackPanel>
                                 <TextBlock x:Name="ControlPlayListHint"
-                                           Text="Tags are dynamic playlists (tag tracks → they show up here). Play shuffles the set; library top-up continues if enabled in Shuffle."
+                                           Text="Tags and genres shuffle matching library tracks (top-up into house shuffle if enabled). Sonos rows play favorites/playlists."
                                            Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" />
                             </StackPanel>
                             <TextBlock x:Name="ControlPlayListStatus" DockPanel.Dock="Bottom"
@@ -317,7 +317,7 @@
                             <TextBox Grid.Row="5" Grid.Column="1" x:Name="QuickPlayHotkeyBox" Style="{StaticResource HotkeyBox}"
                                      Width="Auto" HorizontalAlignment="Left" Margin="0,4"
                                      PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus"
-                                     ToolTip="Opens play picker: 1=library shuffle, 2–9=tags &amp; Sonos playlists (default Ctrl+Alt+P)" />
+                                     ToolTip="Opens play picker: 1=library shuffle, 2–9=tags, genres &amp; Sonos playlists (default Ctrl+Alt+P)" />
                             <Button Grid.Row="5" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="QuickPlay"
                                     Click="ClearHotkey_Click" />
                             <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
@@ -327,7 +327,7 @@
                         </Grid>
 
                         <TextBlock Text="Playlist / favorite slots" Style="{StaticResource SectionHeader}" />
-                        <TextBlock Text="Each slot: Sonos playlist/favorite or HotSonos tag (dynamic playlist). Assign a hotkey — same as Control Play."
+                        <TextBlock Text="Each slot: Sonos playlist/favorite, HotSonos tag, or library genre. Assign a hotkey — same as Control Play."
                                    Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
                         <Grid x:Name="FavoritesGrid" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions>

@@ -262,8 +262,15 @@ public sealed class SonosManager
                 return await PlayTaggedTracksAsync(library, fs.TagKey!, shuffle: true, ct).ConfigureAwait(false);
             }
 
+            if (fs.IsGenre)
+            {
+                if (library is null)
+                    throw new InvalidOperationException("Library service not available for genre play.");
+                return await PlayGenreTracksAsync(library, fs.GenreName!, shuffle: true, ct).ConfigureAwait(false);
+            }
+
             if (!fs.IsSonos)
-                return $"Slot {slot + 1} is empty — assign a tag or Sonos playlist in Hotkeys.";
+                return $"Slot {slot + 1} is empty — assign a tag, genre, or Sonos playlist in Hotkeys.";
 
             await _controller.PlayFavoriteByNameAsync(fs.FavoriteName!, ct).ConfigureAwait(false);
             _playbackMode = "sonos_fav";
@@ -693,6 +700,61 @@ public sealed class SonosManager
             : " · no library top-up after this queue";
         AppLog.Info($"Play tag “{tagLabel}”: queued {items.Count} (shuffle={shuffle})");
         return $"▶ {tagLabel}: {items.Count} track(s){(shuffle ? " shuffled" : "")}{continueHint}";
+    }
+
+    /// <summary>
+    /// Queue all library tracks matching a standard Genre field label, optionally shuffled, and play.
+    /// Same top-up-into-library-shuffle behavior as tag play when enabled in settings.
+    /// </summary>
+    public async Task<string> PlayGenreTracksAsync(
+        LibraryService library,
+        string genre,
+        bool shuffle = true,
+        CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+        if (library is null)
+            throw new ArgumentNullException(nameof(library));
+
+        genre = (genre ?? "").Trim();
+        if (genre.Length == 0)
+            throw new ArgumentException("Genre is required.", nameof(genre));
+
+        var s = _settings().EnsureShape();
+        var tracks = library.GetTracksWithGenre(genre);
+        if (tracks.Count == 0)
+            throw new InvalidOperationException(
+                $"No tracks in cache with genre “{genre}”. Rescan the library if tags look wrong.");
+
+        var items = new List<(string CifsUri, string? Title, string? Artist)>(tracks.Count);
+        foreach (var t in tracks)
+        {
+            if (!SonosPath.TryToCifsUri(t.Path, out var cifs))
+                continue;
+            items.Add((cifs, t.Title, t.Artist));
+        }
+
+        if (items.Count == 0)
+            throw new InvalidOperationException(
+                $"Genre “{genre}” matched tracks but none had a Sonos-playable path.");
+
+        if (shuffle)
+        {
+            for (var i = items.Count - 1; i > 0; i--)
+            {
+                var j = Random.Shared.Next(i + 1);
+                (items[i], items[j]) = (items[j], items[i]);
+            }
+        }
+
+        await _controller.PlayLibraryUrisAsync(items, ct).ConfigureAwait(false);
+        _playbackMode = "special";
+        var continueHint = s.ContinueLibraryShuffleAfterSpecialPlay
+            ? " · will top-up into library shuffle near end"
+            : " · no library top-up after this queue";
+        AppLog.Info($"Play genre “{genre}”: queued {items.Count} (shuffle={shuffle})");
+        return $"▶ Genre · {genre}: {items.Count} track(s){(shuffle ? " shuffled" : "")}{continueHint}";
     }
 
     /// <summary>Play a Sonos Favorite or saved Playlist by title (same catalog as Settings slots).</summary>

@@ -15,7 +15,7 @@ using Cursors = System.Windows.Input.Cursors;
 namespace HotSonos.App.Windows;
 
 /// <summary>
-/// HotLaunch-style picker: digit 1 = full library shuffle; 2–9 = tags then Sonos favorites/playlists.
+/// HotLaunch-style picker: digit 1 = full library shuffle; 2–9 = tags, genres, then Sonos favorites/playlists.
 /// </summary>
 public partial class QuickPlayOverlay : Window
 {
@@ -66,6 +66,21 @@ public partial class QuickPlayOverlay : Window
                     ? "No tracks tagged yet"
                     : $"{count} track(s) · shuffled · top-up if enabled",
                 payload: t.Key));
+        }
+
+        if (_library is not null)
+        {
+            foreach (var (genre, count) in _library.ListGenres())
+            {
+                if (slot > 9) break;
+                _sources.Add(SourceRow.Make(
+                    slot: slot++,
+                    kind: SourceKind.Genre,
+                    kindLabel: "Genre",
+                    title: genre,
+                    detail: $"{count} track(s) · shuffled · top-up if enabled",
+                    payload: genre));
+            }
         }
 
         foreach (var title in sonosTitles)
@@ -164,6 +179,12 @@ public partial class QuickPlayOverlay : Window
                         toast = await _sonos.PlayTaggedTracksAsync(_library, src.Payload, shuffle: true)
                             .ConfigureAwait(true);
                         break;
+                    case SourceKind.Genre:
+                        if (_library is null)
+                            throw new InvalidOperationException("Library service not available.");
+                        toast = await _sonos.PlayGenreTracksAsync(_library, src.Payload, shuffle: true)
+                            .ConfigureAwait(true);
+                        break;
                     case SourceKind.Sonos:
                         toast = await _sonos.PlaySonosFavoriteByNameAsync(src.Payload).ConfigureAwait(true);
                         break;
@@ -207,6 +228,7 @@ public partial class QuickPlayOverlay : Window
     {
         LibraryShuffle,
         Tag,
+        Genre,
         Sonos,
     }
 

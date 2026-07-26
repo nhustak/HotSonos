@@ -198,6 +198,14 @@ public sealed class LibraryService : IDisposable
         return _db.FindTracksPossiblyWithTagKey(key);
     }
 
+    /// <summary>Distinct genres in the library cache with track counts (multi-value fields split).</summary>
+    public IReadOnlyList<(string Genre, int Count)> ListGenres(int minCount = 1) =>
+        _db.ListGenres(minCount);
+
+    /// <summary>All cached tracks whose Genre field includes <paramref name="genre"/> as a label.</summary>
+    public IReadOnlyList<LibraryTrack> GetTracksWithGenre(string genre) =>
+        _db.FindTracksWithGenre(genre);
+
     public IReadOnlyList<LibraryTrack> Search(string? query, int limit = 25, int offset = 0, bool sonosUnplayableOnly = false)
     {
         var (field, term) = LibrarySearchQuery.Parse(query);

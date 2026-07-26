@@ -1,12 +1,13 @@
 namespace HotSonos.App.Models;
 
-/// <summary>One of the play-source hotkey slots (Sonos favorite/playlist or HotSonos tag).</summary>
+/// <summary>One of the play-source hotkey slots (Sonos favorite/playlist, HotSonos tag, or genre).</summary>
 public sealed class FavoriteSlot
 {
     public const string SourceSonos = "sonos";
     public const string SourceTag = "tag";
+    public const string SourceGenre = "genre";
 
-    /// <summary><see cref="SourceSonos"/> or <see cref="SourceTag"/>.</summary>
+    /// <summary><see cref="SourceSonos"/>, <see cref="SourceTag"/>, or <see cref="SourceGenre"/>.</summary>
     public string Source { get; set; } = SourceSonos;
 
     /// <summary>Title of the Sonos favorite/playlist when <see cref="Source"/> is sonos.</summary>
@@ -15,16 +16,23 @@ public sealed class FavoriteSlot
     /// <summary>Catalog tag key when <see cref="Source"/> is tag.</summary>
     public string? TagKey { get; set; }
 
+    /// <summary>Standard Genre field label when <see cref="Source"/> is genre.</summary>
+    public string? GenreName { get; set; }
+
     public HotkeyConfig Hotkey { get; set; } = new();
 
     public bool IsTag =>
         string.Equals(Source, SourceTag, StringComparison.OrdinalIgnoreCase)
         && !string.IsNullOrWhiteSpace(TagKey);
 
-    public bool IsSonos =>
-        !IsTag && !string.IsNullOrWhiteSpace(FavoriteName);
+    public bool IsGenre =>
+        string.Equals(Source, SourceGenre, StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(GenreName);
 
-    public bool IsSet => IsTag || IsSonos;
+    public bool IsSonos =>
+        !IsTag && !IsGenre && !string.IsNullOrWhiteSpace(FavoriteName);
+
+    public bool IsSet => IsTag || IsGenre || IsSonos;
 
     /// <summary>Tray / UI label for this slot.</summary>
     public string DisplayLabel(AppSettings? settings = null)
@@ -34,6 +42,9 @@ public sealed class FavoriteSlot
             var label = settings?.FindTag(TagKey!)?.Label ?? TagKey;
             return $"Tag · {label}";
         }
+
+        if (IsGenre)
+            return $"Genre · {GenreName}";
 
         if (IsSonos)
             return FavoriteName!;
@@ -315,9 +326,13 @@ public sealed class AppSettings
         // Normalize favorite slots after tags exist (tag labels/keys).
         foreach (var slot in FavoriteSlots)
         {
-            slot.Source = string.Equals(slot.Source, FavoriteSlot.SourceTag, StringComparison.OrdinalIgnoreCase)
-                ? FavoriteSlot.SourceTag
-                : FavoriteSlot.SourceSonos;
+            if (string.Equals(slot.Source, FavoriteSlot.SourceTag, StringComparison.OrdinalIgnoreCase))
+                slot.Source = FavoriteSlot.SourceTag;
+            else if (string.Equals(slot.Source, FavoriteSlot.SourceGenre, StringComparison.OrdinalIgnoreCase))
+                slot.Source = FavoriteSlot.SourceGenre;
+            else
+                slot.Source = FavoriteSlot.SourceSonos;
+
             if (slot.IsTag)
             {
                 var tag = FindTag(slot.TagKey!);
@@ -331,11 +346,24 @@ public sealed class AppSettings
                 {
                     slot.TagKey = tag.Key;
                     slot.FavoriteName = null;
+                    slot.GenreName = null;
                 }
+            }
+            else if (slot.IsGenre)
+            {
+                slot.GenreName = slot.GenreName!.Trim();
+                slot.TagKey = null;
+                slot.FavoriteName = null;
             }
             else if (string.IsNullOrWhiteSpace(slot.FavoriteName))
             {
                 slot.FavoriteName = null;
+                slot.GenreName = null;
+            }
+            else
+            {
+                slot.TagKey = null;
+                slot.GenreName = null;
             }
         }
 

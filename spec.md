@@ -11,14 +11,15 @@
 
 > Update this section **in the same task** whenever library-plan or MCP work advances. This is the resume point after context compression.
 
-### Snapshot (2026-07-23)
+### Snapshot (2026-07-26)
 
 | Item | State |
 |------|--------|
-| **Git HEAD** | See git log — step 4 shipped; quick-tag / custom tags in progress |
-| **App version** | `1.0.0.23` |
+| **Git HEAD** | See git log |
+| **App version** | `1.0.0.26` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
 | **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug |
+| **Play sources** | Full library shuffle · HotSonos tags · **standard Genre** · Sonos favs/playlists (Control / Quick Play / slots 1–6 / MCP) |
 | **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** on this PC |
 | **Library DB** | `%LocalAppData%\HotSonos\library.db`; `master_path` + `custom_tags` JSON |
 
