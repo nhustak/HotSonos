@@ -1,12 +1,45 @@
 namespace HotSonos.App.Models;
 
-/// <summary>One of the four "play a specific favorite/playlist" hotkey slots.</summary>
+/// <summary>One of the play-source hotkey slots (Sonos favorite/playlist or HotSonos tag).</summary>
 public sealed class FavoriteSlot
 {
-    /// <summary>Title of the Sonos favorite/playlist to play; null when unassigned.</summary>
+    public const string SourceSonos = "sonos";
+    public const string SourceTag = "tag";
+
+    /// <summary><see cref="SourceSonos"/> or <see cref="SourceTag"/>.</summary>
+    public string Source { get; set; } = SourceSonos;
+
+    /// <summary>Title of the Sonos favorite/playlist when <see cref="Source"/> is sonos.</summary>
     public string? FavoriteName { get; set; }
 
+    /// <summary>Catalog tag key when <see cref="Source"/> is tag.</summary>
+    public string? TagKey { get; set; }
+
     public HotkeyConfig Hotkey { get; set; } = new();
+
+    public bool IsTag =>
+        string.Equals(Source, SourceTag, StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(TagKey);
+
+    public bool IsSonos =>
+        !IsTag && !string.IsNullOrWhiteSpace(FavoriteName);
+
+    public bool IsSet => IsTag || IsSonos;
+
+    /// <summary>Tray / UI label for this slot.</summary>
+    public string DisplayLabel(AppSettings? settings = null)
+    {
+        if (IsTag)
+        {
+            var label = settings?.FindTag(TagKey!)?.Label ?? TagKey;
+            return $"Tag · {label}";
+        }
+
+        if (IsSonos)
+            return FavoriteName!;
+
+        return "(unset)";
+    }
 }
 
 /// <summary>
@@ -22,6 +55,15 @@ public sealed class AppSettings
 
     /// <summary>Pop the Now-Playing flyout when you trigger an action (skip/volume/etc.).</summary>
     public bool ShowFlyoutOnAction { get; set; } = true;
+
+    /// <summary>
+    /// Tray icon double-click: <see cref="TrayDoubleClickShuffle"/>, <see cref="TrayDoubleClickControl"/>, or <see cref="TrayDoubleClickLibrary"/>.
+    /// </summary>
+    public string TrayDoubleClickAction { get; set; } = TrayDoubleClickShuffle;
+
+    public const string TrayDoubleClickShuffle = "shuffle";
+    public const string TrayDoubleClickControl = "control";
+    public const string TrayDoubleClickLibrary = "library";
 
     /// <summary>Keep the flyout on-screen always (updates live).</summary>
     public bool FlyoutPinned { get; set; }
@@ -134,6 +176,9 @@ public sealed class AppSettings
     /// <summary>Global hotkey that opens the quick-tag overlay for the playing track.</summary>
     public HotkeyConfig QuickTag { get; set; } = new();
 
+    /// <summary>Global hotkey that opens the quick-play overlay (shuffle + tags + Sonos playlists).</summary>
+    public HotkeyConfig QuickPlay { get; set; } = new();
+
     /// <summary>When true, tag writes also dual-write to master when linked.</summary>
     public bool TagUpdateMasterDefault { get; set; } = true;
 
@@ -166,10 +211,10 @@ public sealed class AppSettings
     /// <summary>Prefer not placing the same artist back-to-back when building a batch.</summary>
     public bool ShuffleArtistSpread { get; set; } = true;
 
-    /// <summary>Exactly four favorite slots (see <see cref="EnsureShape"/>).</summary>
+    /// <summary>Exactly <see cref="FavoriteSlotCount"/> favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
 
-    public const int FavoriteSlotCount = 4;
+    public const int FavoriteSlotCount = 6;
 
     /// <summary>True when <paramref name="day"/> is selected in <see cref="WakeDaysMask"/>.</summary>
     public bool WakeIncludesDay(DayOfWeek day) => (WakeDaysMask & (1 << (int)day)) != 0;
@@ -200,11 +245,12 @@ public sealed class AppSettings
             HotsonosAction.LevelVolumes => LevelVolumes,
             HotsonosAction.FreshStart => FreshStart,
             HotsonosAction.QuickTag => QuickTag,
+            HotsonosAction.QuickPlay => QuickPlay,
             _ => new HotkeyConfig(),
         };
     }
 
-    /// <summary>Guarantees there are exactly four favorite slots after load/default.</summary>
+    /// <summary>Guarantees there are exactly <see cref="FavoriteSlotCount"/> favorite slots after load/default.</summary>
     public AppSettings EnsureShape()
     {
         PlayPause ??= new HotkeyConfig();
@@ -217,9 +263,12 @@ public sealed class AppSettings
         LevelVolumes ??= new HotkeyConfig();
         FreshStart ??= new HotkeyConfig();
         QuickTag ??= new HotkeyConfig();
-        // First-time seed so existing installs get a usable quick-tag hotkey.
+        QuickPlay ??= new HotkeyConfig();
+        // First-time seed so existing installs get usable overlay hotkeys.
         if (!QuickTag.IsSet)
             QuickTag = new HotkeyConfig { Control = true, Alt = true, Key = "T" };
+        if (!QuickPlay.IsSet)
+            QuickPlay = new HotkeyConfig { Control = true, Alt = true, Key = "P" };
         if (VolumeStep < 1) VolumeStep = 5;
         if (LevelVolumePercent is < 0 or > 100) LevelVolumePercent = 20;
         if (NightlyResetMinutes is < 0 or > 1439) NightlyResetMinutes = 180;
@@ -232,6 +281,12 @@ public sealed class AppSettings
         if (WakeStepIntervalMinutes < 1) WakeStepIntervalMinutes = 1;
         if (WakeStepIntervalMinutes > 120) WakeStepIntervalMinutes = 120;
         if (McpPort is < 1024 or > 65535) McpPort = 42341;
+        TrayDoubleClickAction = (TrayDoubleClickAction ?? "").Trim().ToLowerInvariant() switch
+        {
+            TrayDoubleClickControl => TrayDoubleClickControl,
+            TrayDoubleClickLibrary => TrayDoubleClickLibrary,
+            _ => TrayDoubleClickShuffle,
+        };
         if (!string.Equals(WakeSource, WakeSourceFavorite, StringComparison.OrdinalIgnoreCase))
             WakeSource = WakeSourceShuffle;
         else
@@ -256,6 +311,34 @@ public sealed class AppSettings
             FavoriteSlots = FavoriteSlots.Take(FavoriteSlotCount).ToList();
 
         EnsureTagCatalog();
+
+        // Normalize favorite slots after tags exist (tag labels/keys).
+        foreach (var slot in FavoriteSlots)
+        {
+            slot.Source = string.Equals(slot.Source, FavoriteSlot.SourceTag, StringComparison.OrdinalIgnoreCase)
+                ? FavoriteSlot.SourceTag
+                : FavoriteSlot.SourceSonos;
+            if (slot.IsTag)
+            {
+                var tag = FindTag(slot.TagKey!);
+                if (tag is null)
+                {
+                    // Orphan tag key — clear binding.
+                    slot.TagKey = null;
+                    slot.Source = FavoriteSlot.SourceSonos;
+                }
+                else
+                {
+                    slot.TagKey = tag.Key;
+                    slot.FavoriteName = null;
+                }
+            }
+            else if (string.IsNullOrWhiteSpace(slot.FavoriteName))
+            {
+                slot.FavoriteName = null;
+            }
+        }
+
         return this;
     }
 
@@ -422,5 +505,6 @@ public sealed class AppSettings
         VolumeDown = new HotkeyConfig { Control = true, Alt = true, Key = "Down" },
         Mute = new HotkeyConfig { Control = true, Alt = true, Key = "M" },
         QuickTag = new HotkeyConfig { Control = true, Alt = true, Key = "T" },
+        QuickPlay = new HotkeyConfig { Control = true, Alt = true, Key = "P" },
     }.EnsureShape();
 }

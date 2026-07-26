@@ -217,6 +217,7 @@ public partial class App : System.Windows.Application
                 CopyDiagnostics: OnCopyDiagnostics,
                 StopWake: () => _wake?.Cancel(),
                 CopyMcpEndpoint: OnCopyMcpEndpoint,
+                DoubleClick: OnTrayDoubleClick,
                 Exit: ExitApplication));
 
         var failures = ApplyBindings();
@@ -465,7 +466,9 @@ public partial class App : System.Windows.Application
     {
         var groups = _sonos.Groups.Select(g => (g.DisplayName, g.CoordinatorRoom)).ToList();
         _tray.UpdateRooms(groups, _settings.ActiveRoom ?? _sonos.ActiveRoom);
-        _tray.UpdateFavorites(_settings.FavoriteSlots.Select(s => s.FavoriteName).ToList());
+        _tray.UpdateFavorites(_settings.FavoriteSlots
+            .Select(s => s.IsSet ? s.DisplayLabel(_settings) : null)
+            .ToList());
         _tray.UpdateOfflineSpeakers(_sonos.OfflineSpeakers);
     }
 
@@ -474,6 +477,12 @@ public partial class App : System.Windows.Application
         if (action == HotsonosAction.QuickTag)
         {
             ShowQuickTagOverlay();
+            return;
+        }
+
+        if (action == HotsonosAction.QuickPlay)
+        {
+            _ = ShowQuickPlayOverlayAsync();
             return;
         }
 
@@ -532,6 +541,35 @@ public partial class App : System.Windows.Application
     }
 
     /// <summary>
+    /// HotLaunch-style picker: 1 = library shuffle, 2–9 = tags then Sonos favorites/playlists.
+    /// </summary>
+    private async Task ShowQuickPlayOverlayAsync()
+    {
+        IReadOnlyList<string> sonosTitles = [];
+        try
+        {
+            var favorites = await _sonos.GetFavoritesAsync().ConfigureAwait(true);
+            sonosTitles = favorites.Where(f => f.IsPlayable).Select(f => f.Title).ToList();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Quick play: favorites load failed", ex);
+        }
+
+        foreach (Window w in Current.Windows)
+        {
+            if (w is QuickPlayOverlay existing)
+            {
+                try { existing.Close(); } catch { /* ignore */ }
+            }
+        }
+
+        var overlay = new QuickPlayOverlay(_sonos, _library, _settings, sonosTitles);
+        overlay.Show();
+        overlay.Activate();
+    }
+
+    /// <summary>
     /// True for multi-second library work that must not stack (queue clear/enqueue races).
     /// </summary>
     private static bool IsExclusiveAction(HotsonosAction action) =>
@@ -575,7 +613,7 @@ public partial class App : System.Windows.Application
             try
             {
                 AppLog.Info($"Action {action}");
-                var toast = await _sonos.ExecuteAsync(action, _settings);
+                var toast = await _sonos.ExecuteAsync(action, _settings, library: _library);
                 if (!string.IsNullOrEmpty(toast))
                 {
                     AppLog.Info($"Action {action} → {toast}");
@@ -729,6 +767,25 @@ public partial class App : System.Windows.Application
         _settings.ActiveRoom = room;
         TrySaveSettings();
         UpdateTrayDynamic();
+    }
+
+    /// <summary>Tray icon double-click — Options: shuffle, open Control, or open Library.</summary>
+    private void OnTrayDoubleClick()
+    {
+        var action = _settings.EnsureShape().TrayDoubleClickAction;
+        if (string.Equals(action, AppSettings.TrayDoubleClickControl, StringComparison.OrdinalIgnoreCase))
+        {
+            ShowMainWindowTab("control");
+            return;
+        }
+
+        if (string.Equals(action, AppSettings.TrayDoubleClickLibrary, StringComparison.OrdinalIgnoreCase))
+        {
+            ShowMainWindowTab("library");
+            return;
+        }
+
+        _ = ExecuteActionAsync(HotsonosAction.ShuffleLibrary);
     }
 
     private void OnRoomChangedFromWindow(string room)

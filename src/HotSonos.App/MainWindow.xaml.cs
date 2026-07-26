@@ -44,6 +44,7 @@ public partial class MainWindow : Window
     private readonly HotkeyConfig _volumeDown;
     private readonly HotkeyConfig _mute;
     private readonly HotkeyConfig _quickTag;
+    private readonly HotkeyConfig _quickPlay;
     private readonly HotkeyConfig[] _favHotkeys;
 
     private readonly Dictionary<TextBox, HotkeyConfig> _boxToConfig = [];
@@ -53,6 +54,8 @@ public partial class MainWindow : Window
     private bool _suppressRoomChange;
     private bool _refreshInProgress;
     private bool _loaded;
+    private bool _controlPlayBusy;
+    private IReadOnlyList<string> _sonosPlayableTitles = [];
 
     public event EventHandler? HideToTrayRequested;
 
@@ -85,6 +88,7 @@ public partial class MainWindow : Window
         _volumeDown = Clone(_settings.VolumeDown);
         _mute = Clone(_settings.Mute);
         _quickTag = Clone(_settings.QuickTag);
+        _quickPlay = Clone(_settings.QuickPlay);
         _favHotkeys = _settings.FavoriteSlots.Select(s => Clone(s.Hotkey)).ToArray();
 
         InitializeComponent();
@@ -100,6 +104,9 @@ public partial class MainWindow : Window
     {
         if (string.Equals(tab, "library", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = LibraryTab;
+        else if (string.Equals(tab, "control", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "settings", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedItem = ControlTab;
         else if (string.Equals(tab, "tags", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "tag", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = TagsTab;
@@ -170,7 +177,7 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _favCombos = [Fav1NameCombo, Fav2NameCombo, Fav3NameCombo, Fav4NameCombo];
+        _favCombos = [Fav1NameCombo, Fav2NameCombo, Fav3NameCombo, Fav4NameCombo, Fav5NameCombo, Fav6NameCombo];
 
         _boxToConfig[LevelVolumesHotkeyBox] = _levelVolumes;
         _boxToConfig[FreshStartHotkeyBox] = _freshStart;
@@ -182,10 +189,13 @@ public partial class MainWindow : Window
         _boxToConfig[VolumeDownHotkeyBox] = _volumeDown;
         _boxToConfig[MuteHotkeyBox] = _mute;
         _boxToConfig[QuickTagHotkeyBox] = _quickTag;
+        _boxToConfig[QuickPlayHotkeyBox] = _quickPlay;
         _boxToConfig[Fav1HotkeyBox] = _favHotkeys[0];
         _boxToConfig[Fav2HotkeyBox] = _favHotkeys[1];
         _boxToConfig[Fav3HotkeyBox] = _favHotkeys[2];
         _boxToConfig[Fav4HotkeyBox] = _favHotkeys[3];
+        _boxToConfig[Fav5HotkeyBox] = _favHotkeys[4];
+        _boxToConfig[Fav6HotkeyBox] = _favHotkeys[5];
 
         _byTag["LevelVolumes"] = (LevelVolumesHotkeyBox, _levelVolumes);
         _byTag["FreshStart"] = (FreshStartHotkeyBox, _freshStart);
@@ -197,16 +207,20 @@ public partial class MainWindow : Window
         _byTag["VolumeDown"] = (VolumeDownHotkeyBox, _volumeDown);
         _byTag["Mute"] = (MuteHotkeyBox, _mute);
         _byTag["QuickTag"] = (QuickTagHotkeyBox, _quickTag);
+        _byTag["QuickPlay"] = (QuickPlayHotkeyBox, _quickPlay);
         _byTag["Fav1"] = (Fav1HotkeyBox, _favHotkeys[0]);
         _byTag["Fav2"] = (Fav2HotkeyBox, _favHotkeys[1]);
         _byTag["Fav3"] = (Fav3HotkeyBox, _favHotkeys[2]);
         _byTag["Fav4"] = (Fav4HotkeyBox, _favHotkeys[3]);
+        _byTag["Fav5"] = (Fav5HotkeyBox, _favHotkeys[4]);
+        _byTag["Fav6"] = (Fav6HotkeyBox, _favHotkeys[5]);
 
         foreach (var (box, cfg) in _boxToConfig)
             box.Text = cfg.ToString();
 
         FlyoutOnTrackChangeCheckBox.IsChecked = _settings.ShowFlyoutOnTrackChange;
         FlyoutOnActionCheckBox.IsChecked = _settings.ShowFlyoutOnAction;
+        LoadTrayDoubleClickCombo();
         VolumeStepBox.Text = _settings.VolumeStep.ToString();
         LevelPercentBox.Text = _settings.LevelVolumePercent.ToString();
         NightlyResetCheckBox.IsChecked = _settings.NightlyResetEnabled;
@@ -238,6 +252,7 @@ public partial class MainWindow : Window
         PopulateRooms();
         _ = LoadFavoritesAsync();
         _ = LoadSpeakerVolumesAsync();
+        RefreshControlPlayList();
         _loaded = true;
 
         // First open: full discovery in the background (same as every subsequent show).
@@ -345,6 +360,8 @@ public partial class MainWindow : Window
             RefreshLibraryStatusUi();
         else if (MainTabs.SelectedItem == TagsTab)
             RefreshTagsCatalogGrid();
+        else if (MainTabs.SelectedItem == ControlTab)
+            RefreshControlPlayList();
     }
 
     private void RefreshMcpEndpointUi()
@@ -891,25 +908,6 @@ public partial class MainWindow : Window
         ApplyLibraryTagToSelection(key);
     }
 
-    private void LibraryAddTagButton_Click(object sender, RoutedEventArgs e)
-    {
-        var label = LibraryNewTagBox.Text?.Trim() ?? "";
-        if (label.Length == 0)
-        {
-            SetStatus("Enter a tag name first.", warn: true);
-            return;
-        }
-
-        if (!AddTagAndPersist(label, out var err))
-        {
-            SetStatus(err ?? "Could not add tag.", warn: true);
-            return;
-        }
-
-        LibraryNewTagBox.Text = "";
-        SetStatus($"Tag “{label}” added.", warn: false);
-    }
-
     // ---- Tags catalog maintenance tab ---------------------------------------
 
     private ObservableCollection<TagCatalogRow> _tagCatalogRows = [];
@@ -1434,25 +1432,32 @@ public partial class MainWindow : Window
 
     private UIElement BuildSpeakerRow(SpeakerVolume speaker)
     {
-        var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
+        // Star-sized name/slider so Mute always stays visible when the panel is wide.
+        var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star), MinWidth = 100 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star), MinWidth = 120 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        row.Children.Add(new TextBlock
+        var name = new TextBlock
         {
             Text = speaker.Reachable ? speaker.RoomName : $"{speaker.RoomName} (offline)",
-            Width = 90,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 0, 10, 0),
             Foreground = speaker.Reachable
                 ? System.Windows.Media.Brushes.Black
                 : System.Windows.Media.Brushes.Gray,
-        });
+        };
+        Grid.SetColumn(name, 0);
 
         var valueLabel = new TextBlock
         {
             Text = $"{speaker.Volume}%",
-            Width = 32,
-            Margin = new Thickness(6, 0, 0, 0),
+            MinWidth = 36,
+            Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
         };
 
         var slider = new Slider
@@ -1460,13 +1465,16 @@ public partial class MainWindow : Window
             Minimum = 0,
             Maximum = 100,
             Value = speaker.Volume,
-            Width = 110,
             VerticalAlignment = VerticalAlignment.Center,
             IsEnabled = speaker.Reachable,
+            Margin = new Thickness(0, 0, 4, 0),
         };
         slider.ValueChanged += (_, e) => valueLabel.Text = $"{(int)e.NewValue}%";
         slider.PreviewMouseLeftButtonUp += async (_, _) => await CommitSpeakerVolumeAsync(speaker.IpAddress, (int)slider.Value);
         slider.LostKeyboardFocus += async (_, _) => await CommitSpeakerVolumeAsync(speaker.IpAddress, (int)slider.Value);
+        Grid.SetColumn(slider, 1);
+
+        Grid.SetColumn(valueLabel, 2);
 
         var muteCheck = new System.Windows.Controls.CheckBox
         {
@@ -1474,11 +1482,13 @@ public partial class MainWindow : Window
             IsChecked = speaker.Muted,
             IsEnabled = speaker.Reachable,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(10, 0, 0, 0),
+            Margin = new Thickness(12, 0, 4, 0),
         };
         muteCheck.Checked += async (_, _) => await _sonos.SetSpeakerMuteAsync(speaker.IpAddress, true);
         muteCheck.Unchecked += async (_, _) => await _sonos.SetSpeakerMuteAsync(speaker.IpAddress, false);
+        Grid.SetColumn(muteCheck, 3);
 
+        row.Children.Add(name);
         row.Children.Add(slider);
         row.Children.Add(valueLabel);
         row.Children.Add(muteCheck);
@@ -1542,14 +1552,159 @@ public partial class MainWindow : Window
             AppLog.Warn("Favorites load failed", ex);
         }
 
+        _sonosPlayableTitles = titles;
+
         for (var i = 0; i < _favCombos.Length; i++)
-            PopulateFavoriteCombo(_favCombos[i], titles, _settings.FavoriteSlots[i].FavoriteName);
+            PopulateSlotCombo(_favCombos[i], titles, _settings.FavoriteSlots[i]);
 
         PopulateFavoriteCombo(WakeFavoriteComboBox, titles, _settings.WakeFavoriteName);
 
-        if (titles.Count == 0)
-            SetStatus("No playable favorites found. Add a Sonos favorite/playlist, then Refresh.", warn: true);
+        RefreshControlPlayList();
+
+        if (titles.Count == 0 && _settings.Tags.Count == 0)
+            SetStatus("No tags or Sonos playlists yet. Add tags on Tags tab; Sonos favorites after Refresh.", warn: true);
     }
+
+    /// <summary>Slot picker entry: Sonos favorite/playlist or HotSonos tag.</summary>
+    private sealed record SlotPick(string Display, string Source, string? SonosName, string? TagKey)
+    {
+        public override string ToString() => Display;
+    }
+
+    private void PopulateSlotCombo(ComboBox combo, IReadOnlyList<string> sonosTitles, FavoriteSlot bound)
+    {
+        combo.Items.Clear();
+        combo.Items.Add(new SlotPick(NoneLabel, FavoriteSlot.SourceSonos, null, null));
+
+        foreach (var t in _settings.EnsureShape().Tags)
+            combo.Items.Add(new SlotPick($"Tag · {t.Label}", FavoriteSlot.SourceTag, null, t.Key));
+
+        foreach (var title in sonosTitles)
+            combo.Items.Add(new SlotPick($"Sonos · {title}", FavoriteSlot.SourceSonos, title, null));
+
+        object? select = combo.Items[0];
+        if (bound.IsTag)
+        {
+            select = combo.Items.OfType<SlotPick>()
+                .FirstOrDefault(p => p.Source == FavoriteSlot.SourceTag
+                    && string.Equals(p.TagKey, bound.TagKey, StringComparison.OrdinalIgnoreCase))
+                ?? select;
+        }
+        else if (bound.IsSonos)
+        {
+            select = combo.Items.OfType<SlotPick>()
+                .FirstOrDefault(p => p.Source == FavoriteSlot.SourceSonos
+                    && string.Equals(p.SonosName, bound.FavoriteName, StringComparison.OrdinalIgnoreCase))
+                ?? select;
+        }
+
+        combo.SelectedItem = select;
+    }
+
+    /// <summary>Build Control-tab list: HotSonos tags + Sonos favorites/playlists with one-click Play.</summary>
+    private void RefreshControlPlayList()
+    {
+        if (ControlPlayListBox is null)
+            return;
+
+        var rows = new List<ControlPlayRow>();
+
+        foreach (var t in _settings.EnsureShape().Tags)
+        {
+            var count = _library?.GetTracksWithTag(t.Key).Count ?? 0;
+            rows.Add(new ControlPlayRow(
+                Kind: ControlPlayKind.Tag,
+                KindLabel: "Tag",
+                Title: t.Label,
+                Detail: count == 0
+                    ? "No tracks tagged yet — tag music in Library / Quick tag"
+                    : $"{count} track(s) · shuffled play · library top-up if enabled",
+                Payload: t.Key));
+        }
+
+        foreach (var title in _sonosPlayableTitles)
+        {
+            rows.Add(new ControlPlayRow(
+                Kind: ControlPlayKind.Sonos,
+                KindLabel: "Sonos",
+                Title: title,
+                Detail: "Sonos favorite or playlist",
+                Payload: title));
+        }
+
+        ControlPlayListBox.ItemsSource = rows;
+        ControlPlayListStatus.Text = rows.Count == 0
+            ? "No tags or Sonos playlists yet. Add tags on the Tags tab; favorites come from the Sonos app (then Refresh)."
+            : $"{_settings.Tags.Count} tag(s) · {_sonosPlayableTitles.Count} Sonos item(s)";
+    }
+
+    private void ControlPlayListRefresh_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshControlPlayList();
+        _ = LoadFavoritesAsync();
+        SetStatus("Refreshed tags & Sonos playlists list.", warn: false);
+    }
+
+    private void ControlPlayItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_controlPlayBusy)
+            return;
+        if (sender is not FrameworkElement { Tag: ControlPlayRow row })
+            return;
+
+        _controlPlayBusy = true;
+        ControlPlayListStatus.Text = $"Starting “{row.Title}”…";
+        SetStatus($"Playing “{row.Title}”…", warn: false);
+
+        Dispatcher.BeginInvoke(new Action(async () =>
+        {
+            try
+            {
+                string toast;
+                if (row.Kind == ControlPlayKind.Tag)
+                {
+                    if (_library is null)
+                    {
+                        SetStatus("Library service not available.", warn: true);
+                        ControlPlayListStatus.Text = "Library not available.";
+                        return;
+                    }
+
+                    toast = await _sonos.PlayTaggedTracksAsync(_library, row.Payload, shuffle: true);
+                }
+                else
+                {
+                    toast = await _sonos.PlaySonosFavoriteByNameAsync(row.Payload);
+                }
+
+                ControlPlayListStatus.Text = toast;
+                SetStatus(toast, warn: false);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Control play failed", ex);
+                ControlPlayListStatus.Text = ex.Message;
+                SetStatus(ex.Message, warn: true);
+            }
+            finally
+            {
+                _controlPlayBusy = false;
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private enum ControlPlayKind
+    {
+        Tag,
+        Sonos,
+    }
+
+    private sealed record ControlPlayRow(
+        ControlPlayKind Kind,
+        string KindLabel,
+        string Title,
+        string Detail,
+        string Payload);
 
     private static void PopulateFavoriteCombo(ComboBox combo, IReadOnlyList<string> titles, string? selected)
     {
@@ -1680,12 +1835,15 @@ public partial class MainWindow : Window
         _settings.VolumeDown = _volumeDown;
         _settings.Mute = _mute;
         _settings.QuickTag = _quickTag;
+        _settings.QuickPlay = _quickPlay;
         if (int.TryParse(VolumeStepBox.Text, out var step) && step is >= 1 and <= 50)
             _settings.VolumeStep = step;
         if (int.TryParse(LevelPercentBox.Text, out var level) && level is >= 0 and <= 100)
             _settings.LevelVolumePercent = level;
         _settings.ShowFlyoutOnTrackChange = FlyoutOnTrackChangeCheckBox.IsChecked == true;
         _settings.ShowFlyoutOnAction = FlyoutOnActionCheckBox.IsChecked == true;
+        if (TrayDoubleClickCombo.SelectedItem is TrayDoubleClickPick pick)
+            _settings.TrayDoubleClickAction = pick.Value;
         _settings.NightlyResetEnabled = NightlyResetCheckBox.IsChecked == true;
         if (TryParseHhmm(NightlyResetTimeBox.Text, out var minutes))
             _settings.NightlyResetMinutes = minutes;
@@ -1696,9 +1854,34 @@ public partial class MainWindow : Window
         for (var i = 0; i < _favCombos.Length; i++)
         {
             _settings.FavoriteSlots[i].Hotkey = _favHotkeys[i];
-            var name = _favCombos[i].SelectedItem as string;
-            _settings.FavoriteSlots[i].FavoriteName =
-                string.Equals(name, NoneLabel, StringComparison.Ordinal) ? null : name;
+            if (_favCombos[i].SelectedItem is SlotPick slotPick
+                && !string.Equals(slotPick.Display, NoneLabel, StringComparison.Ordinal))
+            {
+                if (slotPick.Source == FavoriteSlot.SourceTag && !string.IsNullOrWhiteSpace(slotPick.TagKey))
+                {
+                    _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceTag;
+                    _settings.FavoriteSlots[i].TagKey = slotPick.TagKey;
+                    _settings.FavoriteSlots[i].FavoriteName = null;
+                }
+                else if (!string.IsNullOrWhiteSpace(slotPick.SonosName))
+                {
+                    _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceSonos;
+                    _settings.FavoriteSlots[i].FavoriteName = slotPick.SonosName;
+                    _settings.FavoriteSlots[i].TagKey = null;
+                }
+                else
+                {
+                    _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceSonos;
+                    _settings.FavoriteSlots[i].FavoriteName = null;
+                    _settings.FavoriteSlots[i].TagKey = null;
+                }
+            }
+            else
+            {
+                _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceSonos;
+                _settings.FavoriteSlots[i].FavoriteName = null;
+                _settings.FavoriteSlots[i].TagKey = null;
+            }
         }
 
         _settings.McpEnabled = McpEnabledCheckBox.IsChecked == true;
@@ -1768,6 +1951,29 @@ public partial class MainWindow : Window
         if (int.TryParse(WakeIntervalBox.Text, out var interval) && interval is >= 1 and <= 120)
             _settings.WakeStepIntervalMinutes = interval;
         _settings.WakeExpandToHouse = WakeExpandCheckBox.IsChecked == true;
+    }
+
+    private sealed record TrayDoubleClickPick(string Display, string Value)
+    {
+        public override string ToString() => Display;
+    }
+
+    private void LoadTrayDoubleClickCombo()
+    {
+        TrayDoubleClickCombo.Items.Clear();
+        TrayDoubleClickCombo.Items.Add(new TrayDoubleClickPick("Shuffle Music Library", AppSettings.TrayDoubleClickShuffle));
+        TrayDoubleClickCombo.Items.Add(new TrayDoubleClickPick("Open Control", AppSettings.TrayDoubleClickControl));
+        TrayDoubleClickCombo.Items.Add(new TrayDoubleClickPick("Open Library", AppSettings.TrayDoubleClickLibrary));
+        var want = _settings.EnsureShape().TrayDoubleClickAction;
+        TrayDoubleClickCombo.SelectedItem = TrayDoubleClickCombo.Items.OfType<TrayDoubleClickPick>()
+            .FirstOrDefault(p => string.Equals(p.Value, want, StringComparison.OrdinalIgnoreCase))
+            ?? TrayDoubleClickCombo.Items[0];
+    }
+
+    private void ShuffleLibraryButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetStatus("Starting library shuffle…", warn: false);
+        _runAction(HotsonosAction.ShuffleLibrary);
     }
 
     private void FreshStartButton_Click(object sender, RoutedEventArgs e)

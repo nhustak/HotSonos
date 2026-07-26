@@ -253,7 +253,15 @@ public sealed class HotSonosDebugTools
                 playHistoryDistinct = _state.Sonos.PlayHistory.PlayedDistinctCount,
                 sonosLibraryRoots = s.SonosLibraryRoots,
                 s.MasterLibraryRoot,
-                favoriteSlots = s.FavoriteSlots.Select((f, i) => new { slot = i + 1, f.FavoriteName, hotkey = f.Hotkey.ToString() }),
+                favoriteSlots = s.FavoriteSlots.Select((f, i) => new
+                {
+                    slot = i + 1,
+                    source = f.Source,
+                    f.FavoriteName,
+                    f.TagKey,
+                    label = f.DisplayLabel(s),
+                    hotkey = f.Hotkey.ToString(),
+                }),
             }, JsonOptions);
         });
 
@@ -804,9 +812,9 @@ public sealed class HotSonosDebugTools
         McpActivityLog.RunAsync("fresh_start", null, () => RunActionAsync(HotsonosAction.FreshStart), category: "control");
 
     [McpServerTool(Name = "play_favorite_slot")]
-    [Description("Play favorite/playlist hotkey slot 1-4 (must be assigned in Settings).")]
+    [Description("Play favorite/playlist/tag hotkey slot 1-6 (must be assigned in Settings).")]
     public Task<string> PlayFavoriteSlot(
-        [Description("Slot number 1 through 4")] int slot,
+        [Description("Slot number 1 through 6")] int slot,
         CancellationToken ct) =>
         McpActivityLog.RunAsync("play_favorite_slot", new { slot }, () =>
         {
@@ -816,7 +824,9 @@ public sealed class HotSonosDebugTools
                 2 => HotsonosAction.Favorite2,
                 3 => HotsonosAction.Favorite3,
                 4 => HotsonosAction.Favorite4,
-                _ => throw new ArgumentOutOfRangeException(nameof(slot), "Slot must be 1-4."),
+                5 => HotsonosAction.Favorite5,
+                6 => HotsonosAction.Favorite6,
+                _ => throw new ArgumentOutOfRangeException(nameof(slot), "Slot must be 1-6."),
             };
             return RunActionAsync(action);
         }, category: "control");

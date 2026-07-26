@@ -30,6 +30,7 @@ public sealed class TrayController : IDisposable
         Action CopyDiagnostics,
         Action StopWake,
         Action CopyMcpEndpoint,
+        Action DoubleClick,
         Action Exit);
 
     private readonly NotifyIcon _notifyIcon;
@@ -96,9 +97,8 @@ public sealed class TrayController : IDisposable
             ContextMenuStrip = _menu,
             Visible = true,
         };
-        // Double-click is the primary action: shuffle the library to all speakers.
-        // Settings remain available via right-click → Open HotSonos.
-        _notifyIcon.DoubleClick += (_, _) => _callbacks.ShuffleLibrary();
+        // Double-click primary action is user-configurable (Options → tray double-click).
+        _notifyIcon.DoubleClick += (_, _) => _callbacks.DoubleClick();
     }
 
     /// <summary>
@@ -131,7 +131,7 @@ public sealed class TrayController : IDisposable
         }
     }
 
-    /// <summary>Rebuilds the favorite-slot submenu (4 entries).</summary>
+    /// <summary>Rebuilds the favorite-slot submenu (up to 6 entries).</summary>
     public void UpdateFavorites(IReadOnlyList<string?> slotNames)
     {
         _favoritesMenu.DropDownItems.Clear();

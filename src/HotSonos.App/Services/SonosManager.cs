@@ -228,7 +228,11 @@ public sealed class SonosManager
     /// Executes an action and returns a short toast string (or null to show nothing).
     /// Throws on transport/network errors so the caller can surface them.
     /// </summary>
-    public async Task<string?> ExecuteAsync(HotsonosAction action, AppSettings settings, CancellationToken ct = default)
+    public async Task<string?> ExecuteAsync(
+        HotsonosAction action,
+        AppSettings settings,
+        CancellationToken ct = default,
+        LibraryService? library = null)
     {
         // Fresh start re-discovers first (topology may have drifted, e.g. overnight),
         // so it must run before the "is a room selected" guard.
@@ -249,11 +253,21 @@ public sealed class SonosManager
         var slot = action.FavoriteSlotIndex();
         if (slot >= 0)
         {
-            var name = settings.FavoriteSlots[slot].FavoriteName;
-            if (string.IsNullOrWhiteSpace(name))
-                return $"Favorite slot {slot + 1} is empty";
-            await _controller.PlayFavoriteByNameAsync(name, ct).ConfigureAwait(false);
-            return $"▶ {name}";
+            settings.EnsureShape();
+            var fs = settings.FavoriteSlots[slot];
+            if (fs.IsTag)
+            {
+                if (library is null)
+                    throw new InvalidOperationException("Library service not available for tag play.");
+                return await PlayTaggedTracksAsync(library, fs.TagKey!, shuffle: true, ct).ConfigureAwait(false);
+            }
+
+            if (!fs.IsSonos)
+                return $"Slot {slot + 1} is empty — assign a tag or Sonos playlist in Hotkeys.";
+
+            await _controller.PlayFavoriteByNameAsync(fs.FavoriteName!, ct).ConfigureAwait(false);
+            _playbackMode = "sonos_fav";
+            return $"▶ {fs.FavoriteName}";
         }
 
         switch (action)
@@ -679,6 +693,21 @@ public sealed class SonosManager
             : " · no library top-up after this queue";
         AppLog.Info($"Play tag “{tagLabel}”: queued {items.Count} (shuffle={shuffle})");
         return $"▶ {tagLabel}: {items.Count} track(s){(shuffle ? " shuffled" : "")}{continueHint}";
+    }
+
+    /// <summary>Play a Sonos Favorite or saved Playlist by title (same catalog as Settings slots).</summary>
+    public async Task<string> PlaySonosFavoriteByNameAsync(string title, CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+        if (string.IsNullOrWhiteSpace(title))
+            throw new ArgumentException("Title is required.", nameof(title));
+
+        await _controller.PlayFavoriteByNameAsync(title.Trim(), ct).ConfigureAwait(false);
+        // Don't auto top-up into library over a Sonos playlist/favorite session.
+        _playbackMode = "sonos_fav";
+        AppLog.Info($"Play Sonos favorite/playlist: {title}");
+        return $"▶ {title.Trim()}";
     }
 
     /// <summary>

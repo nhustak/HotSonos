@@ -69,12 +69,23 @@
 
             <!-- ========== Control ========== -->
             <TabItem x:Name="ControlTab" Header="Control">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12,16,8">
-                    <Grid>
+                <!--
+                  Row0 Auto: shuffle/level | target room
+                  Row1 *: Speakers grow with window (push play list down); scroll only when many devices
+                  Row2 *: Play tags/playlists take remaining height (min keeps list usable)
+                -->
+                <Grid Margin="16,12,16,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" MinHeight="88" />
+                        <RowDefinition Height="*" MinHeight="180" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="20" />
-                            <ColumnDefinition Width="300" />
+                            <ColumnDefinition Width="*" MinWidth="340" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="*" MinWidth="280" />
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="0">
@@ -86,8 +97,11 @@
                                     <TextBlock Text="History-aware shuffle of your Sonos Music Library to the selected speakers."
                                                Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="Hotkey" VerticalAlignment="Center" Width="80" />
-                                        <TextBox x:Name="ShuffleHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                        <Button Content="🔀  Start shuffle now" Height="32" Padding="14,0" Margin="0,0,12,0"
+                                                Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                                Click="ShuffleLibraryButton_Click" />
+                                        <TextBlock Text="Hotkey" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <TextBox x:Name="ShuffleHotkeyBox" Style="{StaticResource HotkeyBox}" Width="130"
                                                  PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
                                         <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="Shuffle" Click="ClearHotkey_Click" />
                                     </StackPanel>
@@ -119,7 +133,7 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <Border Grid.Column="1" Width="1" Background="#FFD8DEE4" Margin="0,4" />
+                        <Border Grid.Column="1" Width="1" Background="#FFD8DEE4" Margin="0,4" HorizontalAlignment="Center" />
 
                         <StackPanel Grid.Column="2">
                             <TextBlock Text="Target room / group" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
@@ -130,14 +144,91 @@
                                     Padding="10,0" Click="RefreshButton_Click" />
                             <TextBlock Text="Hotkeys control this room. Grouped rooms follow their coordinator."
                                        Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
-
-                            <TextBlock Text="Speakers" Style="{StaticResource SectionHeader}" />
-                            <TextBlock Text="Drag volume; check to mute."
-                                       Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
-                            <StackPanel x:Name="SpeakersPanel" />
                         </StackPanel>
                     </Grid>
-                </ScrollViewer>
+
+                    <!-- Speakers: full width, shares vertical space with play list (grows when window tall) -->
+                    <Border Grid.Row="1" Margin="0,12,0,0" Background="White"
+                            BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="6" Padding="12,10">
+                        <DockPanel LastChildFill="True">
+                            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                <TextBlock Text="Speakers" FontSize="15" FontWeight="SemiBold" />
+                                <TextBlock Text="Drag volume; check to mute. List grows with available height."
+                                           Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled">
+                                <StackPanel x:Name="SpeakersPanel" />
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Tags + Sonos favorites/playlists — remaining height; list scrolls inside -->
+                    <Border Grid.Row="2" Margin="0,12,0,0" Background="White"
+                            BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="6" Padding="12,10">
+                        <DockPanel LastChildFill="True">
+                            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="Play tags &amp; Sonos playlists" FontSize="15" FontWeight="SemiBold"
+                                               VerticalAlignment="Center" />
+                                    <Button Content="Refresh list" Height="28" Padding="12,0" Margin="12,0,0,0"
+                                            Click="ControlPlayListRefresh_Click" />
+                                </StackPanel>
+                                <TextBlock x:Name="ControlPlayListHint"
+                                           Text="Tags are dynamic playlists (tag tracks → they show up here). Play shuffles the set; library top-up continues if enabled in Shuffle."
+                                           Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <TextBlock x:Name="ControlPlayListStatus" DockPanel.Dock="Bottom"
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"
+                                       Text="" />
+                            <ListBox x:Name="ControlPlayListBox"
+                                     BorderThickness="0" Background="Transparent"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     HorizontalContentAlignment="Stretch"
+                                     VirtualizingPanel.IsVirtualizing="True"
+                                     VirtualizingPanel.VirtualizationMode="Recycling">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="Padding" Value="0,2" />
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        <Setter Property="Focusable" Value="False" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#FFF4F7FA" BorderBrush="#FFE0E6EC" BorderThickness="1"
+                                                CornerRadius="6" Padding="10,8" Margin="0,2">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="72" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0" Background="#FFE8F8EF" CornerRadius="4"
+                                                        Padding="6,2" VerticalAlignment="Center" HorizontalAlignment="Left">
+                                                    <TextBlock Text="{Binding KindLabel}" FontSize="11" FontWeight="SemiBold"
+                                                               Foreground="#FF1C8E54" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Margin="10,0,10,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Detail}" Foreground="#FF60707F" FontSize="11"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <Button Grid.Column="2" Content="▶ Play" Height="30" MinWidth="72"
+                                                        Padding="12,0" VerticalAlignment="Center"
+                                                        Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                                        Tag="{Binding}"
+                                                        Click="ControlPlayItem_Click" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+                </Grid>
             </TabItem>
 
             <!-- ========== Hotkeys ========== -->
@@ -179,10 +270,11 @@
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="120" />
-                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -221,23 +313,32 @@
                                      ToolTip="Opens preset picker for the playing library track (default Ctrl+Alt+T)" />
                             <Button Grid.Row="4" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="QuickTag"
                                     Click="ClearHotkey_Click" />
-                            <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Quick play overlay" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="5" Grid.Column="1" x:Name="QuickPlayHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="Auto" HorizontalAlignment="Left" Margin="0,4"
+                                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus"
+                                     ToolTip="Opens play picker: 1=library shuffle, 2–9=tags &amp; Sonos playlists (default Ctrl+Alt+P)" />
+                            <Button Grid.Row="5" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="QuickPlay"
+                                    Click="ClearHotkey_Click" />
+                            <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
                                 <TextBlock Text="Step per press (%)" VerticalAlignment="Center" Width="120" />
                                 <TextBox x:Name="VolumeStepBox" Width="50" Padding="6,4" VerticalContentAlignment="Center" />
                             </StackPanel>
                         </Grid>
 
                         <TextBlock Text="Playlist / favorite slots" Style="{StaticResource SectionHeader}" />
-                        <TextBlock Text="Pick a Sonos favorite or playlist, then assign a hotkey."
+                        <TextBlock Text="Each slot: Sonos playlist/favorite or HotSonos tag (dynamic playlist). Assign a hotkey — same as Control Play."
                                    Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
-                        <Grid x:Name="FavoritesGrid">
+                        <Grid x:Name="FavoritesGrid" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="60" />
-                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="280" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -270,6 +371,20 @@
                             <TextBox Grid.Row="3" Grid.Column="2" x:Name="Fav4HotkeyBox" Style="{StaticResource HotkeyBox}"
                                      Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
                             <Button Grid.Row="3" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav4"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Slot 5" VerticalAlignment="Center" Margin="0,4" />
+                            <ComboBox Grid.Row="4" Grid.Column="1" x:Name="Fav5NameCombo" Height="26" Margin="0,4"
+                                      VerticalContentAlignment="Center" />
+                            <TextBox Grid.Row="4" Grid.Column="2" x:Name="Fav5HotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="4" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav5"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Slot 6" VerticalAlignment="Center" Margin="0,4" />
+                            <ComboBox Grid.Row="5" Grid.Column="1" x:Name="Fav6NameCombo" Height="26" Margin="0,4"
+                                      VerticalContentAlignment="Center" />
+                            <TextBox Grid.Row="5" Grid.Column="2" x:Name="Fav6HotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="140" Margin="8,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="5" Grid.Column="3" Content="Clear" Margin="8,4" Padding="8,0" Tag="Fav6"
                                     Click="ClearHotkey_Click" />
                         </Grid>
                     </StackPanel>
@@ -358,33 +473,33 @@
                     </Border>
 
                     <Expander Grid.Row="1" Header="Library paths (Sonos share + optional master)" Margin="0,0,0,10"
-                              IsExpanded="False">
+                              IsExpanded="False" HorizontalAlignment="Left" MaxWidth="640">
                         <StackPanel Margin="0,8,0,0">
                             <TextBlock Text="Sonos library root(s) — one path per line; usually filled by Discover from Sonos."
                                        Foreground="#FF60707F" FontSize="11" Margin="0,0,0,4" TextWrapping="Wrap" />
-                            <TextBox x:Name="SonosLibraryRootsBox" MinHeight="48" AcceptsReturn="True" TextWrapping="Wrap"
+                            <TextBox x:Name="SonosLibraryRootsBox" MinHeight="48" Width="520" HorizontalAlignment="Left"
+                                     AcceptsReturn="True" TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto" Padding="6,4" />
                             <TextBlock Text="Master library root (optional)" FontWeight="SemiBold" Margin="0,8,0,4" />
-                            <TextBox x:Name="MasterLibraryRootBox" Height="26" Padding="6,4" VerticalContentAlignment="Center" />
+                            <TextBox x:Name="MasterLibraryRootBox" Height="26" Width="520" HorizontalAlignment="Left"
+                                     Padding="6,4" VerticalContentAlignment="Center" />
                         </StackPanel>
                     </Expander>
 
-                    <Grid Grid.Row="2" Margin="0,0,0,8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="LibrarySearchBox" Grid.Column="0" Height="30" Padding="8,4"
+                    <!-- Label + field + actions grouped left — buttons stay by the box, not window-right -->
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Search" FontWeight="SemiBold" FontSize="13"
+                                   VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBox x:Name="LibrarySearchBox" Height="30" MinWidth="280" Width="420" Padding="8,4"
                                  VerticalContentAlignment="Center"
                                  ToolTip="Search all fields, or restrict: T:title · A:artist · TG:tag · F:format (one prefix at a time)"
                                  KeyDown="LibrarySearchBox_KeyDown" />
-                        <Button Grid.Column="1" Content="Search" Height="30" Padding="16,0" Margin="8,0,0,0"
+                        <Button Content="Go" Height="30" Padding="16,0" Margin="8,0,0,0"
                                 Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
                                 Click="LibrarySearchButton_Click" />
-                        <Button Grid.Column="2" Content="Browse" Height="30" Padding="12,0" Margin="8,0,0,0"
+                        <Button Content="Browse" Height="30" Padding="12,0" Margin="8,0,0,0"
                                 Click="LibraryBrowseButton_Click" />
-                    </Grid>
+                    </StackPanel>
 
                     <!-- Flat tag catalog chips + busy banner -->
                     <StackPanel Grid.Row="3" Margin="0,0,0,8">
@@ -392,7 +507,6 @@
                                 CornerRadius="6" Padding="10,8">
                             <Grid>
                                 <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
@@ -412,14 +526,7 @@
                                 <TextBlock x:Name="LibraryTempoSelectionHint" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
                                            Margin="0,6,0,0"
                                            Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap"
-                                           Text="Select a track — click tags (or keys 1–9). Labels are renamable; files store internal keys." />
-                                <DockPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,0">
-                                    <Button DockPanel.Dock="Right" Content="Add tag" Height="26" Padding="12,0" Margin="8,0,0,0"
-                                            Click="LibraryAddTagButton_Click" />
-                                    <TextBox x:Name="LibraryNewTagBox" Height="26" Padding="6,2"
-                                             VerticalContentAlignment="Center"
-                                             ToolTip="Create a new tag (auto key; rename later in settings)" />
-                                </DockPanel>
+                                           Text="Select a track — click chips (or keys 1–9) to toggle tags. Create/rename tags on the Tags tab." />
                             </Grid>
                         </Border>
                         <Border x:Name="LibraryBusyBanner" Visibility="Collapsed" Margin="0,8,0,0"
@@ -497,23 +604,23 @@
                         </StackPanel>
                     </Border>
 
-                    <DockPanel Grid.Row="1" Margin="0,0,0,10" LastChildFill="True">
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                            <Button Content="Move up" Height="30" Padding="12,0" Margin="0,0,6,0"
-                                    Click="TagsMoveUpButton_Click" />
-                            <Button Content="Move down" Height="30" Padding="12,0" Margin="0,0,6,0"
-                                    Click="TagsMoveDownButton_Click" />
-                            <Button x:Name="TagsDeleteButton" Content="Delete" Height="30" Padding="12,0" Margin="0,0,6,0"
-                                    Click="TagsDeleteButton_Click" />
-                            <Button Content="Add" Height="30" Padding="16,0"
-                                    Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
-                                    Click="TagsAddButton_Click" />
-                        </StackPanel>
-                        <TextBox x:Name="TagsNewLabelBox" Height="30" Padding="8,4" Margin="0,0,10,0"
+                    <!-- Entry + actions grouped left (never stretch the box across the window) -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                        <TextBlock Text="New tag" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBox x:Name="TagsNewLabelBox" Height="30" Width="280" MinWidth="180" Padding="8,4"
                                  VerticalContentAlignment="Center"
                                  ToolTip="New tag label"
                                  KeyDown="TagsNewLabelBox_KeyDown" />
-                    </DockPanel>
+                        <Button Content="Add" Height="30" Padding="16,0" Margin="8,0,0,0"
+                                Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                Click="TagsAddButton_Click" />
+                        <Button Content="Move up" Height="30" Padding="12,0" Margin="16,0,0,0"
+                                Click="TagsMoveUpButton_Click" />
+                        <Button Content="Move down" Height="30" Padding="12,0" Margin="6,0,0,0"
+                                Click="TagsMoveDownButton_Click" />
+                        <Button x:Name="TagsDeleteButton" Content="Delete" Height="30" Padding="12,0" Margin="6,0,0,0"
+                                Click="TagsDeleteButton_Click" />
+                    </StackPanel>
 
                     <DataGrid x:Name="TagsCatalogGrid" Grid.Row="2"
                               AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
@@ -616,6 +723,13 @@
                         <TextBlock Text="Drag the flyout to reposition; pin to keep it on-screen."
                                    Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
 
+                        <TextBlock Text="System tray" Style="{StaticResource SectionHeader}" />
+                        <TextBlock Text="Double-click the tray icon to:" VerticalAlignment="Center" Margin="0,0,0,6" />
+                        <ComboBox x:Name="TrayDoubleClickCombo" Height="28" Width="320" HorizontalAlignment="Left"
+                                  VerticalContentAlignment="Center" />
+                        <TextBlock Text="Right-click still opens the full tray menu."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
+
                         <TextBlock Text="Startup &amp; nightly" Style="{StaticResource SectionHeader}" />
                         <CheckBox x:Name="StartWithWindowsCheckBox" Content="Start HotSonos with Windows" Margin="0,2"
                                   Checked="StartWithWindows_Changed" Unchecked="StartWithWindows_Changed" />
@@ -653,25 +767,21 @@
 
                     <Border Grid.Row="0" Background="#FFEEF2F7" CornerRadius="6" Padding="12" Margin="0,0,0,10"
                             BorderBrush="#FFC5D0DC" BorderThickness="1">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="MCP command log" FontSize="15" FontWeight="SemiBold" />
-                                <TextBlock x:Name="McpEndpointText" Text="Endpoint: (not running)"
-                                           Foreground="#FF60707F" FontSize="12" Margin="0,4,0,0"
-                                           TextWrapping="Wrap" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="MCP command log" FontSize="15" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
                                 <CheckBox x:Name="McpAutoScrollCheck" Content="Auto-scroll" IsChecked="True"
-                                          VerticalAlignment="Center" Margin="0,0,12,0" />
-                                <Button Content="Clear" Height="28" Padding="12,0" Click="McpClearLog_Click" />
+                                          VerticalAlignment="Center" Margin="16,0,0,0" />
+                                <Button Content="Clear" Height="28" Padding="12,0" Margin="12,0,0,0"
+                                        Click="McpClearLog_Click" />
                                 <Button Content="Copy endpoint" Height="28" Padding="12,0" Margin="8,0,0,0"
                                         Click="McpCopyEndpoint_Click" />
                             </StackPanel>
-                        </Grid>
+                            <TextBlock x:Name="McpEndpointText" Text="Endpoint: (not running)"
+                                       Foreground="#FF60707F" FontSize="12" Margin="0,6,0,0"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
                     </Border>
 
                     <ListBox x:Name="McpActivityList" Grid.Row="1"

@@ -4,19 +4,19 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.9** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
+**Version 1.0.0.25** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
-HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/SOAP) — no cloud, no Sonos account, no internet round-trips. It lives in the system tray and gives you instant, global hotkeys for the things the Sonos apps make you click through: shuffle your whole library to every speaker, play/pause, skip, and whole-house volume — plus a live now-playing flyout and automatic speaker re-sync.
+HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/SOAP) — no cloud, no Sonos account, no internet round-trips. It lives in the system tray and gives you instant, global hotkeys for the things the Sonos apps make you click through: shuffle your whole library to every speaker, play/pause, skip, and whole-house volume — plus a live now-playing flyout, **tags as dynamic playlists**, and automatic speaker re-sync.
 
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
 
 ### Product direction
-- **Today:** history-aware daily shuffle, transport/volume hotkeys, favorites, wake-to-music, live topology, local library cache + tags, loopback MCP for agents.
-- **Settings UI:** left vertical nav — Control · Hotkeys · Shuffle · Library · Wake · Options · MCP Debug.
-- **Next:** MCP polish; playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
-- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags + master dual-write, logs).
+- **Today:** history-aware daily shuffle, transport/volume hotkeys, favorite slots (Sonos or tag), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play overlays, loopback MCP for agents.
+- **Settings UI:** left vertical nav — **Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug**.
+- **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
+- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/master, play track/tag, logs).
 
 ---
 
@@ -25,7 +25,9 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 ### 🔀 History-aware library shuffle
 Groups speakers and builds a short random mix from your music library, leaves out songs you’ve already heard recently, and plays that list straight through. When the list is almost done, it adds another fresh batch the same way. That starts music quickly and keeps the day from repeating what you already listened to.
 
-Trigger with **double-click tray icon**, hotkey, or Control page. Optional **artist spacing** and all parameters (queue size, top-up size, history days, clear history) live under **Settings → Shuffle**.
+Trigger with **double-click tray icon** (configurable), hotkey, Control **Start shuffle**, Quick Play slot **1**, or MCP `shuffle_library`. Optional **artist spacing** and all parameters (queue size, top-up size, history days, clear history) live under **Shuffle**.
+
+**After a special play** (one track, tag queue, or favorite slot): by default HotSonos **continues into full-library shuffle** when the special queue runs low (same auto top-up machinery). Turn that off under **Shuffle** if you want special plays to end cleanly.
 
 #### Shuffle FAQ
 
@@ -48,10 +50,10 @@ HotSonos quietly adds another random batch of unheard-recently songs so music ke
 If there aren’t enough “fresh” songs left, it loosens the “skip recent” rule so music can still play.
 
 **Is this the same as a saved Sonos playlist?**  
-No. This is a live daily mix for whole-house listening. Saved playlists are better for intentional moods (“Jazz,” “Dinner,” etc.).
+No. This is a live daily mix for whole-house listening. Tags and Sonos favorites/playlists are better for intentional moods (“Dinner,” “Favs,” etc.).
 
 ### 🔄 Restart fresh (re-sync + reshuffle)
-Re-discovers speakers, force-regroups them, and starts a new history-aware shuffle. Tray item, Control button, optional hotkey.
+Re-discovers speakers, force-regroups them, and starts a new history-aware shuffle. Tray item, Control button, optional hotkey, MCP `fresh_start`.
 
 ### ⏯️ Transport & volume hotkeys
 Play/pause, next, previous, volume up/down, mute, and level-all — from any app. Re-bindable under **Hotkeys**.
@@ -59,27 +61,57 @@ Play/pause, next, previous, volume up/down, mute, and level-all — from any app
 ### 🔉 Level all speakers
 One click (or hotkey) sets every speaker to the same absolute volume (default 20%) and unmutes them.
 
+### 🏷️ Tags as dynamic playlists
+Flat tag catalog: each tag has an **opaque key** (stored in files) and a **renamable label** (UI only).
+
+- Files store `HOTSONOS_TAGS=key1;key2` (FLAC Xiph / MP3 TXXX). Rename never rewrites files.
+- **New install seed:** Slow, Medium, Fast, Dinner, Drive, Focus (editable on the **Tags** tab).
+- **Library:** select tracks → click chips (or keys **1–9**) to toggle tags. Create/rename/reorder/delete on **Tags** only.
+- **Play a tag:** Control list, Quick Play (**2–9**), favorite slot bound to a tag, or MCP `play_tag` — shuffles matching tracks, then (by default) top-ups into house shuffle.
+- Search prefixes: free text, or `T:` title · `A:` artist · `TG:` tag · `F:` format (one prefix at a time).
+
+> Legacy `HOTSONOS_TEMPO` is no longer a special case; leftover tempo tokens are migrated into the flat catalog where needed.
+
+### 🎴 Quick Tag & Quick Play overlays
+| Overlay | Default | What it does |
+|---|---|---|
+| **Quick Tag** | `Ctrl + Alt + T` | Tag the currently playing library track (keys 1–9 = catalog order). |
+| **Quick Play** | `Ctrl + Alt + P` | **1** = library shuffle; **2–9** = tags & Sonos playlists (same idea as Control Play). |
+
+### ⭐ Favorite slots (1–6)
+Each slot can be a **Sonos favorite/playlist** *or* a **HotSonos tag**, with its own hotkey. Same playback path as Control Play / `play_favorite_slot`.
+
+### 🎮 Control page
+- Start shuffle / Restart fresh, level-all, target room, **full-width speakers** (volume + mute; list grows with window height).
+- **Play tags & Sonos playlists** — one-click play; list shares vertical space with speakers.
+- Layout keeps **labels + fields + buttons grouped left** (no stretch-to-far-right action buttons).
+
+### 📚 Local library cache
+- **Discover from Sonos** (share roots from `x-file-cifs` URIs)  
+- SQLite cache of FLAC/MP3 metadata (format, bit depth, sample rate, bitrate)  
+- **Sonos-unplayable** heuristic for hi-res / out-of-spec files  
+- Optional **master library root** with match + dual-write of tags  
+- Paths / rescan / force re-read tags / search under **Library**  
+- DB: `%LocalAppData%\HotSonos\library.db`
+
 ### 🎴 Live Now-Playing flyout
 Album art, title, artist, state — GENA push updates. Draggable, pinnable; toggles under **Options**.
 
 ### 📡 Live speaker monitoring
 Topology events: offline tray indicator, reconnect toasts, auto-rejoin active group, live room picker.
 
-### 🎚️ Per-speaker volume
-Control page shows every speaker with volume slider and mute.
-
 ### ☀️ Wake to music
-Scheduled start on a room, volume ramp, favorite or shuffle source, optional whole-house expand + shuffle. Skips if already playing.
+Scheduled start on a room, volume ramp, favorite or shuffle source, optional whole-house expand + shuffle. Skips if already playing. MCP `wake_now` / `wake_cancel`.
 
-### 📚 Local library cache & tags
-- **Discover from Sonos** (share roots from `x-file-cifs` URIs)  
-- SQLite cache of FLAC/MP3 metadata (format, bit depth, sample rate, bitrate)  
-- **Sonos-unplayable** heuristic for hi-res / out-of-spec files  
-- Write **`HOTSONOS_TEMPO`** (and optional standard tags) into files; MCP `track_set_tags`  
-- Paths / rescan / search under **Library**
+### 🖱️ Tray double-click
+Configurable under **Options**: start shuffle (default), open Control, or open Library. Right-click still opens the full tray menu.
 
 ### 🤖 Loopback MCP
-While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery, control, library tools, logs. Live command log on **MCP Debug**. Register via `C:\Project\_mcp` if you use the multi-agent MCP hub.
+While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery, control, library, tags, play, logs. Live command log on **MCP Debug**. Register via `C:\Project\_mcp` if you use the multi-agent MCP hub.
+
+**Library / tags (examples):** `discover_library_roots`, `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`, `list_tags`, `tag_create`, `tag_rename`, `tag_delete`, `track_toggle_tag`, `track_set_tags`, `track_find_master`, `track_link_master`
+
+**Control (examples):** `play_pause`, next/previous, volume/mute/level, `shuffle_library`, `play_library_track`, `play_tag`, `resume_shuffle`, `fresh_start`, `play_favorite_slot`, `set_active_room`, wake tools
 
 ### Other
 - Single-instance tray app; second launch activates the running window  
@@ -94,14 +126,16 @@ While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery,
 
 | Action | Default shortcut |
 |---|---|
-| Shuffle Music Library → all speakers | `Ctrl + Alt + F8` (also **double-click tray icon**) |
+| Shuffle Music Library → all speakers | `Ctrl + Alt + F8` (also **tray double-click** by default) |
 | Play / Pause | `Ctrl + Alt + F9` |
 | Previous track | `Ctrl + Alt + F10` |
 | Next track | `Ctrl + Alt + F11` |
 | Volume up | `Ctrl + Alt + ↑` |
 | Volume down | `Ctrl + Alt + ↓` |
 | Mute / Unmute | `Ctrl + Alt + M` |
-| Level all / Restart fresh / favorite slots | unassigned (set your own) |
+| Quick tag overlay | `Ctrl + Alt + T` |
+| Quick play overlay | `Ctrl + Alt + P` |
+| Level all / Restart fresh / favorite slots 1–6 | unassigned (set your own) |
 
 Re-bind under **Hotkeys** (tray → *Open HotSonos*).
 
@@ -115,13 +149,16 @@ Download the latest **`HotSonos-x.y.z.msi`** from the [Releases page](https://gi
 
 Each [GitHub Release](https://github.com/nhustak/HotSonos/releases) is produced by CI when a version tag (`v*`) is pushed. Pushes to `master` run [build + test + MSI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml).
 
+> **Note:** GitHub Releases currently go through **v1.0.0.9**. App version in tree is **1.0.0.25** (tags, play, overlays, MCP play tools, Control UX). Tag/push a release when you want an MSI that matches.
+
 ## Requirements
 
 - Windows 10 or 11  
 - Sonos players (S1 or S2) on the same LAN  
 - Install from Releases: nothing else  
 - Build from source: [.NET 10 SDK](https://dotnet.microsoft.com/download)  
-- Library scan/tag write: this PC needs SMB access to the music share Sonos indexes  
+- Library scan/tag write: this PC needs SMB access (read for scan, write for tags) to the music share Sonos indexes  
+- Optional master dual-write: SMB write under `MasterLibraryRoot`  
 
 ---
 
@@ -149,7 +186,7 @@ dotnet run --project src/HotSonos.Harness -- --room "Living Room" shuffle
 | Project | Purpose |
 |---|---|
 | `HotSonos.Core` | UPnP client (discovery, control, events, shuffle) |
-| `HotSonos.App` | Tray app: hotkeys, settings, library, MCP, wake |
+| `HotSonos.App` | Tray app: hotkeys, settings, library, tags, MCP, wake |
 | `HotSonos.Harness` | Console tester |
 | `HotSonos.Core.Tests` | Offline unit tests |
 
@@ -162,7 +199,9 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 - **Discovery** — SSDP across interfaces; topology from any responding player.  
 - **Control** — SOAP on TCP **1400** to group coordinators.  
 - **Shuffle** — browse `A:TRACKS`, exclude recently **played** tracks, short queue (~80 default), auto **top-up** near end, play in `NORMAL` mode.  
-- **Library** — optional filesystem scan/tag index under discovered UNC roots; tags live in files; SQLite is a rebuildable cache.  
+- **Tags** — catalog in settings; keys written into audio files as `HOTSONOS_TAGS`; SQLite is a rebuildable cache only.  
+- **Tag / one-shot play** — client builds a queue from the library cache; optional continue into full-library top-up (`ContinueLibraryShuffleAfterSpecialPlay`).  
+- **Library** — filesystem scan under discovered UNC roots; optional master match for dual-write.  
 - **MCP** — Kestrel loopback host inside the tray process.  
 - **GENA** — local listener for now-playing and topology.
 
@@ -174,18 +213,46 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 - Nightly re-sync and wake need the **PC awake** with HotSonos running.  
 - Sonos does not reliably report “can’t play this file”; unplayable flags are **format heuristics**.  
 - Shuffle history only reshapes the queue at **rebuild/top-up**, not mid-queue.  
+- Tag write needs **write** SMB access from this PC to the Sonos share (and master root if dual-write is on).  
 - GENA callback is for a **trusted home LAN**.
 
 ---
 
 ## Changelog
 
+### 1.0.0.25
+- **Control UX:** speakers full-width, grow with window and share height with Play list; mute column no longer clipped  
+- **Library UX:** removed inline “Add tag” (catalog only on **Tags** tab); search row is **Search** + field + **Go** / **Browse** grouped left  
+- **Forms UX:** entry rows keep label + field + actions left-aligned (Tags add row, favorites, hotkeys, MCP header, Control refresh)
+
+### 1.0.0.21 – 1.0.0.24
+- **Quick Play** overlay (`Ctrl+Alt+P`): 1 = library shuffle, 2–9 = tags & Sonos playlists  
+- **Control Play** list: tags + Sonos favorites/playlists with one-click Play  
+- Favorite slots **1–6**: each may be Sonos *or* tag; tray **double-click** = shuffle / Control / Library  
+- **Continue into library shuffle** after one-shot / tag / special play (default on; Shuffle settings)  
+- Control Start shuffle button; layout polish for less wasted scroll space  
+
+### 1.0.0.20
+- MCP **`play_library_track`**, **`play_tag`**, **`resume_shuffle`**  
+- Tag play shuffles the set; auto top-up can continue into full library shuffle  
+
+### 1.0.0.18
+- **Flat tag catalog** (auto key + renamable label); files use `HOTSONOS_TAGS`  
+- **Tags** maintenance tab (add / rename / reorder / delete + purge from files)  
+- Library search prefixes `T:` / `A:` / `TG:` / `F:`  
+- New-install starter tags: Slow, Medium, Fast, Dinner, Drive, Focus  
+- MCP tag catalog tools: `list_tags`, `tag_create`, `tag_rename`, `tag_delete`, `track_toggle_tag`  
+
+### 1.0.0.10
+- Quick-tag overlay and library chip tagging path (evolved into flat catalog above)  
+
 ### 1.0.0.9
 - **History-aware shuffle**: short queues, hard-exclude played tracks, auto top-up near end, artist spacing; Settings under **Shuffle** (clear history, all parameters)
-- **Library intelligence**: discover roots from Sonos, SQLite FLAC/MP3 cache, format / Sonos-unplayable flags, write `HOTSONOS_TEMPO` + standard tags (`track_set_tags`)
-- **UI**: left vertical navigation (Control, Hotkeys, Shuffle, Library, Wake, Options, MCP Debug)
+- **Library intelligence**: discover roots from Sonos, SQLite FLAC/MP3 cache, format / Sonos-unplayable flags, write tags (`track_set_tags`)
+- **UI**: left vertical navigation
 - **MCP**: library tools + control tools; live MCP command log
 - Play history file: `%LocalAppData%\HotSonos\play-history.json`
+- Master library match + optional dual-write (post-1.0.0.9 on `master`)
 
 ### 1.0.0.8
 - **Loopback MCP** inside the tray app; Settings toggle + port; tray copies endpoint
