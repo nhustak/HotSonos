@@ -48,7 +48,7 @@ It builds a short random mix from your library, leaves out songs you’ve heard 
 A short mix starts faster and is more reliable on Sonos. Dumping thousands of songs at once is slow and can be flaky. Small batches keep things snappy and let HotSonos keep the mix fresh as you listen.
 
 **How does it avoid repeats?**  
-As songs play, HotSonos remembers them. When it builds the next batch, it skips those recent ones (by default, roughly the last couple of weeks).
+As songs play **or you skip them (Next)**, HotSonos remembers them. When it builds the next batch, it leaves those out (by default, roughly the last couple of weeks). Top-up also won’t re-add tracks already put on the queue in the current shuffle session.
 
 **Does it reshuffle what’s already lined up?**  
 No. Songs already in the queue stay put. New songs only get added at the end.
@@ -129,7 +129,9 @@ While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery,
 - Single-instance tray app; second launch activates the running window  
 - Optional **Start with Windows**; nightly silent re-sync  
 - Config: `%LocalAppData%\HotSonos\settings.json`  
-- Play history: `%LocalAppData%\HotSonos\play-history.json`  
+- Play history (exclude set): `%LocalAppData%\HotSonos\play-history.json`  
+- Play lifecycle events (debug): `%LocalAppData%\HotSonos\play-events.jsonl` · MCP `get_play_events`  
+
 - Logs: `%LocalAppData%\HotSonos\logs`
 
 ---

@@ -52,6 +52,19 @@ public sealed class SonosController
         return SonosTransportStateParser.Parse(SonosSoapClient.ReadValue(response, "CurrentTransportState"));
     }
 
+    /// <summary>
+    /// Current track URI from <c>GetPositionInfo</c> (poll). Prefer this when
+    /// recording a skip — GENA may lag or miss a track that barely started.
+    /// </summary>
+    public async Task<string?> GetCurrentTrackUriAsync(CancellationToken ct = default)
+    {
+        var response = await _soap.InvokeAsync(
+            CoordinatorIp, SonosService.AvTransport, "GetPositionInfo",
+            [new("InstanceID", "0")], ct).ConfigureAwait(false);
+        var uri = SonosSoapClient.ReadValue(response, "TrackURI");
+        return string.IsNullOrWhiteSpace(uri) ? null : uri.Trim();
+    }
+
     /// <summary>Toggles play/pause based on the current state. Returns the new intended state.</summary>
     public async Task<SonosTransportState> PlayPauseAsync(CancellationToken ct = default)
     {

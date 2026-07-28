@@ -5,8 +5,9 @@ using HotSonos.App.Infrastructure;
 namespace HotSonos.App.Services;
 
 /// <summary>
-/// Tracks URIs that were actually played (GENA) so the next queue rebuild
-/// can hard-exclude them. History only matters at rebuild/top-up time.
+/// Tracks URIs that were played or skipped so the next queue rebuild/top-up
+/// can hard-exclude them. Sources: GENA now-playing, and explicit Next/skip
+/// (polled via GetPositionInfo). History only applies at rebuild/top-up time.
 /// </summary>
 public sealed class PlayHistoryStore
 {

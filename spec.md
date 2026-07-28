@@ -11,7 +11,7 @@
 
 > Update this section **in the same task** whenever library-plan or MCP work advances. This is the resume point after context compression.
 
-### Snapshot (2026-07-26)
+### Snapshot (2026-07-28)
 
 | Item | State |
 |------|--------|
@@ -20,6 +20,7 @@
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
 | **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug |
 | **Play sources** | Control **From**: All / tag / genre · play list · Quick Play · slots 1–6 · MCP; genres optional (`ShowGenresInPlaySources`) |
+| **Next product slice** | **Library groups** (§5.1 / §6.2) — path modes; no group hotkeys |
 | **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** on this PC |
 | **Library DB** | `%LocalAppData%\HotSonos\library.db`; `master_path` + `custom_tags` JSON |
 
@@ -78,6 +79,7 @@
 - **Do not** add master hi-res dump as a Sonos Music Library share.  
 - Tags live in **files**; SQLite is **rebuildable cache only**.  
 - Daily shuffle remains Sonos `A:TRACKS` until §6.2 / later scoping.  
+- Shuffle history: GENA + **Next/skip** both mark tracks excluded (~14d); top-up also excludes tracks already enqueued this session.  
 - MCP is loopback only; register tools via `C:\Project\_mcp\mcp-servers.json` + `sync-mcp.ps1` (server list), but HotSonos tools are live from the running app.  
 - Commit only when the user asks; steps 1–2 are ready to commit when they do.  
 - NuGet audit: transitive `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 may warn NU1903 until Microsoft.Data.Sqlite ships a newer native bundle — local DB only, not network-facing.
@@ -152,7 +154,7 @@ Sonos speakers expose a local UPnP/SOAP server on **TCP 1400**, discoverable via
 | Next / Previous | `AVTransport` `Next` / `Previous` |
 | Play Favorite | Browse `FV:2` → `SetAVTransportURI` + `Play` |
 | Play Playlist | Browse `SQ:` → `x-rincon-playlist:{uuid}#SQ:N` → queue + play |
-| Shuffle Music Library | Browse `A:TRACKS`; **short queue (~80)**; hard-exclude tracks **actually played** (~14d); **auto top-up** near queue end; artist spread; `NORMAL` |
+| Shuffle Music Library | Browse `A:TRACKS`; **short queue (~80)**; hard-exclude tracks **played or skipped** (~14d); top-up also skips **session-enqueued** tracks; **auto top-up** near queue end; artist spread; `NORMAL` |
 | Volume | Per-member `RenderingControl` (group write often 803 with fixed-volume members) |
 | Level all | Absolute `SetVolume` + unmute |
 | Now playing | GENA AVTransport `LastChange` |
@@ -289,27 +291,61 @@ Concurrent shuffle / Fresh Start: exclusive gate + Busy feedback.
 
 ### Daily spin
 - Default mental model: “play my **normal** library everywhere, shuffled.”  
-- Implementation today: Sonos `A:TRACKS` for whatever Sonos has indexed.  
-- **Next**: allow configuring a **daily library root / container** so mood folders are not in daily shuffle even if on the same NAS.
+- Implementation today: Sonos `A:TRACKS` for whatever Sonos has indexed (mood folders included if Sonos indexes them).  
+- **Agreed direction (§5.1):** daily = path-scoped **group mode**, not “everything Sonos knows.”
 
 ### Mood collections
-Examples: jazz, film scores, seasonal — **not** wanted in daily spin.  
-Access model:
+Examples: Christmas, soundtracks, jazz corner — **not** wanted in daily spin, but playable on demand as a **mode**.  
+Access model (target):
 
-1. **Playlists** (primary) — Sonos `SQ:` / favorites; hotkey slots; wake source  
-2. **Later** — tag-built playlists (“slow jazz”) from file metadata  
-3. **Optional** — separate Sonos library folder/share for mood trees  
+1. **Library groups (path modes)** — primary for folder-organized mood vs daily (**Next**, §5.1 / §6.2)  
+2. **Tags** — cross-cutting across folders (Favs, Slow, Drive) — **shipped**  
+3. **Genres** — standard file Genre field — **shipped** (optional in UI)  
+4. **Sonos playlists / favorites** — intentional lists — **shipped**
 
-### Library roots
+### Library roots = one pool
 
 | Root | Role | Status |
 |------|------|--------|
-| **Sonos library path(s)** | Share/folder(s) Sonos indexes; FLAC/MP3 playable set; HotSonos daily + playlists | **Configured** in Settings + `settings.json` (`SonosLibraryRoots`) + MCP `get_library_config` / `get_settings_summary` |
-| **Master library path** | Full archive (may include hi-res FLACs Sonos cannot play well); durable tags only | **Configured** (optional) as `MasterLibraryRoot` |
+| **Sonos library path(s)** | Share/folder(s) Sonos indexes; FLAC/MP3 playable set | **Configured** (`SonosLibraryRoots`); discover from Sonos |
+| **Master library path** | Full archive / dual-write tags | **Configured** (optional) `MasterLibraryRoot` |
 
-Same NAS family is expected (e.g. `\\server\Music\Sonos\…` plus a master tree).  
-**Do not** add master hi-res dump as a Sonos library share.  
-Paths alone do not change shuffle yet — daily spin still uses Sonos `A:TRACKS` until §6.2 / scan phase.
+- Treat **all Sonos roots as one big pool** for grouping and play. Root count does not define modes.  
+- **Do not** add master hi-res dump as a Sonos library share.  
+- Paths alone do not yet change shuffle — still full `A:TRACKS` until groups ship.
+
+### 5.1 Library groups (path modes) — design locked (2026-07-28)
+
+> **Implement when asked.** Not started.
+
+#### Model
+- **Pool** = union of all configured Sonos library roots.  
+- **Group** = `{ label, path prefix(es) under the pool }`.  
+  - Default discovery: **top-level folders** under the pool become candidate groups.  
+  - A group may later list **multiple paths** under the same pool (merge folders); v1 can be one folder = one group.  
+- **Daily** = special default mode: house mix = pool **minus** groups marked exclude-from-daily (or explicit include list — prefer **exclude** mood folders when most of the tree is daily).  
+- **Cross-cuts:** tags/genres stay independent of groups (Favs across Daily + Christmas, etc.).
+
+#### Player “mode”
+- Picking a group (or Daily) **sets the active shuffle scope** and builds a history-aware short queue from the **library cache** (path filter + Sonos-playable), same family as tag/genre play.  
+- Sonos still indexes everything; HotSonos only enqueues the active slice.  
+- Top-up while in a mode stays **inside that mode** (not “bleed into full library” unless user later opts in).
+
+#### UI (v1) — no group hotkeys
+| Surface | Behavior |
+|---------|----------|
+| **Control tab** | Mode picker: **Daily** + named groups (and keep existing tag/genre/Sonos play where useful). Start shuffle / current mode clear. |
+| **Quick Play overlay** | Groups available as a **list / pull-down (or listed rows)** — pick mode and go. **No dedicated hotkeys per group** (excessive). Digits can remain for pinned sources if needed; groups need not burn 2–9. |
+| **Settings / Library** | Discover/edit groups; mark exclude-from-Daily; refresh folder list after rescan. |
+| **Hotkey shuffle / tray double-click default** | **Daily** mode (not unscoped All), once groups ship. |
+
+#### Explicitly out of v1
+- Per-group global hotkeys  
+- Timed auto-switch (“Christmas for 3 hours then Daily”) — **phase 2 / later**, do not design further until v1 is shipping  
+- Auto-creating Sonos `SQ:` playlists per folder  
+
+#### MCP (when built)
+- `list_library_groups`, `play_group` / `set_shuffle_mode` (names TBD) — optional with UI.
 
 ---
 
@@ -319,17 +355,22 @@ Paths alone do not change shuffle yet — daily spin still uses Sonos `A:TRACKS`
 - Reliable list/refresh of playlists + favorites in Settings/tray  
 - Clear feedback when empty / non-playable  
 - Prefer play-by-id for `SQ:` (already) — harden edge cases  
-- Document / support mood playlists as first-class “modes” alongside shuffle  
 
-### 6.2 Daily shuffle scope
-- Setting: daily library scope (all indexed `A:TRACKS` vs specific container/path policy)  
-- Goal: mood content accessible via playlist without entering daily shuffle  
+### 6.2 Library groups + daily scope (**primary Next product slice**)
+- Implement §5.1: pool + groups + Daily exclude + Control mode + Quick Play group list  
+- Goal: mood folders never pollute daily spin; one control action plays only that group  
+- Prefer library-cache path filter over raw full `A:TRACKS` for scoped modes  
 
 ### 6.3 Wake + playlists
 - Already supports favorite/playlist source — ensure mood playlists work end-to-end for wake  
+- Later: wake source = Daily or a named group  
 
 ### 6.4 Spec/docs site
 - Optional static site on **hotsonos.com** (download MSI, features, GitHub link)  
+
+### 6.5 Later (not now)
+- Timed mode swap (play group A for N hours, then group B / Daily)  
+- Multi-path group editor polish if v1 is single-folder only
 
 ---
 
@@ -518,3 +559,6 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-07-16 | Step 4: master match + dual-write; track_find_master / track_link_master; master_path cache |
 | 2026-07-17 | History-aware library shuffle: deprioritize recent plays/serves, queue cap 500, artist spread |
 | 2026-07-19 | Shuffle v2: short queues, hard-exclude played only, auto top-up near end (history applies at rebuild) |
+| 2026-07-26 | Skip (Next) writes play history via GetPositionInfo; top-up excludes session-served URIs (no re-queue of already-lined-up tracks) |
+| 2026-07-26 | Play lifecycle log: started/skipped/paused/resumed → play-events.jsonl + AppLog + MCP get_play_events |
+| 2026-07-28 | Library groups design locked §5.1: one pool, path groups, Daily exclude, Control + Quick Play (no group hotkeys); timed swap later |

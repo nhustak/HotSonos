@@ -201,13 +201,13 @@ public sealed class AppSettings
     /// <summary>Tracks appended when the queue is nearly empty (auto top-up).</summary>
     public int ShuffleTopUpTracks { get; set; } = 60;
 
-    /// <summary>Days to remember actually-played tracks and hard-exclude them from new batches.</summary>
+    /// <summary>Days to remember played/skipped tracks and hard-exclude them from new batches.</summary>
     public int ShuffleHistoryDays { get; set; } = 14;
 
     /// <summary>Auto top-up when this many tracks or fewer remain in the queue (needs Sonos GENA track counts).</summary>
     public int ShuffleTopUpWhenRemaining { get; set; } = 4;
 
-    /// <summary>Hard-exclude tracks that were actually played within history days.</summary>
+    /// <summary>Hard-exclude tracks that were played or skipped within history days.</summary>
     public bool ShuffleExcludePlayed { get; set; } = true;
 
     /// <summary>When near the end of the queue, append another random batch automatically.</summary>

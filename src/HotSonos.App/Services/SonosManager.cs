@@ -36,6 +36,7 @@ public sealed class SonosManager
     private readonly SonosDiscovery _discovery;
     private readonly SonosEventSubscriber _events = new();
     private readonly PlayHistoryStore _playHistory;
+    private readonly PlayEventLog _playEvents;
     private readonly Func<AppSettings> _settings;
 
     private IReadOnlyList<SonosZone> _zones = [];
@@ -44,6 +45,22 @@ public sealed class SonosManager
     private IReadOnlyList<string> _offline = [];
     private bool _topologySeen;
     private int _topUpInFlight; // 0/1
+
+    /// <summary>Last track/state observed via GENA — drives start/pause/resume event logging.</summary>
+    private string? _lastEventTrackKey;
+    private string? _lastEventUri;
+    private string? _lastEventTitle;
+    private string? _lastEventArtist;
+    private SonosTransportState _lastEventState = SonosTransportState.Unknown;
+    private bool _skipNextStartLog; // set when we just logged "skipped" for this track change
+
+    /// <summary>
+    /// Normalized keys enqueued during this shuffle session (rebuild + top-ups).
+    /// Top-up excludes these so a track already on the queue cannot be re-added
+    /// before it has been heard/skipped (GENA only covers what actually started).
+    /// </summary>
+    private readonly HashSet<string> _sessionServedKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _servedGate = new();
 
     /// <summary>Last exclusive library playback mode (for MCP / top-up policy).</summary>
     private string _playbackMode = "none"; // none | shuffle | special (one-shot or tag queue)
@@ -110,15 +127,24 @@ public sealed class SonosManager
         }).ToList(),
     };
 
-    public SonosManager(Func<AppSettings>? settings = null, PlayHistoryStore? playHistory = null)
+    public SonosManager(
+        Func<AppSettings>? settings = null,
+        PlayHistoryStore? playHistory = null,
+        PlayEventLog? playEvents = null)
     {
         _settings = settings ?? AppSettings.CreateDefault;
         _playHistory = playHistory ?? new PlayHistoryStore(() => _settings().EnsureShape().ShuffleHistoryDays);
+        _playEvents = playEvents ?? new PlayEventLog();
         _discovery = new SonosDiscovery(_soap);
         _events.NowPlayingChanged += np =>
         {
-            if (!string.IsNullOrWhiteSpace(np.TrackUri))
+            ObservePlayLifecycle(np);
+
+            if (!string.IsNullOrWhiteSpace(np.TrackUri)
+                && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning)
+            {
                 _playHistory.RecordPlayed(np.TrackUri);
+            }
 
             var s = _settings().EnsureShape();
             if (s.ShuffleAutoTopUp
@@ -135,6 +161,62 @@ public sealed class SonosManager
     }
 
     public PlayHistoryStore PlayHistory => _playHistory;
+
+    public PlayEventLog PlayEvents => _playEvents;
+
+    /// <summary>
+    /// Log start / pause / resume / stop from GENA now-playing changes.
+    /// Skip is logged from the Next action before transport advances.
+    /// </summary>
+    private void ObservePlayLifecycle(NowPlaying np)
+    {
+        var key = PlayHistoryStore.NormalizeKey(np.TrackUri);
+        var state = np.State;
+        var title = np.Title;
+        var artist = np.Artist;
+        var uri = np.TrackUri;
+
+        // Transport-only change (same track): pause / resume / stop.
+        if (!string.IsNullOrEmpty(key)
+            && string.Equals(key, _lastEventTrackKey, StringComparison.OrdinalIgnoreCase))
+        {
+            if (IsPausedLike(state) && IsPlayingLike(_lastEventState))
+                _playEvents.Paused(uri, title, artist, "gena");
+            else if (IsPlayingLike(state) && IsPausedLike(_lastEventState))
+                _playEvents.Resumed(uri, title, artist, "gena");
+            else if (state is SonosTransportState.Stopped
+                     && _lastEventState is not SonosTransportState.Stopped
+                     && _lastEventState is not SonosTransportState.Unknown)
+                _playEvents.Stopped(uri, title, artist, "gena");
+
+            _lastEventState = state;
+            if (!string.IsNullOrWhiteSpace(title)) _lastEventTitle = title;
+            if (!string.IsNullOrWhiteSpace(artist)) _lastEventArtist = artist;
+            if (!string.IsNullOrWhiteSpace(uri)) _lastEventUri = uri;
+            return;
+        }
+
+        // Track changed (or first observation).
+        if (!string.IsNullOrEmpty(key)
+            && IsPlayingLike(state)
+            && !_skipNextStartLog)
+        {
+            _playEvents.Started(uri, title, artist, "gena");
+        }
+
+        _skipNextStartLog = false;
+        _lastEventTrackKey = key.Length > 0 ? key : null;
+        _lastEventUri = uri;
+        _lastEventTitle = title;
+        _lastEventArtist = artist;
+        _lastEventState = state;
+    }
+
+    private static bool IsPlayingLike(SonosTransportState s) =>
+        s is SonosTransportState.Playing or SonosTransportState.Transitioning;
+
+    private static bool IsPausedLike(SonosTransportState s) =>
+        s is SonosTransportState.PausedPlayback;
 
     private void OnTopologyEvent(string stateXml)
     {
@@ -280,14 +362,26 @@ public sealed class SonosManager
         switch (action)
         {
             case HotsonosAction.PlayPause:
+            {
+                // Pause/resume lifecycle is logged from GENA (covers Sonos app too).
                 var state = await _controller.PlayPauseAsync(ct).ConfigureAwait(false);
                 return state == SonosTransportState.Playing ? "▶ Playing" : "⏸ Paused";
+            }
             case HotsonosAction.Next:
+            {
+                // Skip = do not play again in the history window (same as finishing a track).
+                await RecordCurrentTrackAsPlayedAsync(ct).ConfigureAwait(false);
+                _playEvents.Skipped(_lastEventUri, _lastEventTitle, _lastEventArtist, "hotkey");
+                _skipNextStartLog = false; // still log started for the next track via GENA
                 await _controller.NextAsync(ct).ConfigureAwait(false);
                 return "⏭ Next";
+            }
             case HotsonosAction.Previous:
+            {
+                _playEvents.Previous(_lastEventUri, _lastEventTitle, _lastEventArtist, "hotkey");
                 await _controller.PreviousAsync(ct).ConfigureAwait(false);
                 return "⏮ Previous";
+            }
             case HotsonosAction.ShuffleLibrary:
                 await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
                 var shuffleSummary = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
@@ -593,7 +687,7 @@ public sealed class SonosManager
 
     /// <summary>
     /// Rebuild the queue from A:TRACKS using current shuffle settings
-    /// (queue size, exclude played history, artist spread).
+    /// (queue size, exclude played/skipped history, artist spread).
     /// </summary>
     public async Task<string> ShuffleWithHistoryAsync(CancellationToken ct = default)
     {
@@ -612,6 +706,10 @@ public sealed class SonosManager
             },
             ct).ConfigureAwait(false);
 
+        // New queue replaces the old one — restart session served set from this batch.
+        ClearSessionServed();
+        RememberServed(result.EnqueuedUris);
+
         _playbackMode = "shuffle";
         var msg =
             $"browsed {result.Browsed}, queued {result.Enqueued} " +
@@ -619,6 +717,71 @@ public sealed class SonosManager
             $"history keys {_playHistory.PlayedDistinctCount}, history days {s.ShuffleHistoryDays})";
         AppLog.Info($"Shuffle rebuild: {msg}");
         return msg;
+    }
+
+    /// <summary>
+    /// Poll the coordinator for the current track and mark it played/skipped in history
+    /// so the next rebuild/top-up will hard-exclude it.
+    /// </summary>
+    private async Task RecordCurrentTrackAsPlayedAsync(CancellationToken ct)
+    {
+        if (_controller is null) return;
+        try
+        {
+            var uri = await _controller.GetCurrentTrackUriAsync(ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(uri))
+            {
+                // Fall back to last GENA snapshot if poll is empty mid-transition.
+                uri = _lastEventUri;
+            }
+
+            if (string.IsNullOrWhiteSpace(uri)) return;
+            _playHistory.RecordPlayed(uri);
+            RememberServed([uri]);
+            _lastEventUri = uri;
+            _lastEventTrackKey = PlayHistoryStore.NormalizeKey(uri);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Could not record skipped track in play history", ex);
+        }
+    }
+
+    private void ClearSessionServed()
+    {
+        lock (_servedGate)
+            _sessionServedKeys.Clear();
+    }
+
+    private void RememberServed(IEnumerable<string> uris)
+    {
+        lock (_servedGate)
+        {
+            foreach (var u in uris)
+            {
+                var k = PlayHistoryStore.NormalizeKey(u);
+                if (k.Length > 0)
+                    _sessionServedKeys.Add(k);
+            }
+        }
+    }
+
+    private List<string> SnapshotSessionServed()
+    {
+        lock (_servedGate)
+            return _sessionServedKeys.ToList();
+    }
+
+    /// <summary>Played history + tracks already enqueued this shuffle session.</summary>
+    private IReadOnlyCollection<string>? BuildExcludeKeys(AppSettings s)
+    {
+        if (!s.ShuffleExcludePlayed)
+            return null;
+
+        var set = new HashSet<string>(_playHistory.GetPlayedKeys(), StringComparer.OrdinalIgnoreCase);
+        foreach (var k in SnapshotSessionServed())
+            set.Add(k);
+        return set;
     }
 
     /// <summary>
@@ -639,6 +802,7 @@ public sealed class SonosManager
 
         await _controller.PlayLibraryUriAsync(cifs, title, artist, ct).ConfigureAwait(false);
         _playbackMode = "special";
+        RememberServed([cifs]);
         var label = string.IsNullOrWhiteSpace(title)
             ? System.IO.Path.GetFileName(pathOrUri)
             : (string.IsNullOrWhiteSpace(artist) ? title : $"{title} — {artist}");
@@ -695,6 +859,7 @@ public sealed class SonosManager
 
         await _controller.PlayLibraryUrisAsync(items, ct).ConfigureAwait(false);
         _playbackMode = "special";
+        RememberServed(items.Select(i => i.CifsUri));
         var continueHint = s.ContinueLibraryShuffleAfterSpecialPlay
             ? " · will top-up into library shuffle near end"
             : " · no library top-up after this queue";
@@ -750,6 +915,7 @@ public sealed class SonosManager
 
         await _controller.PlayLibraryUrisAsync(items, ct).ConfigureAwait(false);
         _playbackMode = "special";
+        RememberServed(items.Select(i => i.CifsUri));
         var continueHint = s.ContinueLibraryShuffleAfterSpecialPlay
             ? " · will top-up into library shuffle near end"
             : " · no library top-up after this queue";
@@ -802,7 +968,8 @@ public sealed class SonosManager
     }
 
     /// <summary>
-    /// Append another random batch excluding play history — when the queue is nearly empty.
+    /// Append another random batch excluding play/skip history and tracks already
+    /// enqueued this session — when the queue is nearly empty.
     /// </summary>
     public async Task TryTopUpQueueAsync(CancellationToken ct = default)
     {
@@ -818,7 +985,7 @@ public sealed class SonosManager
             if (!s.ShuffleAutoTopUp || !ShouldAutoTopUp(s))
                 return;
 
-            IReadOnlyCollection<string>? exclude = s.ShuffleExcludePlayed ? _playHistory.GetPlayedKeys() : null;
+            var exclude = BuildExcludeKeys(s);
             var result = await _controller.ShuffleMusicLibraryAsync(
                 new ShuffleOptions
                 {
@@ -829,13 +996,17 @@ public sealed class SonosManager
                 },
                 ct).ConfigureAwait(false);
 
+            RememberServed(result.EnqueuedUris);
+
             // Once library top-up has run, treat session as normal shuffle for further top-ups.
             if (!string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase))
                 _playbackMode = "shuffle";
 
+            var session = SnapshotSessionServed().Count;
             AppLog.Info(
                 $"Shuffle top-up: appended {result.Enqueued} " +
-                $"(excluded played {result.ExcludedCount}, history {_playHistory.PlayedDistinctCount})");
+                $"(excluded {result.ExcludedCount}, history {_playHistory.PlayedDistinctCount}, " +
+                $"session served {session})");
         }
         catch (Exception ex)
         {

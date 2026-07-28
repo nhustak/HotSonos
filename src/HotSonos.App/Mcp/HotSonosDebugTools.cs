@@ -675,6 +675,33 @@ public sealed class HotSonosDebugTools
     public string GetLogDirectory() =>
         McpActivityLog.Run("get_log_directory", null, () => AppLog.DirectoryPath);
 
+    [McpServerTool(Name = "get_play_events")]
+    [Description("Recent play lifecycle events (started, skipped, paused, resumed, previous, stopped). Also on disk at %LocalAppData%\\HotSonos\\play-events.jsonl and in app logs as 'Play started:' / 'Play skipped:' etc.")]
+    public string GetPlayEvents(
+        [Description("Max events to return (default 40, max 200)")] int max = 40,
+        [Description("Optional kind filter: started | skipped | paused | resumed | previous | stopped")] string? kind = null) =>
+        McpActivityLog.Run("get_play_events", new { max, kind }, () =>
+        {
+            max = Math.Clamp(max, 1, 200);
+            var events = _state.Sonos.PlayEvents.GetRecent(max, kind);
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                file = _state.Sonos.PlayEvents.FilePath,
+                count = events.Count,
+                events = events.Select(e => new
+                {
+                    utc = e.Utc,
+                    e.Kind,
+                    e.Display,
+                    e.Title,
+                    e.Artist,
+                    e.Key,
+                    e.Source,
+                }),
+            }, JsonOptions);
+        });
+
     // ---- Control (same actions as tray / hotkeys) -------------------------
 
     [McpServerTool(Name = "play_pause")]
