@@ -43,7 +43,7 @@ public sealed class MasterMatchResult
 }
 
 /// <summary>
-/// Finds a twin under <c>MasterLibraryRoot</c> for dual-write of tags.
+/// Finds a twin under a master archive root (from a Sonos-path mapping) for dual-write of tags.
 /// Strategy (spec §7.4): stored link → relative path → path suffix →
 /// scoped artist/album name search → bounded filename walk + metadata score.
 /// Full-tree walks are time-budgeted so a huge/slow master share cannot freeze the app.

@@ -53,6 +53,23 @@ public partial class QuickPlayOverlay : Window
             payload: ""));
 
         var slot = 2;
+        foreach (var folder in _settings.SonosLibraryRoots)
+        {
+            if (slot > 9) break;
+            var name = System.IO.Path.GetFileName(folder.TrimEnd('\\', '/'));
+            if (string.IsNullOrWhiteSpace(name)) name = folder;
+            var count = _library?.CountTracksUnderFolder(folder) ?? 0;
+            _sources.Add(SourceRow.Make(
+                slot: slot++,
+                kind: SourceKind.Folder,
+                kindLabel: "Folder",
+                title: name,
+                detail: count == 0
+                    ? "No tracks in cache — Rescan after Discover"
+                    : $"{count} track(s) · folder shuffle · stays in folder",
+                payload: folder));
+        }
+
         foreach (var t in _settings.Tags)
         {
             if (slot > 9) break;
@@ -173,6 +190,13 @@ public partial class QuickPlayOverlay : Window
                         var summary = await _sonos.ShuffleWithHistoryAsync().ConfigureAwait(true);
                         toast = $"🔀 {summary}";
                         break;
+                    case SourceKind.Folder:
+                        if (_library is null)
+                            throw new InvalidOperationException("Library service not available.");
+                        await _sonos.GroupAllSpeakersAsync().ConfigureAwait(true);
+                        toast = await _sonos.PlayLibraryFolderAsync(_library, src.Payload, shuffle: true)
+                            .ConfigureAwait(true);
+                        break;
                     case SourceKind.Tag:
                         if (_library is null)
                             throw new InvalidOperationException("Library service not available.");
@@ -227,6 +251,7 @@ public partial class QuickPlayOverlay : Window
     private enum SourceKind
     {
         LibraryShuffle,
+        Folder,
         Tag,
         Genre,
         Sonos,

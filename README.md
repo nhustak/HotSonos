@@ -102,7 +102,12 @@ Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **libra
 - **Discover from Sonos** (share roots from `x-file-cifs` URIs)  
 - SQLite cache of FLAC/MP3 metadata (format, bit depth, sample rate, bitrate)  
 - **Sonos-unplayable** heuristic for hi-res / out-of-spec files  
-- Optional **master library root** with match + dual-write of tags  
+- Optional **master mappings** (Sonos path → hi-res master root) with match + dual-write of tags; unmapped folders stay Sonos-only  
+- **Daily mix folders**: which discovered library folders count as “All / house shuffle” (e.g. only `Sonos`, not Jazz/Christmas)  
+- **Folder play**: each library folder is a shuffle mode (Control From / play list, Quick Play, favorite slots, MCP `list_library_folders` / `play_folder`); top-up stays in that folder  
+
+
+
 - Paths / rescan / force re-read tags / search under **Library**  
 - DB: `%LocalAppData%\HotSonos\library.db`
 
@@ -170,7 +175,8 @@ Each [GitHub Release](https://github.com/nhustak/HotSonos/releases) is produced 
 - Install from Releases: nothing else  
 - Build from source: [.NET 10 SDK](https://dotnet.microsoft.com/download)  
 - Library scan/tag write: this PC needs SMB access (read for scan, write for tags) to the music share Sonos indexes  
-- Optional master dual-write: SMB write under `MasterLibraryRoot`  
+- Optional master dual-write: SMB write under a **mapped** master root for that Sonos path  
+
 
 ---
 

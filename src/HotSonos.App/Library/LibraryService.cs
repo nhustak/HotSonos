@@ -71,7 +71,12 @@ public sealed class LibraryService : IDisposable
                 SonosUnplayableCount = _db.CountSonosUnplayable(),
                 RootsConfigured = s.SonosLibraryRoots.Count,
                 Roots = s.SonosLibraryRoots.ToList(),
-                MasterRoot = s.MasterLibraryRoot,
+                MasterRoot = s.ListMasterRoots().Count switch
+                {
+                    0 => null,
+                    1 => s.ListMasterRoots()[0],
+                    _ => string.Join("; ", s.ListMasterRoots()),
+                },
                 DatabasePath = _db.DatabasePath,
                 LastScanStartedUtc = _lastStarted,
                 LastScanFinishedUtc = _lastFinished,
@@ -128,11 +133,17 @@ public sealed class LibraryService : IDisposable
 
             var s = _settings().EnsureShape();
             s.SonosLibraryRoots = roots.ToList();
+            // Re-run EnsureShape so multi-root Daily defaults (e.g. prefer …\Sonos) apply.
+            s.EnsureShape();
             try { _persistSettings?.Invoke(); }
             catch (Exception ex) { AppLog.Warn("Persist after root discovery failed", ex); }
 
-            AppLog.Info($"Discovered library roots from Sonos: {string.Join(" | ", roots)}");
-            return (true, $"Discovered {roots.Count} root(s) from Sonos.", roots);
+            AppLog.Info($"Discovered library roots from Sonos ({roots.Count}): {string.Join(" | ", roots)}");
+            return (true,
+                roots.Count == 1
+                    ? $"Discovered 1 library folder from Sonos:\n{roots[0]}"
+                    : $"Discovered {roots.Count} library folders from Sonos (one per Sonos Music Library folder under the share).",
+                roots);
         }
         catch (Exception ex)
         {
@@ -205,6 +216,14 @@ public sealed class LibraryService : IDisposable
     /// <summary>All cached tracks whose Genre field includes <paramref name="genre"/> as a label.</summary>
     public IReadOnlyList<LibraryTrack> GetTracksWithGenre(string genre) =>
         _db.FindTracksWithGenre(genre);
+
+    /// <summary>Cached Sonos-playable tracks under a library folder path (UNC).</summary>
+    public IReadOnlyList<LibraryTrack> GetTracksUnderFolder(string folderPath) =>
+        _db.FindTracksUnderPath(folderPath, sonosPlayableOnly: true);
+
+    /// <summary>Count of cached playable tracks under a folder (for UI lists).</summary>
+    public int CountTracksUnderFolder(string folderPath) =>
+        GetTracksUnderFolder(folderPath).Count;
 
     public IReadOnlyList<LibraryTrack> Search(string? query, int limit = 25, int offset = 0, bool sonosUnplayableOnly = false)
     {
@@ -490,8 +509,8 @@ public sealed class LibraryService : IDisposable
     /// <summary>
     /// Write tags into the file on the Sonos library share, then refresh the SQLite row.
     /// Path must be under a configured Sonos library root (or resolvable from cache).
-    /// When <paramref name="updateMaster"/> is true (default) and a master root is configured,
-    /// also dual-write to a matched twin under <c>MasterLibraryRoot</c> (spec §7.4).
+    /// When <paramref name="updateMaster"/> is true (default) and a master mapping covers this
+    /// Sonos path, also dual-write to a matched twin under that mapping's master root (spec §7.4).
     /// </summary>
     public TagWriteResult SetTags(string path, TrackTagUpdate update, bool dryRun = false, bool updateMaster = true)
     {
@@ -636,7 +655,22 @@ public sealed class LibraryService : IDisposable
             }
         }
 
-        var match = LibraryMasterMatcher.Find(probe, s.MasterLibraryRoot, cached?.MasterPath);
+        var masterRoot = s.ResolveMasterRootForSonosPath(fullPath);
+        if (string.IsNullOrWhiteSpace(masterRoot))
+        {
+            return WithMaster(
+                WithTrack(result, trackAfter),
+                updateMasterRequested: true,
+                match: new MasterMatchResult
+                {
+                    Kind = MasterMatchKind.None,
+                    Message =
+                        "No master mapping for this Sonos path (Sonos-only — configure Library → master mappings).",
+                },
+                masterWrite: null);
+        }
+
+        var match = LibraryMasterMatcher.Find(probe, masterRoot, cached?.MasterPath);
         if (!match.Found)
         {
             return WithMaster(WithTrack(result, trackAfter), updateMasterRequested: true, match, masterWrite: null);
@@ -682,19 +716,29 @@ public sealed class LibraryService : IDisposable
 
         var s = _settings().EnsureShape();
         var cached = _db.GetByPath(path.Trim()) ?? _db.FindBySonosUriOrUnc(path.Trim());
-        if (cached is null)
+        var sonosPath = cached?.Path ?? path.Trim();
+        var masterRoot = s.ResolveMasterRootForSonosPath(sonosPath);
+        if (string.IsNullOrWhiteSpace(masterRoot))
         {
-            // Minimal probe from path alone
-            var probe = new LibraryTrack { Path = path.Trim() };
-            return LibraryMasterMatcher.Find(probe, s.MasterLibraryRoot);
+            return new MasterMatchResult
+            {
+                Kind = MasterMatchKind.None,
+                Message = "No master mapping for this Sonos path.",
+            };
         }
 
-        return LibraryMasterMatcher.Find(cached, s.MasterLibraryRoot, cached.MasterPath);
+        if (cached is null)
+        {
+            var probe = new LibraryTrack { Path = sonosPath };
+            return LibraryMasterMatcher.Find(probe, masterRoot);
+        }
+
+        return LibraryMasterMatcher.Find(cached, masterRoot, cached.MasterPath);
     }
 
     /// <summary>
     /// Manually link (or clear) a master twin path for a cached Sonos track.
-    /// Master path must exist and live under <c>MasterLibraryRoot</c> when set.
+    /// Master path must exist and live under the master root mapped for that Sonos path.
     /// </summary>
     public (bool ok, string message, string? masterPath) LinkMaster(string sonosPath, string? masterPath)
     {
@@ -723,11 +767,12 @@ public sealed class LibraryService : IDisposable
         try { masterPath = Path.GetFullPath(masterPath); }
         catch { /* keep */ }
 
-        if (string.IsNullOrWhiteSpace(s.MasterLibraryRoot))
-            return (false, "Configure MasterLibraryRoot before linking.", masterPath);
+        var masterRoot = s.ResolveMasterRootForSonosPath(sonosPath);
+        if (string.IsNullOrWhiteSpace(masterRoot))
+            return (false, "No master mapping for this Sonos path. Add one under Library paths.", masterPath);
 
-        if (!IsUnderRoot(masterPath, s.MasterLibraryRoot))
-            return (false, "Master path is not under configured MasterLibraryRoot.", masterPath);
+        if (!IsUnderRoot(masterPath, masterRoot))
+            return (false, $"Master path is not under mapped master root: {masterRoot}", masterPath);
 
         var ext = Path.GetExtension(masterPath);
         if (!LibraryTagReader.AudioExtensions.Contains(ext))
@@ -737,6 +782,164 @@ public sealed class LibraryService : IDisposable
             return (false, "Failed to save master link.", masterPath);
 
         return (true, "Master link saved.", masterPath);
+    }
+
+    /// <summary>
+    /// Permanently delete a Sonos-library track from disk and cache.
+    /// When a master twin is linked or auto-matched under a mapping, that file is deleted too.
+    /// </summary>
+    public TrackDeleteResult DeleteTrack(string path, bool deleteMaster = true)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return new TrackDeleteResult
+            {
+                Ok = false,
+                Path = path ?? "",
+                Error = "path is required",
+                Message = "path is required",
+            };
+        }
+
+        path = path.Trim();
+        var s = _settings().EnsureShape();
+        var roots = s.SonosLibraryRoots;
+        if (roots.Count == 0)
+        {
+            return new TrackDeleteResult
+            {
+                Ok = false,
+                Path = path,
+                Error = "No Sonos library roots configured.",
+                Message = "No Sonos library roots configured.",
+            };
+        }
+
+        var cached = _db.GetByPath(path) ?? _db.FindBySonosUriOrUnc(path);
+        var fullPath = cached?.Path ?? path;
+        try { fullPath = Path.GetFullPath(fullPath); }
+        catch { /* keep */ }
+
+        if (!IsUnderAnyRoot(fullPath, roots))
+        {
+            return new TrackDeleteResult
+            {
+                Ok = false,
+                Path = fullPath,
+                Error = "Path is not under a configured Sonos library root.",
+                Message = "Path is not under a configured Sonos library root.",
+            };
+        }
+
+        string? masterPath = null;
+        if (deleteMaster)
+        {
+            if (!string.IsNullOrWhiteSpace(cached?.MasterPath) && File.Exists(cached.MasterPath))
+            {
+                masterPath = cached.MasterPath;
+            }
+            else
+            {
+                var match = FindMasterMatch(fullPath);
+                if (match.Found && !string.IsNullOrWhiteSpace(match.Path) && File.Exists(match.Path))
+                    masterPath = match.Path;
+            }
+
+            // Never delete master unless it's under a configured master root.
+            if (masterPath is not null)
+            {
+                var allowed = s.ListMasterRoots()
+                    .Any(r => IsUnderRoot(masterPath, r));
+                if (!allowed)
+                {
+                    AppLog.Warn($"Master delete skipped (not under mapped master root): {masterPath}");
+                    masterPath = null;
+                }
+            }
+        }
+
+        var sonosDeleted = false;
+        var masterDeleted = false;
+        string? error = null;
+
+        try
+        {
+            if (File.Exists(fullPath))
+            {
+                File.Delete(fullPath);
+                sonosDeleted = true;
+            }
+            else
+            {
+                // File already gone — still remove cache row.
+                sonosDeleted = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error($"Delete Sonos track failed: {fullPath}", ex);
+            return new TrackDeleteResult
+            {
+                Ok = false,
+                Path = fullPath,
+                Title = cached?.Title,
+                Artist = cached?.Artist,
+                MasterPath = masterPath,
+                Error = ex.Message,
+                Message = $"Could not delete Sonos file: {ex.Message}",
+            };
+        }
+
+        if (masterPath is not null)
+        {
+            try
+            {
+                if (File.Exists(masterPath))
+                {
+                    File.Delete(masterPath);
+                    masterDeleted = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error($"Delete master twin failed: {masterPath}", ex);
+                error = $"Sonos file deleted, but master failed: {ex.Message}";
+            }
+        }
+
+        try { _db.DeleteByPath(fullPath); }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Cache remove after delete failed: {fullPath}", ex);
+        }
+
+        var label = string.IsNullOrWhiteSpace(cached?.Title)
+            ? System.IO.Path.GetFileName(fullPath)
+            : cached!.Title;
+        var msg = masterDeleted
+            ? $"Deleted “{label}” (Sonos + master)."
+            : sonosDeleted
+                ? (masterPath is null
+                    ? $"Deleted “{label}” (Sonos only)."
+                    : $"Deleted “{label}” (Sonos; master not removed).")
+                : $"Removed “{label}” from cache (file was already missing).";
+
+        if (error is not null)
+            msg = error;
+
+        AppLog.Info($"Track deleted: {fullPath}" + (masterDeleted ? $" + master {masterPath}" : ""));
+        return new TrackDeleteResult
+        {
+            Ok = error is null,
+            Path = fullPath,
+            Title = cached?.Title,
+            Artist = cached?.Artist,
+            MasterPath = masterPath,
+            SonosDeleted = sonosDeleted,
+            MasterDeleted = masterDeleted,
+            Message = msg,
+            Error = error,
+        };
     }
 
     private static TagWriteResult WithTrack(TagWriteResult r, LibraryTrack? trackAfter) => new()
@@ -1091,9 +1294,12 @@ public sealed class LibraryService : IDisposable
                 // Prefer direct matcher write to avoid re-queue if Sonos file somehow locks again.
                 try
                 {
+                    var masterRoot = s.ResolveMasterRootForSonosPath(item.Path);
+                    if (string.IsNullOrWhiteSpace(masterRoot))
+                        continue;
                     var match = LibraryMasterMatcher.Find(
                         trackAfter ?? _db.GetByPath(item.Path),
-                        s.MasterLibraryRoot,
+                        masterRoot,
                         trackAfter?.MasterPath ?? _db.GetByPath(item.Path)?.MasterPath);
                     if (match.Found && match.Path is not null)
                     {

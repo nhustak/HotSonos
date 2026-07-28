@@ -63,7 +63,10 @@ public sealed class SonosManager
     private readonly object _servedGate = new();
 
     /// <summary>Last exclusive library playback mode (for MCP / top-up policy).</summary>
-    private string _playbackMode = "none"; // none | shuffle | special (one-shot or tag queue)
+    private string _playbackMode = "none"; // none | shuffle | folder | special (one-shot or tag queue)
+
+    /// <summary>When <see cref="_playbackMode"/> is folder, top-up stays inside this path prefix.</summary>
+    private string? _folderShufflePrefix;
 
     /// <summary>True after a library shuffle until a special play replaces the queue.</summary>
     public bool ShuffleSessionActive =>
@@ -81,7 +84,8 @@ public sealed class SonosManager
         shuffleSessionActive = ShuffleSessionActive,
         canResumeShuffle = CanResumeShuffle,
         continueLibraryShuffleAfterSpecialPlay = _settings().EnsureShape().ContinueLibraryShuffleAfterSpecialPlay,
-        note = "special = one track or tag queue (e.g. Favs). Top-up uses full library when setting allows.",
+        folderPrefix = _folderShufflePrefix,
+        note = "shuffle = Daily mix; folder = one library path (top-up stays there); special = tag/genre/one-shot (top-up may enter Daily).",
     };
 
     /// <summary>Raised when the active coordinator pushes a now-playing change.</summary>
@@ -351,8 +355,15 @@ public sealed class SonosManager
                 return await PlayGenreTracksAsync(library, fs.GenreName!, shuffle: true, ct).ConfigureAwait(false);
             }
 
+            if (fs.IsFolder)
+            {
+                if (library is null)
+                    throw new InvalidOperationException("Library service not available for folder play.");
+                return await PlayLibraryFolderAsync(library, fs.FolderPath!, shuffle: true, ct).ConfigureAwait(false);
+            }
+
             if (!fs.IsSonos)
-                return $"Slot {slot + 1} is empty — assign a tag, genre, or Sonos playlist in Hotkeys.";
+                return $"Slot {slot + 1} is empty — assign a folder, tag, genre, or Sonos playlist in Hotkeys.";
 
             await _controller.PlayFavoriteByNameAsync(fs.FavoriteName!, ct).ConfigureAwait(false);
             _playbackMode = "sonos_fav";
@@ -696,11 +707,13 @@ public sealed class SonosManager
 
         var s = _settings().EnsureShape();
         IReadOnlyCollection<string>? exclude = s.ShuffleExcludePlayed ? _playHistory.GetPlayedKeys() : null;
+        var include = s.GetDailyShuffleIncludePrefixes();
         var result = await _controller.ShuffleMusicLibraryAsync(
             new ShuffleOptions
             {
                 MaxQueueTracks = s.ShuffleQueueTracks,
                 ExcludeUris = exclude,
+                IncludePathPrefixes = include,
                 AppendToQueue = false,
                 ArtistSpread = s.ShuffleArtistSpread,
             },
@@ -711,12 +724,67 @@ public sealed class SonosManager
         RememberServed(result.EnqueuedUris);
 
         _playbackMode = "shuffle";
+        _folderShufflePrefix = null;
+        var dailyNote = include is null || include.Count == 0
+            ? "scope=all"
+            : $"scope={include.Count} folder(s)";
         var msg =
-            $"browsed {result.Browsed}, queued {result.Enqueued} " +
+            $"browsed {result.Browsed}, scoped-out {result.ScopeFilteredCount}, queued {result.Enqueued} " +
             $"(candidates {result.CandidateCount}, excluded played {result.ExcludedCount}, " +
-            $"history keys {_playHistory.PlayedDistinctCount}, history days {s.ShuffleHistoryDays})";
+            $"{dailyNote}, history keys {_playHistory.PlayedDistinctCount}, history days {s.ShuffleHistoryDays})";
         AppLog.Info($"Shuffle rebuild: {msg}");
         return msg;
+    }
+
+    /// <summary>
+    /// History-aware shuffle of one library folder (path prefix). Top-up stays in this folder
+    /// until Daily shuffle / resume. Uses A:TRACKS + path filter (same engine as Daily).
+    /// </summary>
+    public async Task<string> PlayLibraryFolderAsync(
+        LibraryService library,
+        string folderPath,
+        bool shuffle = true,
+        CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+        if (library is null)
+            throw new ArgumentNullException(nameof(library));
+
+        folderPath = (folderPath ?? "").Trim().TrimEnd('\\', '/');
+        if (folderPath.Length == 0)
+            throw new ArgumentException("Folder path is required.", nameof(folderPath));
+
+        var s = _settings().EnsureShape();
+        var label = System.IO.Path.GetFileName(folderPath);
+        if (string.IsNullOrWhiteSpace(label))
+            label = folderPath;
+
+        // Prefer cache for a quick empty check / toast counts; shuffle still uses Sonos browse + prefix.
+        var cached = library.CountTracksUnderFolder(folderPath);
+
+        IReadOnlyCollection<string>? exclude = s.ShuffleExcludePlayed ? _playHistory.GetPlayedKeys() : null;
+        var result = await _controller.ShuffleMusicLibraryAsync(
+            new ShuffleOptions
+            {
+                MaxQueueTracks = s.ShuffleQueueTracks,
+                ExcludeUris = exclude,
+                IncludePathPrefixes = [folderPath],
+                AppendToQueue = false,
+                ArtistSpread = s.ShuffleArtistSpread,
+            },
+            ct).ConfigureAwait(false);
+
+        ClearSessionServed();
+        RememberServed(result.EnqueuedUris);
+        _playbackMode = "folder";
+        _folderShufflePrefix = folderPath;
+
+        var msg =
+            $"Folder · {label}: browsed {result.Browsed}, scoped-out {result.ScopeFilteredCount}, " +
+            $"queued {result.Enqueued} (cache ~{cached}, excluded played {result.ExcludedCount})";
+        AppLog.Info($"Play library folder: {msg}");
+        return $"▶ {msg}";
     }
 
     /// <summary>
@@ -961,6 +1029,9 @@ public sealed class SonosManager
     {
         if (string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase))
             return true;
+        // Folder mode always tops up inside the same folder (mood stays mood).
+        if (string.Equals(_playbackMode, "folder", StringComparison.OrdinalIgnoreCase))
+            return true;
         if (string.Equals(_playbackMode, "special", StringComparison.OrdinalIgnoreCase)
             || string.Equals(_playbackMode, "one_shot", StringComparison.OrdinalIgnoreCase))
             return s.ContinueLibraryShuffleAfterSpecialPlay;
@@ -986,11 +1057,23 @@ public sealed class SonosManager
                 return;
 
             var exclude = BuildExcludeKeys(s);
+            IReadOnlyCollection<string>? include;
+            if (string.Equals(_playbackMode, "folder", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(_folderShufflePrefix))
+            {
+                include = [_folderShufflePrefix];
+            }
+            else
+            {
+                include = s.GetDailyShuffleIncludePrefixes();
+            }
+
             var result = await _controller.ShuffleMusicLibraryAsync(
                 new ShuffleOptions
                 {
                     MaxQueueTracks = s.ShuffleTopUpTracks,
                     ExcludeUris = exclude,
+                    IncludePathPrefixes = include,
                     AppendToQueue = true,
                     ArtistSpread = s.ShuffleArtistSpread,
                 },
@@ -998,15 +1081,19 @@ public sealed class SonosManager
 
             RememberServed(result.EnqueuedUris);
 
-            // Once library top-up has run, treat session as normal shuffle for further top-ups.
-            if (!string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase))
+            // Special → daily after first library top-up. Folder mode stays folder.
+            if (string.Equals(_playbackMode, "special", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(_playbackMode, "one_shot", StringComparison.OrdinalIgnoreCase))
+            {
                 _playbackMode = "shuffle";
+                _folderShufflePrefix = null;
+            }
 
             var session = SnapshotSessionServed().Count;
             AppLog.Info(
                 $"Shuffle top-up: appended {result.Enqueued} " +
-                $"(excluded {result.ExcludedCount}, history {_playHistory.PlayedDistinctCount}, " +
-                $"session served {session})");
+                $"(excluded {result.ExcludedCount}, scoped-out {result.ScopeFilteredCount}, " +
+                $"mode={_playbackMode}, history {_playHistory.PlayedDistinctCount}, session served {session})");
         }
         catch (Exception ex)
         {

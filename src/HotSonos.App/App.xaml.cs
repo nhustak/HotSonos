@@ -193,6 +193,7 @@ public partial class App : System.Windows.Application
             ResumeShuffleAsync = McpResumeShuffleAsync,
             PlayTaggedTracksAsync = McpPlayTaggedTracksAsync,
             PlayGenreTracksAsync = McpPlayGenreTracksAsync,
+            PlayLibraryFolderAsync = McpPlayLibraryFolderAsync,
         };
         _mcpHost = new HotSonosMcpHost();
 
@@ -373,6 +374,32 @@ public partial class App : System.Windows.Application
             if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                 await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction($"▶ Genre · {genre}…"));
             var toast = await _sonos.PlayGenreTracksAsync(_library, genre, shuffle, ct).ConfigureAwait(false);
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
+            return toast;
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
+    private async Task<string> McpPlayLibraryFolderAsync(string folderPath, bool shuffle, CancellationToken ct)
+    {
+        if (_library is null)
+            throw new InvalidOperationException("Library service not available.");
+
+        if (!await _actionGate.WaitAsync(0).ConfigureAwait(false))
+            return "Busy — already re-syncing / shuffling…";
+
+        try
+        {
+            AppLog.Info($"MCP play_folder: {folderPath} shuffle={shuffle}");
+            var name = System.IO.Path.GetFileName(folderPath.TrimEnd('\\', '/'));
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction($"▶ Folder · {name}…"));
+            await _sonos.GroupAllSpeakersAsync(ct).ConfigureAwait(false);
+            var toast = await _sonos.PlayLibraryFolderAsync(_library, folderPath, shuffle, ct).ConfigureAwait(false);
             if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                 await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
             return toast;

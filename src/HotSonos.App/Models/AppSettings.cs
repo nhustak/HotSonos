@@ -1,13 +1,14 @@
 namespace HotSonos.App.Models;
 
-/// <summary>One of the play-source hotkey slots (Sonos favorite/playlist, HotSonos tag, or genre).</summary>
+/// <summary>One of the play-source hotkey slots (Sonos favorite/playlist, tag, genre, or library folder).</summary>
 public sealed class FavoriteSlot
 {
     public const string SourceSonos = "sonos";
     public const string SourceTag = "tag";
     public const string SourceGenre = "genre";
+    public const string SourceFolder = "folder";
 
-    /// <summary><see cref="SourceSonos"/>, <see cref="SourceTag"/>, or <see cref="SourceGenre"/>.</summary>
+    /// <summary><see cref="SourceSonos"/>, <see cref="SourceTag"/>, <see cref="SourceGenre"/>, or <see cref="SourceFolder"/>.</summary>
     public string Source { get; set; } = SourceSonos;
 
     /// <summary>Title of the Sonos favorite/playlist when <see cref="Source"/> is sonos.</summary>
@@ -19,6 +20,9 @@ public sealed class FavoriteSlot
     /// <summary>Standard Genre field label when <see cref="Source"/> is genre.</summary>
     public string? GenreName { get; set; }
 
+    /// <summary>Library folder UNC path when <see cref="Source"/> is folder.</summary>
+    public string? FolderPath { get; set; }
+
     public HotkeyConfig Hotkey { get; set; } = new();
 
     public bool IsTag =>
@@ -29,10 +33,14 @@ public sealed class FavoriteSlot
         string.Equals(Source, SourceGenre, StringComparison.OrdinalIgnoreCase)
         && !string.IsNullOrWhiteSpace(GenreName);
 
-    public bool IsSonos =>
-        !IsTag && !IsGenre && !string.IsNullOrWhiteSpace(FavoriteName);
+    public bool IsFolder =>
+        string.Equals(Source, SourceFolder, StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(FolderPath);
 
-    public bool IsSet => IsTag || IsGenre || IsSonos;
+    public bool IsSonos =>
+        !IsTag && !IsGenre && !IsFolder && !string.IsNullOrWhiteSpace(FavoriteName);
+
+    public bool IsSet => IsTag || IsGenre || IsFolder || IsSonos;
 
     /// <summary>Tray / UI label for this slot.</summary>
     public string DisplayLabel(AppSettings? settings = null)
@@ -45,6 +53,12 @@ public sealed class FavoriteSlot
 
         if (IsGenre)
             return $"Genre · {GenreName}";
+
+        if (IsFolder)
+        {
+            var name = System.IO.Path.GetFileName(FolderPath!.TrimEnd('\\', '/'));
+            return string.IsNullOrWhiteSpace(name) ? $"Folder · {FolderPath}" : $"Folder · {name}";
+        }
 
         if (IsSonos)
             return FavoriteName!;
@@ -167,14 +181,108 @@ public sealed class AppSettings
 
     /// <summary>
     /// Local or UNC folder(s) that match Sonos Music Library share(s) — FLAC/MP3 playable set.
-    /// Used by future library index/tag tools; daily shuffle still uses Sonos <c>A:TRACKS</c> until scoped.
+    /// Used by library index/tag tools and Discover. May include Jazz, Christmas, Sonos, etc.
     /// </summary>
     public List<string> SonosLibraryRoots { get; set; } = [];
 
     /// <summary>
-    /// Optional full archive root (may include hi-res files not in Sonos). Tags dual-write here when a twin is matched/linked.
+    /// Folders included in Daily / “All · Music Library” shuffle (hotkey, Control From All, top-up).
+    /// Subset of (or equal to) <see cref="SonosLibraryRoots"/>. Empty = all configured roots
+    /// (single-root installs stay simple). Prefer only the resampled daily tree (e.g. …\Sonos).
+    /// </summary>
+    public List<string> DailyLibraryRoots { get; set; } = [];
+
+    /// <summary>
+    /// Master (hi-res) archive roots associated with a Sonos path prefix.
+    /// Dual-write only runs when a track is under a mapping's <see cref="MasterLibraryMapping.SonosPath"/>.
+    /// Christmas / mood folders can omit a mapping (Sonos-only).
+    /// </summary>
+    public List<MasterLibraryMapping> MasterLibraryMappings { get; set; } = [];
+
+    /// <summary>
+    /// Legacy single master root. Migrated into <see cref="MasterLibraryMappings"/> on load
+    /// (one entry per Sonos library root). Prefer mappings for new config.
     /// </summary>
     public string? MasterLibraryRoot { get; set; }
+
+    /// <summary>
+    /// Folders used for Daily / All library shuffle. Non-empty <see cref="DailyLibraryRoots"/>
+    /// when set; otherwise all <see cref="SonosLibraryRoots"/>.
+    /// </summary>
+    public IReadOnlyList<string> GetEffectiveDailyLibraryRoots()
+    {
+        if (DailyLibraryRoots.Count > 0)
+            return DailyLibraryRoots;
+        return SonosLibraryRoots;
+    }
+
+    /// <summary>
+    /// Path prefixes for shuffle include-filter, or null when the whole Sonos library applies
+    /// (no daily restriction / daily equals every configured root).
+    /// </summary>
+    public IReadOnlyList<string>? GetDailyShuffleIncludePrefixes()
+    {
+        var daily = GetEffectiveDailyLibraryRoots();
+        if (daily.Count == 0)
+            return null;
+
+        if (SonosLibraryRoots.Count > 0
+            && daily.Count >= SonosLibraryRoots.Count
+            && SonosLibraryRoots.All(r =>
+                daily.Any(d => string.Equals(d, r, StringComparison.OrdinalIgnoreCase))))
+        {
+            return null;
+        }
+
+        return daily;
+    }
+
+    /// <summary>
+    /// Resolve the master archive root for a Sonos file or folder path.
+    /// Longest matching <see cref="MasterLibraryMapping.SonosPath"/> prefix wins.
+    /// </summary>
+    public string? ResolveMasterRootForSonosPath(string? sonosFileOrFolder)
+    {
+        if (string.IsNullOrWhiteSpace(sonosFileOrFolder))
+            return null;
+
+        var path = sonosFileOrFolder.Trim().TrimEnd('\\', '/');
+        MasterLibraryMapping? best = null;
+        var bestLen = -1;
+        foreach (var m in MasterLibraryMappings)
+        {
+            if (string.IsNullOrWhiteSpace(m.SonosPath) || string.IsNullOrWhiteSpace(m.MasterRoot))
+                continue;
+            var prefix = m.SonosPath.Trim().TrimEnd('\\', '/');
+            if (prefix.Length == 0) continue;
+            if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+            // Require boundary: exact match or next char is separator
+            if (path.Length > prefix.Length)
+            {
+                var next = path[prefix.Length];
+                if (next is not '\\' and not '/')
+                    continue;
+            }
+
+            if (prefix.Length > bestLen)
+            {
+                bestLen = prefix.Length;
+                best = m;
+            }
+        }
+
+        return best?.MasterRoot;
+    }
+
+    /// <summary>Distinct configured master roots (for status / UI).</summary>
+    public IReadOnlyList<string> ListMasterRoots() =>
+        MasterLibraryMappings
+            .Select(m => m.MasterRoot?.Trim())
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     // ---- Tags (flat catalog; keys on files, labels in settings) ------------
 
@@ -229,12 +337,28 @@ public sealed class AppSettings
     public bool ShowGenresInPlaySources { get; set; } = true;
 
     /// <summary>
-    /// Control-tab shuffle picker: <c>all</c>, <c>tag:{key}</c>, or <c>genre:{name}</c>.
-    /// Hotkey shuffle remains full library; this only affects the Start shuffle button.
+    /// Control-tab shuffle picker: <c>all</c>, <c>folder:{path}</c>, <c>tag:{key}</c>, or <c>genre:{name}</c>.
+    /// Hotkey shuffle remains Daily mix (All); this only affects the Start shuffle button.
     /// </summary>
     public string ControlShuffleSource { get; set; } = "all";
 
     public const string ControlShuffleAll = "all";
+    public const string ControlShuffleFolderPrefix = "folder:";
+    public const string ControlShuffleTagPrefix = "tag:";
+    public const string ControlShuffleGenrePrefix = "genre:";
+
+    public static string FolderShuffleToken(string folderPath) =>
+        ControlShuffleFolderPrefix + (folderPath ?? "").Trim();
+
+    public static bool TryParseFolderShuffleToken(string? token, out string folderPath)
+    {
+        folderPath = "";
+        if (string.IsNullOrWhiteSpace(token)
+            || !token.StartsWith(ControlShuffleFolderPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+        folderPath = token[ControlShuffleFolderPrefix.Length..].Trim();
+        return folderPath.Length > 0;
+    }
 
     /// <summary>Exactly <see cref="FavoriteSlotCount"/> favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
@@ -319,12 +443,75 @@ public sealed class AppSettings
         SonosLibraryRoots ??= [];
         SonosLibraryRoots = SonosLibraryRoots
             .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(p => p.Trim())
+            .Select(p => p.Trim().TrimEnd('\\', '/'))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        DailyLibraryRoots ??= [];
+        DailyLibraryRoots = DailyLibraryRoots
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p.Trim().TrimEnd('\\', '/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(d => SonosLibraryRoots.Count == 0
+                        || SonosLibraryRoots.Any(r =>
+                            string.Equals(d, r, StringComparison.OrdinalIgnoreCase)
+                            || d.StartsWith(r.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)
+                            || r.StartsWith(d.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        // Multi-root and nothing marked daily yet → prefer folder(s) named "Sonos", else leave empty (= all).
+        if (DailyLibraryRoots.Count == 0 && SonosLibraryRoots.Count > 1)
+        {
+            var sonosNamed = SonosLibraryRoots
+                .Where(r => r.TrimEnd('\\', '/').EndsWith("\\Sonos", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(System.IO.Path.GetFileName(r.TrimEnd('\\', '/')), "Sonos",
+                                StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (sonosNamed.Count > 0)
+                DailyLibraryRoots = sonosNamed;
+        }
+
         MasterLibraryRoot = string.IsNullOrWhiteSpace(MasterLibraryRoot)
             ? null
             : MasterLibraryRoot.Trim();
+        MasterLibraryMappings ??= [];
+        MasterLibraryMappings = MasterLibraryMappings
+            .Where(m => m is not null
+                        && !string.IsNullOrWhiteSpace(m.SonosPath)
+                        && !string.IsNullOrWhiteSpace(m.MasterRoot))
+            .Select(m => new MasterLibraryMapping
+            {
+                SonosPath = m.SonosPath.Trim().TrimEnd('\\', '/'),
+                MasterRoot = m.MasterRoot.Trim().TrimEnd('\\', '/'),
+            })
+            .GroupBy(m => m.SonosPath, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last())
+            .ToList();
+
+        // Legacy single MasterLibraryRoot → one mapping per Sonos library root.
+        if (MasterLibraryMappings.Count == 0 && !string.IsNullOrWhiteSpace(MasterLibraryRoot))
+        {
+            if (SonosLibraryRoots.Count > 0)
+            {
+                foreach (var root in SonosLibraryRoots)
+                {
+                    MasterLibraryMappings.Add(new MasterLibraryMapping
+                    {
+                        SonosPath = root.TrimEnd('\\', '/'),
+                        MasterRoot = MasterLibraryRoot,
+                    });
+                }
+            }
+            else
+            {
+                // No Sonos roots yet — keep a placeholder mapping with empty Sonos path rejected;
+                // attach when roots appear: store master on first root later. For now map master
+                // to itself as SonosPath so user still sees master until roots are discovered.
+                // Better: leave mappings empty and keep MasterLibraryRoot until roots exist.
+            }
+        }
+
+        // Keep legacy property in sync with first mapping for older readers / UI fallback.
+        if (MasterLibraryMappings.Count > 0)
+            MasterLibraryRoot = MasterLibraryMappings[0].MasterRoot;
         if (ShuffleQueueTracks is < 20 or > 500) ShuffleQueueTracks = 80;
         if (ShuffleTopUpTracks is < 10 or > 300) ShuffleTopUpTracks = 60;
         if (ShuffleHistoryDays is < 1 or > 90) ShuffleHistoryDays = 14;
@@ -347,8 +534,36 @@ public sealed class AppSettings
                 slot.Source = FavoriteSlot.SourceTag;
             else if (string.Equals(slot.Source, FavoriteSlot.SourceGenre, StringComparison.OrdinalIgnoreCase))
                 slot.Source = FavoriteSlot.SourceGenre;
+            else if (string.Equals(slot.Source, FavoriteSlot.SourceFolder, StringComparison.OrdinalIgnoreCase))
+                slot.Source = FavoriteSlot.SourceFolder;
             else
                 slot.Source = FavoriteSlot.SourceSonos;
+
+            if (slot.IsFolder)
+            {
+                slot.FolderPath = string.IsNullOrWhiteSpace(slot.FolderPath)
+                    ? null
+                    : slot.FolderPath.Trim().TrimEnd('\\', '/');
+                if (slot.FolderPath is null
+                    || (SonosLibraryRoots.Count > 0
+                        && !SonosLibraryRoots.Any(r =>
+                            string.Equals(r, slot.FolderPath, StringComparison.OrdinalIgnoreCase)
+                            || slot.FolderPath.StartsWith(r.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase))))
+                {
+                    // Orphan / unknown folder — clear if roots are configured.
+                    if (SonosLibraryRoots.Count > 0)
+                    {
+                        slot.FolderPath = null;
+                        slot.Source = FavoriteSlot.SourceSonos;
+                    }
+                }
+                else
+                {
+                    slot.TagKey = null;
+                    slot.GenreName = null;
+                    slot.FavoriteName = null;
+                }
+            }
 
             if (slot.IsTag)
             {

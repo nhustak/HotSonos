@@ -43,4 +43,7 @@ public sealed class HotSonosMcpState
 
     /// <summary>Queue all tracks with a standard Genre label, optional shuffle; toast string.</summary>
     public Func<string, bool, CancellationToken, Task<string>>? PlayGenreTracksAsync { get; set; }
+
+    /// <summary>Shuffle one library folder (UNC path under Sonos roots).</summary>
+    public Func<string, bool, CancellationToken, Task<string>>? PlayLibraryFolderAsync { get; set; }
 }

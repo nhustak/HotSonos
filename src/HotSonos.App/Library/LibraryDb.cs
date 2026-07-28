@@ -518,6 +518,40 @@ public sealed class LibraryDb : IDisposable
         }
     }
 
+    /// <summary>Tracks whose path is under <paramref name="folderPrefix"/> (UNC/local).</summary>
+    public IReadOnlyList<LibraryTrack> FindTracksUnderPath(string folderPrefix, bool sonosPlayableOnly = true)
+    {
+        folderPrefix = (folderPrefix ?? "").Trim().TrimEnd('\\', '/');
+        if (folderPrefix.Length == 0)
+            return [];
+
+        lock (_gate)
+        {
+            EnsureOpen();
+            using var cmd = _conn!.CreateCommand();
+            // Prefix match: path = folder OR path starts with folder\ or folder/
+            cmd.CommandText =
+                $"""
+                SELECT {SelectTrackCols}
+                FROM tracks
+                WHERE (path = $p COLLATE NOCASE
+                       OR path LIKE $pSlash ESCAPE '\'
+                       OR path LIKE $pSlashFwd ESCAPE '\')
+                  {(sonosPlayableOnly ? "AND sonos_playable = 1" : "")}
+                ORDER BY artist, album, track_number, title;
+                """;
+            cmd.Parameters.AddWithValue("$p", folderPrefix);
+            cmd.Parameters.AddWithValue("$pSlash", EscapeLike(folderPrefix) + "\\%");
+            cmd.Parameters.AddWithValue("$pSlashFwd", EscapeLike(folderPrefix) + "/%");
+
+            var list = new List<LibraryTrack>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                list.Add(ReadTrack(reader));
+            return list;
+        }
+    }
+
     public LibraryTrack? GetByPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -818,6 +852,22 @@ public sealed class LibraryDb : IDisposable
         }
         catch { /* ignore */ }
         return [];
+    }
+
+    /// <summary>Remove a track row from the cache (after file delete).</summary>
+    public bool DeleteByPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        lock (_gate)
+        {
+            EnsureOpen();
+            using var cmd = _conn!.CreateCommand();
+            cmd.CommandText = "DELETE FROM tracks WHERE path = $p COLLATE NOCASE;";
+            cmd.Parameters.AddWithValue("$p", path.Trim());
+            return cmd.ExecuteNonQuery() > 0;
+        }
     }
 
     /// <summary>

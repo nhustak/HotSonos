@@ -254,6 +254,13 @@ public sealed class HotSonosDebugTools
                 s.ControlShuffleSource,
                 playHistoryDistinct = _state.Sonos.PlayHistory.PlayedDistinctCount,
                 sonosLibraryRoots = s.SonosLibraryRoots,
+                dailyLibraryRoots = s.GetEffectiveDailyLibraryRoots(),
+                masterLibraryMappings = s.MasterLibraryMappings.Select(m => new
+                {
+                    sonosPath = m.SonosPath,
+                    masterRoot = m.MasterRoot,
+                }),
+                // Legacy single field (first mapping) for older clients
                 s.MasterLibraryRoot,
                 favoriteSlots = s.FavoriteSlots.Select((f, i) => new
                 {
@@ -269,7 +276,7 @@ public sealed class HotSonosDebugTools
         });
 
     [McpServerTool(Name = "get_library_config")]
-    [Description("Configured Sonos library root path(s) and optional master library root (filesystem).")]
+    [Description("Configured Sonos library root path(s) and master mappings (Sonos path → hi-res master root).")]
     public string GetLibraryConfig() =>
         McpActivityLog.Run("get_library_config", null, () =>
         {
@@ -280,12 +287,19 @@ public sealed class HotSonosDebugTools
             {
                 sonosLibraryRoots = roots,
                 sonosRootCount = roots.Count,
+                dailyLibraryRoots = s.GetEffectiveDailyLibraryRoots(),
+                dailyShuffleScoped = s.GetDailyShuffleIncludePrefixes() is { Count: > 0 },
+                masterLibraryMappings = s.MasterLibraryMappings.Select(m => new
+                {
+                    sonosPath = m.SonosPath,
+                    masterRoot = m.MasterRoot,
+                }),
                 masterLibraryRoot = s.MasterLibraryRoot,
-                configured = roots.Count > 0 || !string.IsNullOrWhiteSpace(s.MasterLibraryRoot),
+                configured = roots.Count > 0 || s.MasterLibraryMappings.Count > 0,
                 trackCount = status?.TrackCount ?? 0,
                 isScanning = status?.IsScanning ?? false,
                 databasePath = status?.DatabasePath,
-                note = "Roots + SQLite cache (step 2). Tag write / full MCP library is later. Daily shuffle still uses Sonos A:TRACKS.",
+                note = "Master dual-write only for tracks under a mapped Sonos path. Unmapped folders (e.g. Christmas) are Sonos-only.",
             }, JsonOptions);
         }, category: "library");
 
@@ -439,10 +453,10 @@ public sealed class HotSonosDebugTools
         }, category: "library");
 
     [McpServerTool(Name = "track_link_master")]
-    [Description("Manually link (or clear) a master twin path for a cached Sonos track. Master path must be under MasterLibraryRoot. Pass masterPath empty/null to clear.")]
+    [Description("Manually link (or clear) a master twin path for a cached Sonos track. Master path must be under the master root mapped for that Sonos path. Pass masterPath empty/null to clear.")]
     public string TrackLinkMaster(
         [Description("Absolute/UNC path to the Sonos-library audio file")] string path,
-        [Description("Absolute/UNC path under MasterLibraryRoot, or empty to clear the link")] string? masterPath = null) =>
+        [Description("Absolute/UNC path under the mapped master root, or empty to clear the link")] string? masterPath = null) =>
         McpActivityLog.Run("track_link_master", new { path, masterPath }, () =>
         {
             var lib = _state.Library;
@@ -600,7 +614,7 @@ public sealed class HotSonosDebugTools
         [Description("Year (null = leave unchanged)")] int? year = null,
         [Description("BPM (null = leave unchanged)")] double? bpm = null,
         [Description("If true, do not write the file — return planned changes only")] bool dryRun = false,
-        [Description("If true (default), also write the same tags to a matched master twin when MasterLibraryRoot is set")] bool updateMaster = true) =>
+        [Description("If true (default), also write the same tags to a matched master twin when a master mapping covers this Sonos path")] bool updateMaster = true) =>
         McpActivityLog.Run("track_set_tags", new { path, tagKeys, title, artist, album, genre, trackNumber, year, bpm, dryRun, updateMaster }, () =>
         {
             var lib = _state.Library;
@@ -855,6 +869,60 @@ public sealed class HotSonosDebugTools
             }, JsonOptions);
         });
 
+    [McpServerTool(Name = "list_library_folders")]
+    [Description("Configured Sonos library folders (from Discover) with cached track counts. Use path with play_folder.")]
+    public string ListLibraryFolders() =>
+        McpActivityLog.Run("list_library_folders", null, () =>
+        {
+            var s = _state.Settings().EnsureShape();
+            var lib = _state.Library;
+            var folders = s.SonosLibraryRoots.Select(path =>
+            {
+                var name = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
+                return new
+                {
+                    path,
+                    name = string.IsNullOrWhiteSpace(name) ? path : name,
+                    tracks = lib?.CountTracksUnderFolder(path) ?? 0,
+                    inDaily = s.GetEffectiveDailyLibraryRoots()
+                        .Any(d => string.Equals(d, path, StringComparison.OrdinalIgnoreCase)),
+                };
+            }).ToList();
+            return JsonSerializer.Serialize(new { ok = true, count = folders.Count, folders }, JsonOptions);
+        }, category: "library");
+
+    [McpServerTool(Name = "play_folder")]
+    [Description("History-aware shuffle of one library folder (UNC path from list_library_folders / Discover). Top-up stays in that folder until Daily shuffle.")]
+    public Task<string> PlayFolder(
+        [Description("UNC folder path, e.g. \\\\192.168.1.111\\Music\\Jazz")] string path,
+        [Description("Ignored; folder play always uses history-aware shuffle")] bool shuffle = true,
+        CancellationToken ct = default) =>
+        McpActivityLog.RunAsync("play_folder", new { path, shuffle }, async () =>
+        {
+            if (_state.PlayLibraryFolderAsync is null)
+                return JsonSerializer.Serialize(new { ok = false, error = "play_folder not wired." }, JsonOptions);
+            if (string.IsNullOrWhiteSpace(path))
+                return JsonSerializer.Serialize(new { ok = false, error = "path is required" }, JsonOptions);
+
+            try
+            {
+                var toast = await _state.PlayLibraryFolderAsync(path.Trim(), shuffle, ct).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    toast,
+                    path = path.Trim(),
+                    playback = _state.Sonos.GetPlaybackSessionSnapshot(),
+                    activeRoom = _state.Sonos.ActiveRoom,
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("MCP play_folder failed", ex);
+                return JsonSerializer.Serialize(new { ok = false, error = ex.Message, path }, JsonOptions);
+            }
+        }, category: "control");
+
     [McpServerTool(Name = "play_genre")]
     [Description("Play all library tracks whose standard Genre field matches (case-insensitive label). Shuffled by default. Replaces the queue. When ContinueLibraryShuffleAfterSpecialPlay is true (default), auto top-up continues into full-library shuffle near the end — same as play_tag.")]
     public Task<string> PlayGenre(
@@ -894,7 +962,7 @@ public sealed class HotSonosDebugTools
         McpActivityLog.RunAsync("fresh_start", null, () => RunActionAsync(HotsonosAction.FreshStart), category: "control");
 
     [McpServerTool(Name = "play_favorite_slot")]
-    [Description("Play favorite/playlist/tag/genre hotkey slot 1-6 (must be assigned in Settings).")]
+    [Description("Play favorite/playlist/folder/tag/genre hotkey slot 1-6 (must be assigned in Settings).")]
     public Task<string> PlayFavoriteSlot(
         [Description("Slot number 1 through 6")] int slot,
         CancellationToken ct) =>

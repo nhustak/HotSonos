@@ -24,7 +24,7 @@ public sealed class LibraryTrack
     public double? Bpm { get; set; }
 
     /// <summary>
-    /// Optional linked twin under <c>MasterLibraryRoot</c> (cache only — dual-write target).
+    /// Optional linked twin under a mapped master root (cache only — dual-write target).
     /// Preserved across rescans; set on successful auto-match or manual link.
     /// </summary>
     public string? MasterPath { get; set; }

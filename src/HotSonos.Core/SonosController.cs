@@ -201,9 +201,18 @@ public sealed class SonosController
             throw new InvalidOperationException("No tracks found in the local Music Library.");
 
         var browsed = tracks.Count;
+        var (scoped, scopeFiltered) = FilterByIncludePrefixes(tracks, options.IncludePathPrefixes);
+        if (scoped.Count == 0)
+        {
+            throw new InvalidOperationException(
+                scopeFiltered > 0
+                    ? "No tracks left after applying daily library folder filter. Check Library → Daily mix folders."
+                    : "No tracks found in the local Music Library.");
+        }
+
         var excludeKeys = BuildNormalizedKeySet(options.ExcludeUris);
         var (ordered, excludedCount, candidateCount) =
-            BuildExclusionOrder(tracks, excludeKeys, maxQueue, options.ArtistSpread);
+            BuildExclusionOrder(scoped, excludeKeys, maxQueue, options.ArtistSpread);
 
         if (!append)
             await InvokeAvTransport("RemoveAllTracksFromQueue", ct, ("InstanceID", "0"));
@@ -239,6 +248,7 @@ public sealed class SonosController
             Enqueued = ordered.Count,
             ExcludedCount = excludedCount,
             CandidateCount = candidateCount,
+            ScopeFilteredCount = scopeFiltered,
             Appended = append,
             EnqueuedUris = ordered.Select(t => t.Uri).ToList(),
         };
@@ -256,7 +266,60 @@ public sealed class SonosController
             s = s[prefix.Length..];
         var q = s.IndexOf('?', StringComparison.Ordinal);
         if (q >= 0) s = s[..q];
-        return s.Trim().ToLowerInvariant();
+        // UNC \\host\share → //host/share — strip leading slashes so keys match cifs form.
+        return s.Trim().TrimStart('/').ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Keep tracks whose normalized path is under any include prefix (daily folders).
+    /// Empty/null prefixes = no filter.
+    /// </summary>
+    internal static (List<(string Uri, XElement Item)> Scoped, int FilteredOut)
+        FilterByIncludePrefixes(
+            List<(string Uri, XElement Item)> tracks,
+            IReadOnlyCollection<string>? includePrefixes)
+    {
+        if (includePrefixes is null || includePrefixes.Count == 0)
+            return (tracks, 0);
+
+        var prefixes = includePrefixes
+            .Select(NormalizeTrackKey)
+            .Where(p => p.Length > 0)
+            .Select(p => p.TrimEnd('/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (prefixes.Count == 0)
+            return (tracks, 0);
+
+        var scoped = new List<(string Uri, XElement Item)>(tracks.Count);
+        var filtered = 0;
+        foreach (var t in tracks)
+        {
+            var key = NormalizeTrackKey(t.Uri);
+            if (key.Length == 0)
+            {
+                filtered++;
+                continue;
+            }
+
+            var ok = false;
+            foreach (var p in prefixes)
+            {
+                if (key.Equals(p, StringComparison.OrdinalIgnoreCase)
+                    || key.StartsWith(p + "/", StringComparison.OrdinalIgnoreCase))
+                {
+                    ok = true;
+                    break;
+                }
+            }
+
+            if (ok)
+                scoped.Add(t);
+            else
+                filtered++;
+        }
+
+        return (scoped, filtered);
     }
 
     private static HashSet<string> BuildNormalizedKeySet(IReadOnlyCollection<string>? uris)
@@ -460,45 +523,135 @@ public sealed class SonosController
     }
 
     /// <summary>
-    /// Groups by <c>\\host\share</c>, then takes the longest common directory prefix
-    /// of files in that share — that folder is the Sonos Music Library root.
+    /// Groups by <c>\\host\share</c>, then infers each Sonos Music Library folder root.
+    /// Does <b>not</b> collapse multiple configured folders to the share root alone.
     /// </summary>
-    internal static IReadOnlyList<string> DeriveLibraryRoots(IReadOnlyList<string> uncFiles)
+    /// <remarks>
+    /// <c>\\nas\Music\Jazz\Artist\a.flac</c> + <c>\\nas\Music\Sonos\…</c>
+    /// → <c>\\nas\Music\Jazz</c>, <c>\\nas\Music\Sonos</c>.
+    /// Nested Sonos folder <c>…\Seasonal\Christmas\…</c> (only content under Christmas)
+    /// → <c>…\Seasonal\Christmas</c> (matches Sonos “My Music Folders” path), not just Seasonal.
+    /// Descent rule: while a folder has no tracks directly in it and exactly one child
+    /// subfolder that holds all tracks, walk down (caps accidental deep collapse when
+    /// many sibling artists exist under Jazz).
+    /// </remarks>
+    public static IReadOnlyList<string> DeriveLibraryRoots(IReadOnlyList<string> uncFiles)
     {
         if (uncFiles.Count == 0)
             return [];
 
+        // share → list of full UNC file paths
         var byShare = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in uncFiles)
         {
-            var shareKey = ShareKey(file);
-            if (shareKey is null) continue;
-            if (!byShare.TryGetValue(shareKey, out var list))
+            if (string.IsNullOrWhiteSpace(file))
+                continue;
+            var share = ShareKey(file);
+            if (share is null)
+                continue;
+            share = share.TrimEnd('\\');
+            if (!byShare.TryGetValue(share, out var list))
             {
                 list = [];
-                byShare[shareKey] = list;
+                byShare[share] = list;
             }
             list.Add(file);
         }
 
-        var roots = new List<string>();
-        foreach (var (_, files) in byShare)
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (share, files) in byShare)
         {
-            var dirs = files
-                .Select(f => System.IO.Path.GetDirectoryName(f))
-                .Where(d => !string.IsNullOrWhiteSpace(d))
-                .Cast<string>()
-                .ToList();
-            if (dirs.Count == 0) continue;
-            var root = LongestCommonPathPrefix(dirs);
-            if (!string.IsNullOrWhiteSpace(root))
-                roots.Add(root.TrimEnd('\\'));
+            // Bucket by first folder under the share (or "" if files sit on the share).
+            var byTop = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in files)
+            {
+                var parts = file.TrimStart('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries);
+                // host, shareName, [top…], fileName
+                if (parts.Length < 3)
+                {
+                    // \\host\share only — ignore
+                    continue;
+                }
+
+                if (parts.Length == 3)
+                {
+                    // \\host\share\file.ext
+                    if (!byTop.TryGetValue("", out var flat))
+                    {
+                        flat = [];
+                        byTop[""] = flat;
+                    }
+                    flat.Add(file);
+                    continue;
+                }
+
+                var top = parts[2];
+                if (!byTop.TryGetValue(top, out var bucket))
+                {
+                    bucket = [];
+                    byTop[top] = bucket;
+                }
+                bucket.Add(file);
+            }
+
+            foreach (var (top, bucketFiles) in byTop)
+            {
+                if (string.IsNullOrEmpty(top))
+                {
+                    roots.Add(share);
+                    continue;
+                }
+
+                var start = $@"{share}\{top}";
+                roots.Add(DeepenLibraryRoot(start, bucketFiles));
+            }
         }
 
         return roots
-            .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// One level of single-child descent: Seasonal + only …\Seasonal\Christmas\… → …\Christmas.
+    /// Stops after one step so Jazz\Artist\… does not collapse a multi-artist library root to one artist
+    /// when the test set only has one artist folder (real libraries have many sibling artists).
+    /// </summary>
+    private static string DeepenLibraryRoot(string root, IReadOnlyList<string> filesUnderRoot)
+    {
+        root = root.TrimEnd('\\');
+        var prefix = root + "\\";
+        var nextSegments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hasFileDirectlyInRoot = false;
+
+        foreach (var file in filesUnderRoot)
+        {
+            var dir = System.IO.Path.GetDirectoryName(file)?.TrimEnd('\\') ?? "";
+            if (string.Equals(dir, root, StringComparison.OrdinalIgnoreCase))
+            {
+                hasFileDirectlyInRoot = true;
+                break;
+            }
+
+            if (!dir.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var rest = dir[prefix.Length..];
+            var next = rest.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+            if (next.Length == 0)
+            {
+                hasFileDirectlyInRoot = true;
+                break;
+            }
+
+            nextSegments.Add(next[0]);
+        }
+
+        // Only deepen when every track is under exactly one child folder (Sonos nested library folder).
+        if (!hasFileDirectlyInRoot && nextSegments.Count == 1)
+            return root + "\\" + nextSegments.First();
+
+        return root;
     }
 
     private static string? ShareKey(string uncFile)

@@ -1,9 +1,12 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
+using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using HotSonos.App.Infrastructure;
 using HotSonos.App.Library;
@@ -32,6 +35,12 @@ public partial class MainWindow : Window
     private readonly Func<string?> _mcpEndpoint;
     private DispatcherTimer? _libraryStatusTimer;
     private bool _mcpUiHooked;
+
+    /// <summary>Working master mappings edited in Library paths UI (committed on Save).</summary>
+    private readonly ObservableCollection<MasterLibraryMapping> _masterMappings = [];
+
+    /// <summary>Working library folders list (path + Daily checkbox). No free-text path lists.</summary>
+    private readonly ObservableCollection<LibraryFolderRow> _libraryFolders = [];
 
     // Working copies edited by the UI; copied back into _settings on Save.
     private readonly HotkeyConfig _levelVolumes;
@@ -97,6 +106,7 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         IsVisibleChanged += OnIsVisibleChanged;
         Closed += OnClosed;
+        _sonos.NowPlayingChanged += OnControlNowPlayingChanged;
     }
 
     /// <summary>Select Settings, Library, Tags, or MCP Debug tab by name.</summary>
@@ -238,8 +248,13 @@ public partial class MainWindow : Window
         ShuffleArtistSpreadCheckBox.IsChecked = _settings.ShuffleArtistSpread;
         ShowGenresInPlaySourcesCheckBox.IsChecked = _settings.ShowGenresInPlaySources;
         RefreshPlayHistoryStatus();
-        SonosLibraryRootsBox.Text = string.Join(Environment.NewLine, _settings.SonosLibraryRoots);
-        MasterLibraryRootBox.Text = _settings.MasterLibraryRoot ?? string.Empty;
+        LoadMasterMappingsUi(_settings.MasterLibraryMappings);
+        if (MasterMappingsList is not null)
+            MasterMappingsList.ItemsSource = _masterMappings;
+        if (LibraryFoldersList is not null)
+            LibraryFoldersList.ItemsSource = _libraryFolders;
+        RebuildLibraryFoldersUi(preserveDailyChecks: false);
+        RefreshMasterMapSonosCombo();
         LoadWakeUiFromSettings();
         LoadStartupPreference();
         RefreshLibraryStatusUi();
@@ -255,6 +270,7 @@ public partial class MainWindow : Window
         _ = LoadSpeakerVolumesAsync();
         RefreshControlShuffleSourceCombo();
         RefreshControlPlayList();
+        ApplyControlNowPlaying(null);
         _loaded = true;
 
         // First open: full discovery in the background (same as every subsequent show).
@@ -263,6 +279,7 @@ public partial class MainWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        _sonos.NowPlayingChanged -= OnControlNowPlayingChanged;
         if (_mcpUiHooked)
         {
             McpActivityLog.Changed -= OnMcpActivityChanged;
@@ -270,6 +287,195 @@ public partial class MainWindow : Window
             _mcpUiHooked = false;
         }
         _libraryStatusTimer?.Stop();
+    }
+
+    private static readonly HttpClient ControlArtHttp = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private HotSonos.Core.Models.NowPlaying? _controlNowPlaying;
+    private int _controlArtGeneration;
+
+    private void OnControlNowPlayingChanged(HotSonos.Core.Models.NowPlaying np) =>
+        Dispatcher.InvokeAsync(() => ApplyControlNowPlaying(np));
+
+    private void ApplyControlNowPlaying(HotSonos.Core.Models.NowPlaying? np)
+    {
+        _controlNowPlaying = np;
+        if (ControlNowPlayingTitle is null)
+            return;
+
+        if (np is null || np.IsEmpty)
+        {
+            ControlNowPlayingTitle.Text = "Nothing playing";
+            ControlNowPlayingArtist.Text = "";
+            ControlNowPlayingState.Text = "";
+            if (ControlTransportPlayPauseButton is not null)
+                ControlTransportPlayPauseButton.Content = "▶";
+            SetControlNowPlayingArt(null);
+            return;
+        }
+
+        ControlNowPlayingTitle.Text = string.IsNullOrWhiteSpace(np.Title) ? "(unknown title)" : np.Title!;
+        ControlNowPlayingArtist.Text = string.IsNullOrWhiteSpace(np.Artist)
+            ? (np.Album ?? "")
+            : (string.IsNullOrWhiteSpace(np.Album) ? np.Artist! : $"{np.Artist} — {np.Album}");
+        ControlNowPlayingState.Text = np.State.ToString();
+        if (ControlTransportPlayPauseButton is not null)
+        {
+            ControlTransportPlayPauseButton.Content =
+                np.State is HotSonos.Core.Models.SonosTransportState.Playing
+                    or HotSonos.Core.Models.SonosTransportState.Transitioning
+                    ? "⏸"
+                    : "▶";
+        }
+
+        SetControlNowPlayingArt(np.AlbumArtUri);
+    }
+
+    /// <summary>
+    /// Load album art the same way as the flyout: fetch bytes ourselves so URI failures
+    /// never crash the UI thread.
+    /// </summary>
+    private async void SetControlNowPlayingArt(string? uri)
+    {
+        var generation = ++_controlArtGeneration;
+        if (ControlNowPlayingArt is null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            ControlNowPlayingArt.Source = null;
+            return;
+        }
+
+        try
+        {
+            var bytes = await ControlArtHttp.GetByteArrayAsync(uri).ConfigureAwait(true);
+            if (generation != _controlArtGeneration)
+                return;
+
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.StreamSource = new MemoryStream(bytes);
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.DecodePixelWidth = 144; // 72dp @ 2x
+            bmp.EndInit();
+            bmp.Freeze();
+            ControlNowPlayingArt.Source = bmp;
+        }
+        catch (Exception ex)
+        {
+            if (generation == _controlArtGeneration)
+            {
+                ControlNowPlayingArt.Source = null;
+                AppLog.Warn($"Control album art load failed ({uri})", ex);
+            }
+        }
+    }
+
+    private void ControlTransportPlayPause_Click(object sender, RoutedEventArgs e) =>
+        _runAction(HotsonosAction.PlayPause);
+
+    private void ControlTransportNext_Click(object sender, RoutedEventArgs e) =>
+        _runAction(HotsonosAction.Next);
+
+    private void ControlTransportPrevious_Click(object sender, RoutedEventArgs e) =>
+        _runAction(HotsonosAction.Previous);
+
+    private void ControlTransportVolUp_Click(object sender, RoutedEventArgs e) =>
+        _runAction(HotsonosAction.VolumeUp);
+
+    private void ControlTransportVolDown_Click(object sender, RoutedEventArgs e) =>
+        _runAction(HotsonosAction.VolumeDown);
+
+    private void ControlTransportMute_Click(object sender, RoutedEventArgs e) =>
+        _runAction(HotsonosAction.Mute);
+
+    private void ControlDeleteNowPlaying_Click(object sender, RoutedEventArgs e)
+    {
+        if (_library is null)
+        {
+            SetStatus("Library service not available.", warn: true);
+            return;
+        }
+
+        var np = _controlNowPlaying;
+        if (np is null || string.IsNullOrWhiteSpace(np.TrackUri))
+        {
+            MessageBox.Show(this, "Nothing is playing (or no track URI yet).",
+                "Delete track", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var track = _library.FindBySonosUri(np.TrackUri) ?? _library.GetTrack(np.TrackUri);
+        var path = track?.Path;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            MessageBox.Show(this,
+                "Could not match the playing track to a library file path.\n\n" +
+                "Rescan the library, or delete from the Library tab after search.",
+                "Delete track",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var title = string.IsNullOrWhiteSpace(np.Title)
+            ? (track?.Title ?? System.IO.Path.GetFileName(path))
+            : np.Title;
+        var artist = np.Artist ?? track?.Artist ?? "";
+
+        var body =
+            "PERMANENTLY DELETE the currently playing track from disk?\n\n" +
+            $"• {title}" + (string.IsNullOrWhiteSpace(artist) ? "" : $" — {artist}") + "\n" +
+            $"{path}\n\n" +
+            "This cannot be undone.\n\n" +
+            "• Sonos library file will be deleted\n" +
+            "• Linked or matched master/hi-res twin will also be deleted when a master mapping applies\n\n" +
+            "Continue?";
+
+        var confirm = MessageBox.Show(
+            this, body, "Confirm permanent delete",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (confirm != MessageBoxResult.Yes)
+            return;
+
+        var confirm2 = MessageBox.Show(
+            this,
+            "Last chance: delete this track from disk (Sonos + master when linked)?\n\nPress No to cancel.",
+            "Final confirmation",
+            MessageBoxButton.YesNo, MessageBoxImage.Stop, MessageBoxResult.No);
+        if (confirm2 != MessageBoxResult.Yes)
+            return;
+
+        Dispatcher.BeginInvoke(new Action(async () =>
+        {
+            try
+            {
+                // Skip past this track so Sonos isn't holding the file open as hard.
+                try { await _sonos.ExecuteAsync(HotsonosAction.Next, _settings).ConfigureAwait(true); }
+                catch (Exception ex) { AppLog.Warn("Next before delete failed (continuing)", ex); }
+
+                var result = _library.DeleteTrack(path, deleteMaster: true);
+                SetStatus(result.Message, warn: !result.Ok);
+                if (result.Ok || result.SonosDeleted)
+                {
+                    // Drop from library grid if visible
+                    if (_libraryRows is not null)
+                    {
+                        for (var i = _libraryRows.Count - 1; i >= 0; i--)
+                        {
+                            if (string.Equals(_libraryRows[i].Path, path, StringComparison.OrdinalIgnoreCase))
+                                _libraryRows.RemoveAt(i);
+                        }
+                    }
+                    RefreshLibraryStatusUi();
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Control delete now-playing failed", ex);
+                SetStatus(ex.Message, warn: true);
+            }
+        }), DispatcherPriority.Background);
     }
 
     private void HookMcpActivityUi()
@@ -913,6 +1119,130 @@ public partial class MainWindow : Window
         ApplyLibraryTagToSelection(key);
     }
 
+    private void LibraryDeleteTracks_Click(object sender, RoutedEventArgs e)
+    {
+        if (_library is null)
+        {
+            SetStatus("Library service not available.", warn: true);
+            return;
+        }
+
+        var rows = LibraryResultsGrid.SelectedItems.OfType<LibraryResultRow>()
+            .Where(r => !string.IsNullOrWhiteSpace(r.Path))
+            .ToList();
+        if (rows.Count == 0)
+        {
+            MessageBox.Show(this,
+                "Select one or more tracks in the library grid first.",
+                "Delete tracks",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var sample = rows.Take(8)
+            .Select(r =>
+            {
+                var title = string.IsNullOrWhiteSpace(r.Title) ? System.IO.Path.GetFileName(r.Path) : r.Title;
+                var artist = string.IsNullOrWhiteSpace(r.Artist) ? "" : $" — {r.Artist}";
+                return $"• {title}{artist}";
+            });
+        var more = rows.Count > 8 ? $"\n… and {rows.Count - 8} more" : "";
+
+        var body =
+            "PERMANENTLY DELETE from disk?\n\n" +
+            $"Tracks: {rows.Count}\n\n" +
+            string.Join("\n", sample) + more + "\n\n" +
+            "This cannot be undone.\n\n" +
+            "• Files under your Sonos library folders will be deleted\n" +
+            "• Linked or matched master/hi-res twins will also be deleted when a master mapping applies\n" +
+            "• Rows are removed from the HotSonos cache\n\n" +
+            "Continue?";
+
+        var confirm = MessageBox.Show(
+            this,
+            body,
+            "Confirm permanent delete",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        if (confirm != MessageBoxResult.Yes)
+            return;
+
+        // Second gate — major action
+        var confirm2 = MessageBox.Show(
+            this,
+            $"Last chance: delete {rows.Count} track(s) from disk (Sonos + master when linked)?\n\nPress No to cancel.",
+            "Final confirmation",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Stop,
+            MessageBoxResult.No);
+
+        if (confirm2 != MessageBoxResult.Yes)
+            return;
+
+        SetLibraryTagBusy(true, $"Deleting {rows.Count} track(s)…", heavy: rows.Count > 1);
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            try
+            {
+                var ok = 0;
+                var fail = 0;
+                var masterHits = 0;
+                string? lastMsg = null;
+                var pathsToRemove = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                for (var i = 0; i < rows.Count; i++)
+                {
+                    var row = rows[i];
+                    if (rows.Count > 1)
+                        SetLibraryBusyProgress(i + 1, rows.Count, $"Deleting {i + 1} of {rows.Count}…");
+
+                    var result = _library.DeleteTrack(row.Path, deleteMaster: true);
+                    lastMsg = result.Message;
+                    if (result.Ok || result.SonosDeleted)
+                    {
+                        ok++;
+                        pathsToRemove.Add(row.Path);
+                        if (result.MasterDeleted) masterHits++;
+                    }
+                    else
+                    {
+                        fail++;
+                    }
+                }
+
+                if (_libraryRows is not null && pathsToRemove.Count > 0)
+                {
+                    for (var i = _libraryRows.Count - 1; i >= 0; i--)
+                    {
+                        if (pathsToRemove.Contains(_libraryRows[i].Path))
+                            _libraryRows.RemoveAt(i);
+                    }
+                }
+
+                var summary = fail == 0
+                    ? $"Deleted {ok} track(s)" + (masterHits > 0 ? $" ({masterHits} with master twin)." : ".")
+                    : $"Deleted {ok}, failed {fail}. {lastMsg}";
+                SetStatus(summary, warn: fail > 0);
+                LibraryTempoActionFeedback.Text = fail == 0 ? $"Deleted {ok}" : $"Fail {fail}";
+                LibraryResultsMetaText.Text = summary;
+                RefreshLibraryStatusUi();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Library delete failed", ex);
+                SetStatus(ex.Message, warn: true);
+            }
+            finally
+            {
+                SetLibraryTagBusy(false, null, heavy: false);
+                SyncLibraryPresetButtonsFromSelection();
+            }
+        }), DispatcherPriority.Background);
+    }
+
     // ---- Tags catalog maintenance tab ---------------------------------------
 
     private ObservableCollection<TagCatalogRow> _tagCatalogRows = [];
@@ -1285,22 +1615,76 @@ public partial class MainWindow : Window
     {
         if (_library is null)
         {
-            SetStatus("Library service not available.", warn: true);
+            SetLibraryFeedback("Library service not available.", warn: true);
             return;
         }
 
-        SetStatus("Discovering Music Library roots from Sonos…", warn: false);
+        var btn = sender as System.Windows.Controls.Button;
+        var prevContent = btn?.Content;
+        if (btn is not null)
+        {
+            btn.IsEnabled = false;
+            btn.Content = "Discovering…";
+        }
+
+        // Paths live in a collapsed expander — open it so the result is visible.
+        if (LibraryPathsExpander is not null)
+            LibraryPathsExpander.IsExpanded = true;
+
+        SetLibraryFeedback("Discovering Music Library roots from Sonos (browsing A:TRACKS — may take a minute)…", warn: false);
         try
         {
             var (ok, message, roots) = await _library.DiscoverRootsFromSonosAsync().ConfigureAwait(true);
-            SonosLibraryRootsBox.Text = string.Join(Environment.NewLine, roots);
-            SetStatus(message, warn: !ok);
+            // Settings object already updated by discover; refresh UI list (Daily defaults applied in EnsureShape).
+            _settings.EnsureShape();
+            RebuildLibraryFoldersUi(preserveDailyChecks: false);
+            RefreshMasterMapSonosCombo();
+
+            var daily = SnapshotDailyLibraryRoots();
+            if (daily.Count == 0)
+                daily = _settings.GetEffectiveDailyLibraryRoots().ToList();
+            var dailyLine = daily.Count == 0
+                ? "Daily mix: (none checked — house shuffle uses all folders until you check some)"
+                : $"Daily mix: {string.Join(", ", daily.Select(p => System.IO.Path.GetFileName(p.TrimEnd('\\', '/'))))}";
+            var detail = roots.Count == 0
+                ? message
+                : $"{message}\n{string.Join("\n", roots)}\n{dailyLine}";
+            SetLibraryFeedback(detail, warn: !ok);
             RefreshLibraryStatusUi();
+
+            // Keep master mapping Sonos combo in sync with newly discovered roots.
+            if (ok && roots.Count > 0 && MasterMapSonosCombo is not null
+                && string.IsNullOrWhiteSpace(MasterMapSonosCombo.Text)
+                && MasterMapSonosCombo.Items.Count > 0)
+            {
+                MasterMapSonosCombo.SelectedIndex = 0;
+            }
         }
         catch (Exception ex)
         {
             AppLog.Error("Discover library roots UI failed", ex);
-            SetStatus(ex.Message, warn: true);
+            SetLibraryFeedback(ex.Message, warn: true);
+        }
+        finally
+        {
+            if (btn is not null)
+            {
+                btn.IsEnabled = true;
+                btn.Content = prevContent ?? "Discover from Sonos";
+            }
+        }
+    }
+
+    /// <summary>Library tab banner + window status line (Discover/rescan feedback).</summary>
+    private void SetLibraryFeedback(string message, bool warn)
+    {
+        SetStatus(message.Replace('\n', ' '), warn);
+        if (LibTabStatusText is not null)
+        {
+            LibTabStatusText.Text = message;
+            LibTabStatusText.Foreground = warn
+                ? System.Windows.Media.Brushes.IndianRed
+                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2E, 0x7D, 0x46));
         }
     }
 
@@ -1581,8 +1965,14 @@ public partial class MainWindow : Window
         return _library.ListGenres();
     }
 
-    /// <summary>Slot picker entry: Sonos favorite/playlist, HotSonos tag, or genre.</summary>
-    private sealed record SlotPick(string Display, string Source, string? SonosName, string? TagKey, string? GenreName = null)
+    /// <summary>Slot picker entry: folder, tag, genre, or Sonos favorite/playlist.</summary>
+    private sealed record SlotPick(
+        string Display,
+        string Source,
+        string? SonosName,
+        string? TagKey,
+        string? GenreName = null,
+        string? FolderPath = null)
     {
         public override string ToString() => Display;
     }
@@ -1604,7 +1994,17 @@ public partial class MainWindow : Window
         {
             var want = (_settings.ControlShuffleSource ?? AppSettings.ControlShuffleAll).Trim();
             ControlShuffleSourceCombo.Items.Clear();
-            ControlShuffleSourceCombo.Items.Add(new ControlShufflePick("All · Music Library", AppSettings.ControlShuffleAll));
+            ControlShuffleSourceCombo.Items.Add(new ControlShufflePick("All · Daily mix", AppSettings.ControlShuffleAll));
+
+            foreach (var folder in _settings.EnsureShape().SonosLibraryRoots)
+            {
+                var name = System.IO.Path.GetFileName(folder.TrimEnd('\\', '/'));
+                if (string.IsNullOrWhiteSpace(name)) name = folder;
+                var count = _library?.CountTracksUnderFolder(folder) ?? 0;
+                ControlShuffleSourceCombo.Items.Add(new ControlShufflePick(
+                    count > 0 ? $"Folder · {name} ({count})" : $"Folder · {name}",
+                    AppSettings.FolderShuffleToken(folder)));
+            }
 
             foreach (var t in _settings.EnsureShape().Tags)
             {
@@ -1621,11 +2021,16 @@ public partial class MainWindow : Window
                     $"genre:{genre}"));
             }
 
-            // Keep a bound selection even if genres are currently hidden or counts changed.
             object? select = ControlShuffleSourceCombo.Items.OfType<ControlShufflePick>()
                 .FirstOrDefault(p => string.Equals(p.Token, want, StringComparison.OrdinalIgnoreCase));
 
-            if (select is null && want.StartsWith("tag:", StringComparison.OrdinalIgnoreCase))
+            if (select is null && AppSettings.TryParseFolderShuffleToken(want, out var folderPath))
+            {
+                var name = System.IO.Path.GetFileName(folderPath.TrimEnd('\\', '/'));
+                select = new ControlShufflePick($"Folder · {name}", want);
+                ControlShuffleSourceCombo.Items.Add(select);
+            }
+            else if (select is null && want.StartsWith("tag:", StringComparison.OrdinalIgnoreCase))
             {
                 var key = want["tag:".Length..].Trim();
                 var label = _settings.FindTag(key)?.Label ?? key;
@@ -1664,6 +2069,19 @@ public partial class MainWindow : Window
         combo.Items.Clear();
         combo.Items.Add(new SlotPick(NoneLabel, FavoriteSlot.SourceSonos, null, null));
 
+        foreach (var folder in _settings.EnsureShape().SonosLibraryRoots)
+        {
+            var name = System.IO.Path.GetFileName(folder.TrimEnd('\\', '/'));
+            if (string.IsNullOrWhiteSpace(name)) name = folder;
+            var count = _library?.CountTracksUnderFolder(folder) ?? 0;
+            combo.Items.Add(new SlotPick(
+                count > 0 ? $"Folder · {name} ({count})" : $"Folder · {name}",
+                FavoriteSlot.SourceFolder,
+                null,
+                null,
+                FolderPath: folder));
+        }
+
         foreach (var t in _settings.EnsureShape().Tags)
             combo.Items.Add(new SlotPick($"Tag · {t.Label}", FavoriteSlot.SourceTag, null, t.Key));
 
@@ -1681,7 +2099,26 @@ public partial class MainWindow : Window
             combo.Items.Add(new SlotPick($"Sonos · {title}", FavoriteSlot.SourceSonos, title, null));
 
         object? select = combo.Items[0];
-        if (bound.IsTag)
+        if (bound.IsFolder)
+        {
+            select = combo.Items.OfType<SlotPick>()
+                .FirstOrDefault(p => p.Source == FavoriteSlot.SourceFolder
+                    && string.Equals(p.FolderPath, bound.FolderPath, StringComparison.OrdinalIgnoreCase))
+                ?? select;
+            if (select == combo.Items[0] && !string.IsNullOrWhiteSpace(bound.FolderPath))
+            {
+                var name = System.IO.Path.GetFileName(bound.FolderPath.TrimEnd('\\', '/'));
+                var orphan = new SlotPick(
+                    $"Folder · {name}",
+                    FavoriteSlot.SourceFolder,
+                    null,
+                    null,
+                    FolderPath: bound.FolderPath);
+                combo.Items.Insert(1, orphan);
+                select = orphan;
+            }
+        }
+        else if (bound.IsTag)
         {
             select = combo.Items.OfType<SlotPick>()
                 .FirstOrDefault(p => p.Source == FavoriteSlot.SourceTag
@@ -1694,7 +2131,6 @@ public partial class MainWindow : Window
                 .FirstOrDefault(p => p.Source == FavoriteSlot.SourceGenre
                     && string.Equals(p.GenreName, bound.GenreName, StringComparison.OrdinalIgnoreCase))
                 ?? select;
-            // Bound genre not currently in cache — still show/select a synthetic entry.
             if (select == combo.Items[0] && !string.IsNullOrWhiteSpace(bound.GenreName))
             {
                 var orphan = new SlotPick(
@@ -1718,7 +2154,7 @@ public partial class MainWindow : Window
         combo.SelectedItem = select;
     }
 
-    /// <summary>Build Control-tab list: tags, genres (if enabled), Sonos favorites/playlists with one-click Play.</summary>
+    /// <summary>Build Control-tab list: folders, tags, genres, Sonos favorites/playlists.</summary>
     private void RefreshControlPlayList()
     {
         if (ControlPlayListBox is null)
@@ -1726,6 +2162,22 @@ public partial class MainWindow : Window
 
         var rows = new List<ControlPlayRow>();
         var genres = GetPlayGenres();
+        var folders = _settings.EnsureShape().SonosLibraryRoots;
+
+        foreach (var folder in folders)
+        {
+            var name = System.IO.Path.GetFileName(folder.TrimEnd('\\', '/'));
+            if (string.IsNullOrWhiteSpace(name)) name = folder;
+            var count = _library?.CountTracksUnderFolder(folder) ?? 0;
+            rows.Add(new ControlPlayRow(
+                Kind: ControlPlayKind.Folder,
+                KindLabel: "Folder",
+                Title: name,
+                Detail: count == 0
+                    ? "No tracks in cache — Rescan library after Discover"
+                    : $"{count} track(s) · folder shuffle · stays in folder for top-up",
+                Payload: folder));
+        }
 
         foreach (var t in _settings.EnsureShape().Tags)
         {
@@ -1765,16 +2217,60 @@ public partial class MainWindow : Window
             ? $" · {genres.Count} genre(s)"
             : " · genres hidden";
         ControlPlayListStatus.Text = rows.Count == 0
-            ? "No tags or Sonos playlists yet. Rescan Library; add tags on Tags; Refresh for Sonos favorites."
-            : $"{_settings.Tags.Count} tag(s){genreBit} · {_sonosPlayableTitles.Count} Sonos item(s)";
+            ? "No folders, tags, or Sonos playlists yet. Discover library paths; add tags; Refresh for Sonos favorites."
+            : $"{folders.Count} folder(s) · {_settings.Tags.Count} tag(s){genreBit} · {_sonosPlayableTitles.Count} Sonos item(s)";
     }
 
-    private void ControlPlayListRefresh_Click(object sender, RoutedEventArgs e)
+    private async void ControlPlayListRefresh_Click(object sender, RoutedEventArgs e)
     {
-        RefreshControlShuffleSourceCombo();
-        RefreshControlPlayList();
-        _ = LoadFavoritesAsync();
-        SetStatus("Refreshed tags, genres & Sonos playlists list.", warn: false);
+        var btn = ControlPlayListRefreshButton ?? sender as System.Windows.Controls.Button;
+        var prev = btn?.Content;
+        if (btn is not null)
+        {
+            btn.IsEnabled = false;
+            btn.Content = "Refreshing…";
+        }
+
+        ControlPlayListStatus.Text = "Refreshing folders, tags, genres & Sonos playlists…";
+        ControlPlayListStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+            System.Windows.Media.Color.FromRgb(0x2E, 0x7D, 0x46));
+        SetStatus("Refreshing play list…", warn: false);
+
+        try
+        {
+            // Local lists first (instant), then Sonos favorites (network).
+            RefreshControlShuffleSourceCombo();
+            RefreshControlPlayList();
+            ControlPlayListStatus.Text = "Loading Sonos favorites/playlists…";
+
+            await LoadFavoritesAsync().ConfigureAwait(true);
+
+            var folders = _settings.EnsureShape().SonosLibraryRoots.Count;
+            var tags = _settings.Tags.Count;
+            var genres = GetPlayGenres().Count;
+            var sonos = _sonosPlayableTitles.Count;
+            var summary =
+                $"Refreshed · {folders} folder(s) · {tags} tag(s) · {genres} genre(s) · {sonos} Sonos item(s)";
+            ControlPlayListStatus.Text = summary;
+            ControlPlayListStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x2E, 0x7D, 0x46));
+            SetStatus(summary, warn: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Control play list refresh failed", ex);
+            ControlPlayListStatus.Text = $"Refresh failed: {ex.Message}";
+            ControlPlayListStatus.Foreground = System.Windows.Media.Brushes.IndianRed;
+            SetStatus(ex.Message, warn: true);
+        }
+        finally
+        {
+            if (btn is not null)
+            {
+                btn.IsEnabled = true;
+                btn.Content = prev ?? "Refresh list";
+            }
+        }
     }
 
     private void ControlPlayItem_Click(object sender, RoutedEventArgs e)
@@ -1793,7 +2289,7 @@ public partial class MainWindow : Window
             try
             {
                 string toast;
-                if (row.Kind is ControlPlayKind.Tag or ControlPlayKind.Genre)
+                if (row.Kind is ControlPlayKind.Folder or ControlPlayKind.Tag or ControlPlayKind.Genre)
                 {
                     if (_library is null)
                     {
@@ -1802,9 +2298,12 @@ public partial class MainWindow : Window
                         return;
                     }
 
-                    toast = row.Kind == ControlPlayKind.Tag
-                        ? await _sonos.PlayTaggedTracksAsync(_library, row.Payload, shuffle: true)
-                        : await _sonos.PlayGenreTracksAsync(_library, row.Payload, shuffle: true);
+                    toast = row.Kind switch
+                    {
+                        ControlPlayKind.Folder => await _sonos.PlayLibraryFolderAsync(_library, row.Payload, shuffle: true),
+                        ControlPlayKind.Tag => await _sonos.PlayTaggedTracksAsync(_library, row.Payload, shuffle: true),
+                        _ => await _sonos.PlayGenreTracksAsync(_library, row.Payload, shuffle: true),
+                    };
                 }
                 else
                 {
@@ -1829,6 +2328,7 @@ public partial class MainWindow : Window
 
     private enum ControlPlayKind
     {
+        Folder,
         Tag,
         Genre,
         Sonos,
@@ -1998,12 +2498,21 @@ public partial class MainWindow : Window
             if (_favCombos[i].SelectedItem is SlotPick slotPick
                 && !string.Equals(slotPick.Display, NoneLabel, StringComparison.Ordinal))
             {
-                if (slotPick.Source == FavoriteSlot.SourceTag && !string.IsNullOrWhiteSpace(slotPick.TagKey))
+                if (slotPick.Source == FavoriteSlot.SourceFolder && !string.IsNullOrWhiteSpace(slotPick.FolderPath))
+                {
+                    _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceFolder;
+                    _settings.FavoriteSlots[i].FolderPath = slotPick.FolderPath;
+                    _settings.FavoriteSlots[i].TagKey = null;
+                    _settings.FavoriteSlots[i].GenreName = null;
+                    _settings.FavoriteSlots[i].FavoriteName = null;
+                }
+                else if (slotPick.Source == FavoriteSlot.SourceTag && !string.IsNullOrWhiteSpace(slotPick.TagKey))
                 {
                     _settings.FavoriteSlots[i].Source = FavoriteSlot.SourceTag;
                     _settings.FavoriteSlots[i].TagKey = slotPick.TagKey;
                     _settings.FavoriteSlots[i].FavoriteName = null;
                     _settings.FavoriteSlots[i].GenreName = null;
+                    _settings.FavoriteSlots[i].FolderPath = null;
                 }
                 else if (slotPick.Source == FavoriteSlot.SourceGenre && !string.IsNullOrWhiteSpace(slotPick.GenreName))
                 {
@@ -2011,6 +2520,7 @@ public partial class MainWindow : Window
                     _settings.FavoriteSlots[i].GenreName = slotPick.GenreName;
                     _settings.FavoriteSlots[i].FavoriteName = null;
                     _settings.FavoriteSlots[i].TagKey = null;
+                    _settings.FavoriteSlots[i].FolderPath = null;
                 }
                 else if (!string.IsNullOrWhiteSpace(slotPick.SonosName))
                 {
@@ -2018,6 +2528,7 @@ public partial class MainWindow : Window
                     _settings.FavoriteSlots[i].FavoriteName = slotPick.SonosName;
                     _settings.FavoriteSlots[i].TagKey = null;
                     _settings.FavoriteSlots[i].GenreName = null;
+                    _settings.FavoriteSlots[i].FolderPath = null;
                 }
                 else
                 {
@@ -2025,6 +2536,7 @@ public partial class MainWindow : Window
                     _settings.FavoriteSlots[i].FavoriteName = null;
                     _settings.FavoriteSlots[i].TagKey = null;
                     _settings.FavoriteSlots[i].GenreName = null;
+                    _settings.FavoriteSlots[i].FolderPath = null;
                 }
             }
             else
@@ -2033,6 +2545,7 @@ public partial class MainWindow : Window
                 _settings.FavoriteSlots[i].FavoriteName = null;
                 _settings.FavoriteSlots[i].TagKey = null;
                 _settings.FavoriteSlots[i].GenreName = null;
+                _settings.FavoriteSlots[i].FolderPath = null;
             }
         }
 
@@ -2056,25 +2569,322 @@ public partial class MainWindow : Window
             _settings.ControlShuffleSource = shufflePick.Token;
         _settings.ShuffleArtistSpread = ShuffleArtistSpreadCheckBox.IsChecked == true;
 
-        _settings.SonosLibraryRoots = SplitLibraryRoots(SonosLibraryRootsBox.Text);
-        _settings.MasterLibraryRoot = string.IsNullOrWhiteSpace(MasterLibraryRootBox.Text)
-            ? null
-            : MasterLibraryRootBox.Text.Trim();
+        _settings.SonosLibraryRoots = SnapshotLibraryRoots();
+        _settings.DailyLibraryRoots = SnapshotDailyLibraryRoots();
+        _settings.MasterLibraryMappings = SnapshotMasterMappings();
+        // Legacy single field kept in sync by EnsureShape from first mapping.
+        _settings.MasterLibraryRoot = _settings.MasterLibraryMappings.FirstOrDefault()?.MasterRoot;
 
         CommitWakeUiToSettings();
     }
 
-    /// <summary>Parses multiline path input into distinct trimmed roots.</summary>
-    private static List<string> SplitLibraryRoots(string? text)
+    private void LoadMasterMappingsUi(IEnumerable<MasterLibraryMapping>? mappings)
     {
-        if (string.IsNullOrWhiteSpace(text))
-            return [];
+        _masterMappings.Clear();
+        if (mappings is null)
+            return;
+        foreach (var m in mappings)
+        {
+            if (string.IsNullOrWhiteSpace(m.SonosPath) || string.IsNullOrWhiteSpace(m.MasterRoot))
+                continue;
+            _masterMappings.Add(new MasterLibraryMapping
+            {
+                SonosPath = m.SonosPath.Trim().TrimEnd('\\', '/'),
+                MasterRoot = m.MasterRoot.Trim().TrimEnd('\\', '/'),
+            });
+        }
+    }
 
-        return text
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(p => p.Length > 0)
+    private List<MasterLibraryMapping> SnapshotMasterMappings() =>
+        _masterMappings
+            .Where(m => !string.IsNullOrWhiteSpace(m.SonosPath) && !string.IsNullOrWhiteSpace(m.MasterRoot))
+            .Select(m => new MasterLibraryMapping
+            {
+                SonosPath = m.SonosPath.Trim().TrimEnd('\\', '/'),
+                MasterRoot = m.MasterRoot.Trim().TrimEnd('\\', '/'),
+            })
+            .GroupBy(m => m.SonosPath, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last())
+            .ToList();
+
+    private List<string> SnapshotLibraryRoots() =>
+        _libraryFolders
+            .Where(f => !string.IsNullOrWhiteSpace(f.Path))
+            .Select(f => f.Path.Trim().TrimEnd('\\', '/'))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+    private List<string> SnapshotDailyLibraryRoots() =>
+        _libraryFolders
+            .Where(f => f.InDaily && !string.IsNullOrWhiteSpace(f.Path))
+            .Select(f => f.Path.Trim().TrimEnd('\\', '/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private void RebuildLibraryFoldersUi(bool preserveDailyChecks)
+    {
+        HashSet<string> dailyChecked;
+        if (preserveDailyChecks)
+        {
+            dailyChecked = _libraryFolders
+                .Where(f => f.InDaily)
+                .Select(f => f.Path)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+        else
+        {
+            var s = _settings.EnsureShape();
+            dailyChecked = s.DailyLibraryRoots.Count > 0
+                ? s.DailyLibraryRoots.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : s.GetEffectiveDailyLibraryRoots().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var roots = _settings.EnsureShape().SonosLibraryRoots.ToList();
+        if (roots.Count == 0 && _libraryFolders.Count > 0 && preserveDailyChecks)
+            roots = SnapshotLibraryRoots();
+
+        _libraryFolders.Clear();
+        foreach (var r in roots.Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+        {
+            var path = r.Trim().TrimEnd('\\', '/');
+            var inDaily = dailyChecked.Count == 0
+                ? roots.Count <= 1
+                : dailyChecked.Contains(path)
+                  || dailyChecked.Any(c =>
+                      path.StartsWith(c.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)
+                      || c.StartsWith(path.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
+            _libraryFolders.Add(new LibraryFolderRow
+            {
+                Path = path,
+                InDaily = inDaily,
+            });
+        }
+    }
+
+    private void RefreshMasterMapSonosCombo()
+    {
+        if (MasterMapSonosCombo is null)
+            return;
+
+        var selectedPath = (MasterMapSonosCombo.SelectedItem as LibraryFolderRow)?.Path;
+        MasterMapSonosCombo.ItemsSource = null;
+        MasterMapSonosCombo.ItemsSource = _libraryFolders.ToList();
+
+        if (!string.IsNullOrWhiteSpace(selectedPath))
+        {
+            var match = _libraryFolders.FirstOrDefault(f =>
+                string.Equals(f.Path, selectedPath, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+                MasterMapSonosCombo.SelectedItem = match;
+        }
+        else if (MasterMapSonosCombo.Items.Count > 0 && MasterMapSonosCombo.SelectedIndex < 0)
+        {
+            MasterMapSonosCombo.SelectedIndex = 0;
+        }
+    }
+
+    private void LibraryFolderAdd_Click(object sender, RoutedEventArgs e)
+    {
+        using var dlg = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "Select a music library folder",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false,
+        };
+        if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+            return;
+
+        var path = dlg.SelectedPath.Trim().TrimEnd('\\', '/');
+        if (_libraryFolders.Any(f => string.Equals(f.Path, path, StringComparison.OrdinalIgnoreCase)))
+        {
+            MessageBox.Show(this, "That folder is already in the list.",
+                "Library folders", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        _libraryFolders.Add(new LibraryFolderRow
+        {
+            Path = path,
+            InDaily = _libraryFolders.Count == 0, // first folder → daily by default
+        });
+        // Keep settings roots in sync for other code paths during this session
+        _settings.SonosLibraryRoots = SnapshotLibraryRoots();
+        RefreshMasterMapSonosCombo();
+    }
+
+    private void LibraryFolderRemove_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = LibraryFoldersList.SelectedItems.OfType<LibraryFolderRow>().ToList();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show(this, "Select one or more folders in the list to remove.",
+                "Library folders", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        foreach (var row in selected)
+            _libraryFolders.Remove(row);
+        _settings.SonosLibraryRoots = SnapshotLibraryRoots();
+        RefreshMasterMapSonosCombo();
+    }
+
+    private void LibraryFolderShuffle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: LibraryFolderRow row })
+            return;
+        if (string.IsNullOrWhiteSpace(row.Path))
+            return;
+        if (_library is null)
+        {
+            SetLibraryFeedback("Library service not available.", warn: true);
+            return;
+        }
+
+        // Persist Daily checks / roots before long ops (same as other library actions).
+        try
+        {
+            _settings.SonosLibraryRoots = SnapshotLibraryRoots();
+            _settings.DailyLibraryRoots = SnapshotDailyLibraryRoots();
+            _store.Save(_settings);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Save before folder shuffle failed", ex);
+        }
+
+        var name = row.DisplayName;
+        SetLibraryFeedback($"Shuffling folder “{name}”…", warn: false);
+        if (sender is System.Windows.Controls.Button btn)
+            btn.IsEnabled = false;
+
+        Dispatcher.BeginInvoke(new Action(async () =>
+        {
+            try
+            {
+                await _sonos.GroupAllSpeakersAsync().ConfigureAwait(true);
+                var toast = await _sonos.PlayLibraryFolderAsync(_library, row.Path, shuffle: true)
+                    .ConfigureAwait(true);
+                SetLibraryFeedback(toast, warn: false);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Library folder shuffle failed", ex);
+                SetLibraryFeedback(ex.Message, warn: true);
+            }
+            finally
+            {
+                if (sender is System.Windows.Controls.Button b)
+                    b.IsEnabled = true;
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private void MasterMappingsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (MasterMappingsList.SelectedItem is not MasterLibraryMapping m)
+            return;
+        var row = _libraryFolders.FirstOrDefault(f =>
+            string.Equals(f.Path, m.SonosPath, StringComparison.OrdinalIgnoreCase));
+        if (row is not null)
+            MasterMapSonosCombo.SelectedItem = row;
+        else
+        {
+            // Mapping points at a path not in the folder list — show path in readonly master box only
+            MasterMapSonosCombo.SelectedItem = null;
+        }
+
+        MasterMapMasterBox.Text = m.MasterRoot;
+    }
+
+    private void MasterMapBrowseMaster_Click(object sender, RoutedEventArgs e)
+    {
+        using var dlg = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "Select master (hi-res) library folder",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false,
+        };
+        var start = (MasterMapMasterBox.Text ?? "").Trim();
+        if (start.Length > 0)
+        {
+            try { dlg.SelectedPath = start; }
+            catch { /* ignore invalid start path */ }
+        }
+
+        if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+            return;
+        MasterMapMasterBox.Text = dlg.SelectedPath;
+    }
+
+    private void MasterMapAddUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = MasterMapSonosCombo.SelectedItem as LibraryFolderRow;
+        var sonos = folder?.Path?.Trim().TrimEnd('\\', '/') ?? "";
+        var master = (MasterMapMasterBox.Text ?? "").Trim().TrimEnd('\\', '/');
+        if (sonos.Length == 0)
+        {
+            MessageBox.Show(this, "Choose a library folder from the list (Discover or Add folder first).",
+                "Master mapping", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (master.Length == 0)
+        {
+            MessageBox.Show(this, "Browse to the master (hi-res) folder.",
+                "Master mapping", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var existing = _masterMappings.FirstOrDefault(m =>
+            string.Equals(m.SonosPath, sonos, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            var idx = _masterMappings.IndexOf(existing);
+            _masterMappings.RemoveAt(idx);
+            _masterMappings.Insert(idx, new MasterLibraryMapping { SonosPath = sonos, MasterRoot = master });
+            MasterMappingsList.SelectedIndex = idx;
+        }
+        else
+        {
+            _masterMappings.Add(new MasterLibraryMapping { SonosPath = sonos, MasterRoot = master });
+            MasterMappingsList.SelectedIndex = _masterMappings.Count - 1;
+        }
+    }
+
+    private void MasterMapRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if (MasterMappingsList.SelectedItem is MasterLibraryMapping m)
+        {
+            _masterMappings.Remove(m);
+            return;
+        }
+
+        MessageBox.Show(this, "Select a mapping in the list to remove.",
+            "Master mapping", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private sealed class LibraryFolderRow : INotifyPropertyChanged
+    {
+        private bool _inDaily;
+        public string Path { get; set; } = "";
+        public string DisplayName =>
+            string.IsNullOrWhiteSpace(Path)
+                ? ""
+                : System.IO.Path.GetFileName(Path.TrimEnd('\\', '/'));
+
+        public bool InDaily
+        {
+            get => _inDaily;
+            set
+            {
+                if (_inDaily == value) return;
+                _inDaily = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(InDaily)));
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
     }
 
     private void CommitWakeUiToSettings()
@@ -2137,6 +2947,33 @@ public partial class MainWindow : Window
         {
             SetStatus("Starting full library shuffle…", warn: false);
             _runAction(HotsonosAction.ShuffleLibrary);
+            return;
+        }
+
+        if (AppSettings.TryParseFolderShuffleToken(token, out var folderPath))
+        {
+            if (_library is null)
+            {
+                SetStatus("Library service not available.", warn: true);
+                return;
+            }
+
+            var name = System.IO.Path.GetFileName(folderPath.TrimEnd('\\', '/'));
+            SetStatus($"Shuffling folder “{name}”…", warn: false);
+            Dispatcher.BeginInvoke(new Action(async () =>
+            {
+                try
+                {
+                    await _sonos.GroupAllSpeakersAsync();
+                    var toast = await _sonos.PlayLibraryFolderAsync(_library, folderPath, shuffle: true);
+                    SetStatus(toast, warn: false);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Control shuffle folder failed", ex);
+                    SetStatus(ex.Message, warn: true);
+                }
+            }), DispatcherPriority.Background);
             return;
         }
 

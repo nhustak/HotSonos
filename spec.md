@@ -308,7 +308,7 @@ Access model (target):
 | Root | Role | Status |
 |------|------|--------|
 | **Sonos library path(s)** | Share/folder(s) Sonos indexes; FLAC/MP3 playable set | **Configured** (`SonosLibraryRoots`); discover from Sonos |
-| **Master library path** | Full archive / dual-write tags | **Configured** (optional) `MasterLibraryRoot` |
+| **Master library path(s)** | Hi-res archive(s) for dual-write tags | **Per Sonos path** via `MasterLibraryMappings` (legacy `MasterLibraryRoot` migrates on load) |
 
 - Treat **all Sonos roots as one big pool** for grouping and play. Root count does not define modes.  
 - **Do not** add master hi-res dump as a Sonos library share.  
@@ -515,7 +515,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 - **GENA**: local callback; trusted LAN  
 - **Tests**: Core parsers offline; Harness for live speakers  
 - **Config today**: JSON settings at `%LocalAppData%\HotSonos\settings.json`  
-- **Library roots (step 1)**: `SonosLibraryRoots`, `MasterLibraryRoot` in same JSON  
+- **Library roots (step 1)**: `SonosLibraryRoots`, `MasterLibraryMappings` (and legacy `MasterLibraryRoot`) in same JSON  
 - **Library cache (step 2)**: SQLite `%LocalAppData%\HotSonos\library.db` via `Microsoft.Data.Sqlite` + TagLib# — **rebuildable only**, never sole tag store  
 - **Hand-rolled UPnP**; no Sonos NuGet  
 - **Build note**: Debug/Release build fails with file lock if tray `HotSonos.exe` is running — stop process, build, restart  
@@ -532,11 +532,11 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | Mood music | Playlists first; not mixed into daily shuffle |
 | Favorites slots | 4 |
 | Config | JSON `%LocalAppData%\HotSonos\settings.json` |
-| Library roots | `SonosLibraryRoots[]` + optional `MasterLibraryRoot` |
+| Library roots | `SonosLibraryRoots[]` + `MasterLibraryMappings[]` (Sonos path → master); legacy `MasterLibraryRoot` migrates |
 | Library cache | SQLite `library.db`; skip unchanged by size/mtime; FLAC/MP3 only |
 | Wake if already playing | Skip entirely |
 | Tags | Read + write `HOTSONOS_TEMPO` / standard fields (step 3) |
-| Master dual-write | Optional (default on) when twin matched/linked under `MasterLibraryRoot` (step 4) |
+| Master dual-write | Optional (default on) when twin matched/linked under the **mapped** master root for that Sonos path |
 | MCP | Loopback debug/ops + control + library status/search/tags/master |
 | Library management | Later; dry-run + confirm |
 
@@ -562,3 +562,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-07-26 | Skip (Next) writes play history via GetPositionInfo; top-up excludes session-served URIs (no re-queue of already-lined-up tracks) |
 | 2026-07-26 | Play lifecycle log: started/skipped/paused/resumed → play-events.jsonl + AppLog + MCP get_play_events |
 | 2026-07-28 | Library groups design locked §5.1: one pool, path groups, Daily exclude, Control + Quick Play (no group hotkeys); timed swap later |
+| 2026-07-28 | Master dual-write: `MasterLibraryMappings` (Sonos path → master root); unmapped paths Sonos-only; legacy single root migrates |
+| 2026-07-28 | Discover library roots: one root per top-level folder under the SMB share (Jazz, Sonos, Seasonal…) — not collapsed share root |
+| 2026-07-28 | Daily mix folders (`DailyLibraryRoots`): All/hotkey shuffle scoped to checked library folders; multi-root defaults to …\Sonos |
+| 2026-07-28 | Folder play modes: Control From/list, Quick Play, fav slots, MCP play_folder; top-up stays in folder |

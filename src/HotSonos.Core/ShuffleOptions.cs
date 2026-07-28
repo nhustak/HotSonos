@@ -16,6 +16,13 @@ public sealed class ShuffleOptions
     public IReadOnlyCollection<string>? ExcludeUris { get; init; }
 
     /// <summary>
+    /// When set, only tracks whose path falls under one of these prefixes are eligible
+    /// (daily library folders). UNC or x-file-cifs; compared via <see cref="SonosController.NormalizeTrackKey"/>.
+    /// Null/empty = entire Sonos Music Library (A:TRACKS).
+    /// </summary>
+    public IReadOnlyCollection<string>? IncludePathPrefixes { get; init; }
+
+    /// <summary>
     /// When true, append to the existing queue instead of clearing it (top-up).
     /// </summary>
     public bool AppendToQueue { get; init; }
@@ -31,6 +38,8 @@ public sealed class ShuffleResult
     public int Enqueued { get; init; }
     public int ExcludedCount { get; init; }
     public int CandidateCount { get; init; }
+    /// <summary>Tracks removed because they were outside IncludePathPrefixes.</summary>
+    public int ScopeFilteredCount { get; init; }
     public bool Appended { get; init; }
     public IReadOnlyList<string> EnqueuedUris { get; init; } = [];
 }

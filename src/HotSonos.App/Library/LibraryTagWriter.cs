@@ -70,6 +70,20 @@ public sealed class TagPurgeResult
     public string? LastError { get; init; }
 }
 
+/// <summary>Result of permanently deleting a library track (and optional master twin).</summary>
+public sealed class TrackDeleteResult
+{
+    public bool Ok { get; init; }
+    public string Path { get; init; } = "";
+    public string? Title { get; init; }
+    public string? Artist { get; init; }
+    public string? MasterPath { get; init; }
+    public bool SonosDeleted { get; init; }
+    public bool MasterDeleted { get; init; }
+    public string Message { get; init; } = "";
+    public string? Error { get; init; }
+}
+
 /// <summary>
 /// Writes tags into FLAC (Vorbis / Xiph) and MP3 (ID3v2) without re-encoding audio.
 /// HotSonos field: <see cref="LibraryTagReader.TagsField"/> = semicolon-separated opaque keys.

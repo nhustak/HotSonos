@@ -70,15 +70,15 @@
             <!-- ========== Control ========== -->
             <TabItem x:Name="ControlTab" Header="Control">
                 <!--
-                  Row0 Auto: shuffle/level | target room
-                  Row1 *: Speakers grow with window (push play list down); scroll only when many devices
-                  Row2 *: Play tags/playlists take remaining height (min keeps list usable)
+                  Row0 Auto: shuffle / level / now playing
+                  Row1 Auto: speakers size to content (no empty stretch, no scrollbar unless constrained)
+                  Row2 *: play list gets all leftover height; scrollbar only when items overflow
                 -->
                 <Grid Margin="16,12,16,8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" MinHeight="88" />
-                        <RowDefinition Height="*" MinHeight="180" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" MinHeight="120" />
                     </Grid.RowDefinitions>
 
                     <Grid Grid.Row="0">
@@ -94,7 +94,7 @@
                                 <StackPanel>
                                     <TextBlock Text="🔀 Shuffle" FontSize="15" FontWeight="SemiBold"
                                                Foreground="#FF1C2536" />
-                                    <TextBlock Text="Pick All (whole library), a tag, or a genre — then start. History-aware top-up applies to full-library shuffle."
+                                    <TextBlock Text="Pick All (Daily mix), a library folder, a tag, or a genre — then start. Folder mode stays in that folder for top-up."
                                                Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="From" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold" />
@@ -104,12 +104,6 @@
                                         <Button Content="🔀  Start shuffle now" Height="32" Padding="14,0" Margin="0,0,12,0"
                                                 Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
                                                 Click="ShuffleLibraryButton_Click" />
-                                        <TextBlock Text="Hotkey" VerticalAlignment="Center" Margin="0,0,6,0"
-                                                   ToolTip="Always full library shuffle (All)" />
-                                        <TextBox x:Name="ShuffleHotkeyBox" Style="{StaticResource HotkeyBox}" Width="110"
-                                                 PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus"
-                                                 ToolTip="Always full library shuffle (All)" />
-                                        <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="Shuffle" Click="ClearHotkey_Click" />
                                     </StackPanel>
                                     <Separator Margin="0,12,0,10" Background="#FF2ECC71" Opacity="0.4" />
                                     <TextBlock Text="🔄 Restart fresh" FontSize="15" FontWeight="SemiBold" Foreground="#FF1C2536" />
@@ -119,11 +113,9 @@
                                         <Button Content="🔄  Restart fresh now" Height="32" Padding="14,0" Margin="0,0,12,0"
                                                 Background="#FF1C8E54" Foreground="White" FontWeight="SemiBold"
                                                 Click="FreshStartButton_Click" />
-                                        <TextBlock Text="Hotkey" VerticalAlignment="Center" Margin="8,0,6,0" />
-                                        <TextBox x:Name="FreshStartHotkeyBox" Style="{StaticResource HotkeyBox}" Width="130"
-                                                 PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
-                                        <Button Content="Clear" Margin="8,0" Padding="8,0" Tag="FreshStart" Click="ClearHotkey_Click" />
                                     </StackPanel>
+                                    <TextBlock Text="Global hotkeys for shuffle / restart / transport: Hotkeys tab."
+                                               Foreground="#FF60707F" FontSize="11" Margin="0,10,0,0" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
 
@@ -142,6 +134,62 @@
                         <Border Grid.Column="1" Width="1" Background="#FFD8DEE4" Margin="0,4" HorizontalAlignment="Center" />
 
                         <StackPanel Grid.Column="2">
+                            <Border Background="#FFF4F7FA" BorderBrush="#FFD8DEE4" BorderThickness="1"
+                                    CornerRadius="6" Padding="12,10" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="Now playing" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                    <DockPanel LastChildFill="True">
+                                        <Border DockPanel.Dock="Left" Width="72" Height="72" Margin="0,0,10,0"
+                                                Background="#FFE8EEF2" CornerRadius="4" ClipToBounds="True">
+                                            <Image x:Name="ControlNowPlayingArt"
+                                                   Stretch="UniformToFill"
+                                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock x:Name="ControlNowPlayingTitle"
+                                                       Text="Nothing playing"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" Foreground="#FF1C2536" />
+                                            <TextBlock x:Name="ControlNowPlayingArtist"
+                                                       Text=""
+                                                       FontSize="11" Margin="0,2,0,0"
+                                                       TextWrapping="Wrap" Foreground="#FF60707F" />
+                                            <TextBlock x:Name="ControlNowPlayingState"
+                                                       Text=""
+                                                       FontSize="11" Margin="0,4,0,0"
+                                                       Foreground="#FF1C8E54" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0" HorizontalAlignment="Left">
+                                        <Button Content="⏮" Width="36" Height="30" FontSize="14" Margin="0,0,6,0"
+                                                Click="ControlTransportPrevious_Click"
+                                                ToolTip="Previous track" />
+                                        <Button x:Name="ControlTransportPlayPauseButton"
+                                                Content="⏯" Width="44" Height="30" FontSize="14" Margin="0,0,6,0"
+                                                FontWeight="SemiBold"
+                                                Background="#FF2ECC71" Foreground="White"
+                                                Click="ControlTransportPlayPause_Click"
+                                                ToolTip="Play / Pause" />
+                                        <Button Content="⏭" Width="36" Height="30" FontSize="14" Margin="0,0,6,0"
+                                                Click="ControlTransportNext_Click"
+                                                ToolTip="Next track" />
+                                        <Button Content="🗑" Width="32" Height="30" FontSize="12" Margin="12,0,0,0"
+                                                Click="ControlDeleteNowPlaying_Click"
+                                                ToolTip="Delete current track from disk (Sonos + master when linked)" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0" HorizontalAlignment="Left">
+                                        <Button Content="−" Width="36" Height="28" FontSize="16" Margin="0,0,6,0"
+                                                Click="ControlTransportVolDown_Click"
+                                                ToolTip="Volume down" />
+                                        <Button Content="+" Width="36" Height="28" FontSize="16" Margin="0,0,6,0"
+                                                Click="ControlTransportVolUp_Click"
+                                                ToolTip="Volume up" />
+                                        <Button Content="Mute" Height="28" Padding="10,0" Margin="0,0,6,0"
+                                                Click="ControlTransportMute_Click"
+                                                ToolTip="Mute toggle" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
                             <TextBlock Text="Target room / group" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
                             <ComboBox x:Name="RoomComboBox" Height="28"
                                       VerticalContentAlignment="Center"
@@ -153,41 +201,34 @@
                         </StackPanel>
                     </Grid>
 
-                    <!-- Speakers: full width, shares vertical space with play list (grows when window tall) -->
+                    <!-- Speakers: height = content only (no star stretch / empty white space) -->
                     <Border Grid.Row="1" Margin="0,12,0,0" Background="White"
-                            BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="6" Padding="12,10">
-                        <DockPanel LastChildFill="True">
-                            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-                                <TextBlock Text="Speakers" FontSize="15" FontWeight="SemiBold" />
-                                <TextBlock Text="Drag volume; check to mute. List grows with available height."
-                                           Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
-                            </StackPanel>
-                            <ScrollViewer VerticalScrollBarVisibility="Auto"
-                                          HorizontalScrollBarVisibility="Disabled">
-                                <StackPanel x:Name="SpeakersPanel" />
-                            </ScrollViewer>
-                        </DockPanel>
+                            BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="6" Padding="12,8"
+                            VerticalAlignment="Top">
+                        <StackPanel>
+                            <TextBlock Text="Speakers" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <StackPanel x:Name="SpeakersPanel" />
+                        </StackPanel>
                     </Border>
 
-                    <!-- Tags + Sonos favorites/playlists — remaining height; list scrolls inside -->
+                    <!-- Play list: all leftover height; scrollbar only when items don't fit -->
                     <Border Grid.Row="2" Margin="0,12,0,0" Background="White"
-                            BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="6" Padding="12,10">
+                            BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="6" Padding="12,8">
                         <DockPanel LastChildFill="True">
-                            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="Play tags, genres &amp; Sonos playlists" FontSize="15" FontWeight="SemiBold"
+                                    <TextBlock Text="Play folders, tags, genres &amp; Sonos playlists" FontSize="15" FontWeight="SemiBold"
                                                VerticalAlignment="Center" />
-                                    <Button Content="Refresh list" Height="28" Padding="12,0" Margin="12,0,0,0"
+                                    <Button x:Name="ControlPlayListRefreshButton" Content="Refresh list" Height="28" Padding="12,0" Margin="12,0,0,0"
                                             Click="ControlPlayListRefresh_Click" />
                                 </StackPanel>
-                                <TextBlock x:Name="ControlPlayListHint"
-                                           Text="Tags and genres shuffle matching library tracks (top-up into house shuffle if enabled). Sonos rows play favorites/playlists."
-                                           Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                <TextBlock x:Name="ControlPlayListStatus"
+                                           Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Text="" />
                             </StackPanel>
-                            <TextBlock x:Name="ControlPlayListStatus" DockPanel.Dock="Bottom"
-                                       Foreground="#FF60707F" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"
-                                       Text="" />
                             <ListBox x:Name="ControlPlayListBox"
+                                     MaxWidth="520"
+                                     HorizontalAlignment="Left"
                                      BorderThickness="0" Background="Transparent"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
@@ -196,36 +237,36 @@
                                      VirtualizingPanel.VirtualizationMode="Recycling">
                                 <ListBox.ItemContainerStyle>
                                     <Style TargetType="ListBoxItem">
-                                        <Setter Property="Padding" Value="0,2" />
+                                        <Setter Property="Padding" Value="0,1" />
                                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                                         <Setter Property="Focusable" Value="False" />
                                     </Style>
                                 </ListBox.ItemContainerStyle>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
+                                        <!-- One line per source — denser list, less scrolling -->
                                         <Border Background="#FFF4F7FA" BorderBrush="#FFE0E6EC" BorderThickness="1"
-                                                CornerRadius="6" Padding="10,8" Margin="0,2">
+                                                CornerRadius="4" Padding="8,4" Margin="0,1">
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="72" />
+                                                    <ColumnDefinition Width="64" />
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
                                                 <Border Grid.Column="0" Background="#FFE8F8EF" CornerRadius="4"
-                                                        Padding="6,2" VerticalAlignment="Center" HorizontalAlignment="Left">
+                                                        Padding="6,1" VerticalAlignment="Center" HorizontalAlignment="Left">
                                                     <TextBlock Text="{Binding KindLabel}" FontSize="11" FontWeight="SemiBold"
                                                                Foreground="#FF1C8E54" />
                                                 </Border>
-                                                <StackPanel Grid.Column="1" Margin="10,0,10,0" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13"
-                                                               TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{Binding Detail}" Foreground="#FF60707F" FontSize="11"
-                                                               TextTrimming="CharacterEllipsis" />
-                                                </StackPanel>
-                                                <Button Grid.Column="2" Content="▶ Play" Height="30" MinWidth="72"
-                                                        Padding="12,0" VerticalAlignment="Center"
+                                                <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold"
+                                                           FontSize="13" VerticalAlignment="Center" Margin="8,0,8,0"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip="{Binding Detail}" />
+                                                <Button Grid.Column="2" Content="▶" Height="26" MinWidth="40"
+                                                        Padding="8,0" VerticalAlignment="Center"
                                                         Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
                                                         Tag="{Binding}"
+                                                        ToolTip="Play"
                                                         Click="ControlPlayItem_Click" />
                                             </Grid>
                                         </Border>
@@ -241,12 +282,39 @@
             <TabItem Header="Hotkeys">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12,16,8">
                     <StackPanel MaxWidth="640" HorizontalAlignment="Left">
-                        <TextBlock Text="Transport" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
-                        <TextBlock Text="Click a box and press your key combo. Esc clears."
-                                   Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
+                        <TextBlock Text="All global hotkeys live here. Click a box and press your key combo. Esc clears."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap" />
+
+                        <TextBlock Text="Library / house" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
                         <Grid>
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="140" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Shuffle library" VerticalAlignment="Center" Margin="0,4"
+                                       ToolTip="Daily mix (All) → all speakers" />
+                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="ShuffleHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus"
+                                     ToolTip="Daily mix house shuffle (same as Control Start shuffle when From is All)" />
+                            <Button Grid.Row="0" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="Shuffle"
+                                    Click="ClearHotkey_Click" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Restart fresh" VerticalAlignment="Center" Margin="0,4"
+                                       ToolTip="Re-discover, regroup, new shuffle" />
+                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="FreshStartHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Margin="0,4" PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus" />
+                            <Button Grid.Row="1" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="FreshStart"
+                                    Click="ClearHotkey_Click" />
+                        </Grid>
+
+                        <TextBlock Text="Transport" Style="{StaticResource SectionHeader}" Margin="0,12,0,6" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="140" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
@@ -275,7 +343,7 @@
                         <TextBlock Text="Volume (all speakers)" Style="{StaticResource SectionHeader}" />
                         <Grid>
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="140" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
@@ -327,7 +395,7 @@
                             <Button Grid.Row="5" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="QuickPlay"
                                     Click="ClearHotkey_Click" />
                             <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
-                                <TextBlock Text="Step per press (%)" VerticalAlignment="Center" Width="120" />
+                                <TextBlock Text="Step per press (%)" VerticalAlignment="Center" Width="140" />
                                 <TextBox x:Name="VolumeStepBox" Width="50" Padding="6,4" VerticalContentAlignment="Center" />
                             </StackPanel>
                         </Grid>
@@ -482,17 +550,98 @@
                         </StackPanel>
                     </Border>
 
-                    <Expander Grid.Row="1" Header="Library paths (Sonos share + optional master)" Margin="0,0,0,10"
-                              IsExpanded="False" HorizontalAlignment="Left" MaxWidth="640">
+                    <Expander x:Name="LibraryPathsExpander" Grid.Row="1" Header="Library paths (Sonos share + master mappings)" Margin="0,0,0,10"
+                              IsExpanded="False" HorizontalAlignment="Left" MaxWidth="520">
                         <StackPanel Margin="0,8,0,0">
-                            <TextBlock Text="Sonos library root(s) — one path per line; usually filled by Discover from Sonos."
-                                       Foreground="#FF60707F" FontSize="11" Margin="0,0,0,4" TextWrapping="Wrap" />
-                            <TextBox x:Name="SonosLibraryRootsBox" MinHeight="48" Width="520" HorizontalAlignment="Left"
-                                     AcceptsReturn="True" TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto" Padding="6,4" />
-                            <TextBlock Text="Master library root (optional)" FontWeight="SemiBold" Margin="0,8,0,4" />
-                            <TextBox x:Name="MasterLibraryRootBox" Height="26" Width="520" HorizontalAlignment="Left"
-                                     Padding="6,4" VerticalContentAlignment="Center" />
+                            <TextBlock Text="Music library folders"
+                                       FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <TextBlock Text="Use Discover to pull folders from Sonos, or Add folder. Check Daily for every folder that should be in house shuffle (you can check more than one). Unchecked folders stay out of Daily."
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" MaxWidth="520" />
+
+                            <ListView x:Name="LibraryFoldersList" Width="520" Height="140" HorizontalAlignment="Left"
+                                      BorderBrush="#FFD0D7DE" BorderThickness="1"
+                                      SelectionMode="Extended"
+                                      ToolTip="Select one or more rows, then Remove. Check Daily on as many folders as you want in the house mix.">
+                                <ListView.View>
+                                    <GridView>
+                                        <GridViewColumn Header="Daily" Width="44">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox IsChecked="{Binding InDaily, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              HorizontalAlignment="Center"
+                                                              ToolTip="Include in All / hotkey library shuffle" />
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <GridViewColumn Header="" Width="64">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Content="🔀" Height="24" MinWidth="36" Padding="4,0" FontSize="12"
+                                                            Tag="{Binding}"
+                                                            Click="LibraryFolderShuffle_Click"
+                                                            ToolTip="History-aware shuffle of this folder only (top-up stays here)" />
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <GridViewColumn Header="Folder" Width="100"
+                                                        DisplayMemberBinding="{Binding DisplayName}" />
+                                        <GridViewColumn Header="Path" Width="280"
+                                                        DisplayMemberBinding="{Binding Path}" />
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <Button Content="Add folder…" Height="28" Padding="12,0" Margin="0,0,8,0"
+                                        Click="LibraryFolderAdd_Click"
+                                        ToolTip="Browse for a music folder to include in the library list" />
+                                <Button Content="Remove selected" Height="28" Padding="12,0"
+                                        Click="LibraryFolderRemove_Click"
+                                        ToolTip="Remove the selected folder(s) from this list" />
+                            </StackPanel>
+
+                            <TextBlock Text="Master mappings (optional)" FontWeight="SemiBold" Margin="0,14,0,4" />
+                            <TextBlock Text="Link a hi-res master folder to a library folder for tag dual-write. Pick from the list — no path typing required."
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" MaxWidth="520" />
+
+                            <ListBox x:Name="MasterMappingsList" Width="520" Height="72" HorizontalAlignment="Left"
+                                     BorderBrush="#FFD0D7DE" BorderThickness="1" Padding="2"
+                                     SelectionChanged="MasterMappingsList_SelectionChanged"
+                                     ToolTip="Select a row to edit, or remove it." />
+
+                            <Grid Margin="0,8,0,0" Width="520" HorizontalAlignment="Left">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Library folder" VerticalAlignment="Center"
+                                           Margin="0,0,8,6" FontSize="12" />
+                                <ComboBox x:Name="MasterMapSonosCombo" Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2"
+                                          Height="28" Margin="0,0,0,6" IsEditable="False"
+                                          DisplayMemberPath="DisplayName"
+                                          ToolTip="Choose a library folder from the list above" />
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Master folder" VerticalAlignment="Center"
+                                           Margin="0,0,8,6" FontSize="12" />
+                                <TextBox x:Name="MasterMapMasterBox" Grid.Row="1" Grid.Column="1" Height="28"
+                                         Margin="0,0,8,6" Padding="6,4" VerticalContentAlignment="Center"
+                                         IsReadOnly="True"
+                                         ToolTip="Hi-res archive root — use Browse" />
+                                <Button Grid.Row="1" Grid.Column="2" Content="Browse…" Height="28" Padding="10,0"
+                                        Margin="0,0,0,6" Click="MasterMapBrowseMaster_Click" />
+                                <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal">
+                                    <Button Content="Add / update" Height="28" Padding="12,0" Margin="0,0,8,0"
+                                            Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                            Click="MasterMapAddUpdate_Click" />
+                                    <Button Content="Remove selected" Height="28" Padding="12,0"
+                                            Click="MasterMapRemove_Click" />
+                                </StackPanel>
+                            </Grid>
                         </StackPanel>
                     </Expander>
 
@@ -564,6 +713,10 @@
                         <DataGrid.ContextMenu>
                             <ContextMenu Opened="LibraryContextMenu_Opened">
                                 <MenuItem x:Name="LibraryApplyPresetMenu" Header="Toggle tag…" />
+                                <Separator />
+                                <MenuItem Header="Delete track(s) from disk…"
+                                          Click="LibraryDeleteTracks_Click"
+                                          Foreground="#FFB00020" />
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
@@ -584,6 +737,10 @@
                                       VerticalAlignment="Center" Margin="0,0,12,0" />
                             <Button Content="Show unplayable" Height="26" Padding="10,0"
                                     Click="LibraryUnplayableButton_Click" />
+                            <Button Content="Delete selected…" Height="26" Padding="10,0" Margin="12,0,0,0"
+                                    Foreground="#FFB00020"
+                                    Click="LibraryDeleteTracks_Click"
+                                    ToolTip="Permanently delete selected files from the Sonos library share (and master twin when linked). Not a hotkey." />
                         </StackPanel>
                         <TextBlock x:Name="LibraryResultsMetaText" Foreground="#FF60707F" FontSize="11"
                                    Text="Search: free text, or T:title · A:artist · TG:tag · F:flac (one prefix). Tags chips toggle on selection." />
