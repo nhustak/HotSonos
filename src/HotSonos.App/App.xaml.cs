@@ -35,6 +35,10 @@ public partial class App : System.Windows.Application
     private LibraryService? _library;
     private System.Threading.Timer? _pendingTagTimer;
     private readonly SemaphoreSlim _actionGate = new(1, 1);
+
+    /// <summary>Coalesced ±volume while gate/Sonos is slow — never one hotkey = one queued full action.</summary>
+    private int _pendingVolumeDelta;
+    private int _volumeDrainRunning; // 0/1
     private bool _isExiting;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -203,6 +207,7 @@ public partial class App : System.Windows.Application
                 OpenSettings: ShowMainWindow,
                 OpenMcpDebug: () => ShowMainWindowTab("mcp"),
                 OpenLibrary: () => ShowMainWindowTab("library"),
+                OpenTopology: () => ShowMainWindowTab("topology"),
                 Refresh: OnTrayRefresh,
                 FreshStart: () => _ = ExecuteActionAsync(HotsonosAction.FreshStart),
                 ShuffleLibrary: () => _ = ExecuteActionAsync(HotsonosAction.ShuffleLibrary),
@@ -631,14 +636,26 @@ public partial class App : System.Windows.Application
         action is HotsonosAction.VolumeUp or HotsonosAction.VolumeDown
             or HotsonosAction.Mute or HotsonosAction.LevelVolumes;
 
+    private static bool IsVolumeStepAction(HotsonosAction action) =>
+        action is HotsonosAction.VolumeUp or HotsonosAction.VolumeDown;
+
     private async Task ExecuteActionAsync(HotsonosAction action)
     {
         // User volume control cancels an in-progress wake ramp (they take over).
         if (IsVolumeAction(action) && _wake?.IsActive == true)
             _wake.Cancel();
 
+        // Volume ± must NOT queue N separate actions behind a slow gate/topology storm.
+        // That is what walked volume to 100%: each held keypress became +step after lag.
+        // Coalesce into one pending delta (hard-capped) and apply once.
+        if (IsVolumeStepAction(action))
+        {
+            QueueVolumeStep(action == HotsonosAction.VolumeUp ? 1 : -1);
+            return;
+        }
+
         // Exclusive actions refuse re-entry immediately so a double hotkey cannot
-        // interleave two shuffles. Other actions wait their turn so volume/skip
+        // interleave two shuffles. Other actions wait their turn so skip/mute
         // still run after a long shuffle finishes.
         if (IsExclusiveAction(action))
         {
@@ -685,6 +702,70 @@ public partial class App : System.Windows.Application
         }
     }
 
+    /// <summary>
+    /// Accumulates volume hotkeys into a single bounded delta. Cap prevents
+    /// "mash during lag → jump to 100%" even if many key events fire.
+    /// </summary>
+    private void QueueVolumeStep(int direction)
+    {
+        var step = Math.Max(1, _settings.EnsureShape().VolumeStep);
+        var add = direction >= 0 ? step : -step;
+        // At most ~4 steps of credit while delayed (e.g. step 5 → ±20%).
+        var maxPend = Math.Clamp(step * 4, 10, 20);
+
+        while (true)
+        {
+            var cur = Volatile.Read(ref _pendingVolumeDelta);
+            var next = Math.Clamp(cur + add, -maxPend, maxPend);
+            if (Interlocked.CompareExchange(ref _pendingVolumeDelta, next, cur) == cur)
+                break;
+        }
+
+        _ = DrainPendingVolumeAsync();
+    }
+
+    private async Task DrainPendingVolumeAsync()
+    {
+        if (Interlocked.CompareExchange(ref _volumeDrainRunning, 1, 0) != 0)
+            return;
+
+        try
+        {
+            while (true)
+            {
+                var delta = Interlocked.Exchange(ref _pendingVolumeDelta, 0);
+                if (delta == 0)
+                    break;
+
+                // Never wait on the shared action gate — shuffle/topology work must not delay volume.
+                try
+                {
+                    var pct = await _sonos.AdjustVolumeByAsync(delta).ConfigureAwait(false);
+                    var toast = pct > 0 ? $"🔊 Volume {pct}%" : "🔊 Volume adjusted";
+                    // Toast only — no AppLog per press (disk I/O added lag under spam).
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                            EnsureFlyout().ShowAction(toast);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error("Volume delta failed", ex);
+                    await Dispatcher.InvokeAsync(() =>
+                        EnsureFlyout().ShowAction($"Sonos error: {ex.Message}"));
+                }
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _volumeDrainRunning, 0);
+            // More keypresses arrived during the last apply — drain again.
+            if (Volatile.Read(ref _pendingVolumeDelta) != 0)
+                _ = DrainPendingVolumeAsync();
+        }
+    }
+
     private NowPlayingFlyout EnsureFlyout()
     {
         if (_flyout is null)
@@ -696,8 +777,75 @@ public partial class App : System.Windows.Application
         return _flyout;
     }
 
-    private void OnTopologyChanged() =>
-        Dispatcher.InvokeAsync(UpdateTrayDynamic);
+    private CancellationTokenSource? _keepHouseGroupedCts;
+    private int _keepHouseGroupedInFlight; // 0/1
+    private DateTime _keepHouseGroupedLastUtc = DateTime.MinValue;
+
+    private void OnTopologyChanged()
+    {
+        // Tray only — never do SOAP/regroup/UI map work on the GENA thread path.
+        Dispatcher.BeginInvoke(UpdateTrayDynamic);
+        MaybeScheduleKeepHouseGrouped();
+    }
+
+    /// <summary>
+    /// Optional (settings off by default). Debounced + 60s cooldown. One GroupAll only —
+    /// no refresh/retry storm (that delayed audio when topology flapped).
+    /// </summary>
+    private void MaybeScheduleKeepHouseGrouped()
+    {
+        if (!_settings.EnsureShape().KeepHouseGrouped)
+            return;
+        if (_sonos.Groups.Count <= 1)
+            return;
+        if ((DateTime.UtcNow - _keepHouseGroupedLastUtc).TotalSeconds < 60)
+            return;
+
+        try { _keepHouseGroupedCts?.Cancel(); } catch { /* ignore */ }
+        _keepHouseGroupedCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _keepHouseGroupedCts = cts;
+        _ = KeepHouseGroupedAfterDelayAsync(cts.Token);
+    }
+
+    private async Task KeepHouseGroupedAfterDelayAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(8000, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested)
+                return;
+            if (!_settings.EnsureShape().KeepHouseGrouped)
+                return;
+            if (_sonos.Groups.Count <= 1)
+                return;
+            if ((DateTime.UtcNow - _keepHouseGroupedLastUtc).TotalSeconds < 60)
+                return;
+            if (System.Threading.Interlocked.CompareExchange(ref _keepHouseGroupedInFlight, 1, 0) != 0)
+                return;
+
+            try
+            {
+                var split = string.Join(" | ", _sonos.Groups.Select(g => g.DisplayName));
+                AppLog.Info($"KeepHouseGrouped: {_sonos.Groups.Count} group(s) ({split}) — auto-regrouping (once)");
+                _keepHouseGroupedLastUtc = DateTime.UtcNow;
+                await _sonos.GroupAllSpeakersAsync(ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                System.Threading.Interlocked.Exchange(ref _keepHouseGroupedInFlight, 0);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            /* debounce superseded */
+        }
+        catch (Exception ex)
+        {
+            System.Threading.Interlocked.Exchange(ref _keepHouseGroupedInFlight, 0);
+            AppLog.Warn("KeepHouseGrouped auto-regroup failed", ex);
+        }
+    }
 
     private void OnSpeakerAvailabilityChanged(string room, bool isOnline) =>
         Dispatcher.InvokeAsync(async () =>
@@ -862,9 +1010,28 @@ public partial class App : System.Windows.Application
         else
             _mainWindow.RefreshDevicesInBackground(); // already open: still re-discover
 
+        BringMainWindowToFront();
+    }
+
+    /// <summary>
+    /// Force the main window above other apps. Plain <see cref="Window.Activate"/> is often
+    /// ignored by Windows when focus is elsewhere (tray click is a common case).
+    /// </summary>
+    private void BringMainWindowToFront()
+    {
+        if (_mainWindow is null)
+            return;
+
+        if (!_mainWindow.IsVisible)
+            _mainWindow.Show();
+
         if (_mainWindow.WindowState == WindowState.Minimized)
             _mainWindow.WindowState = WindowState.Normal;
+
         _mainWindow.Activate();
+        _mainWindow.Topmost = true;
+        _mainWindow.Topmost = false;
+        _mainWindow.Focus();
     }
 
     /// <summary>Open main window on a specific tab (settings | library | mcp).</summary>

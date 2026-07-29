@@ -120,7 +120,7 @@
                             </Border>
 
                             <TextBlock Text="Level all speakers" Style="{StaticResource SectionHeader}" Margin="0,4,0,6" />
-                            <TextBlock Text="Set every speaker to the same volume and unmute."
+                            <TextBlock Text="Set every speaker to the same house level and unmute. Per-room Offsets (Speakers list) are added for amp/Port calibration — e.g. level 20 + offset 60 → 80% on that room."
                                        Foreground="#FF60707F" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="Level (%)" VerticalAlignment="Center" Width="80" />
@@ -206,7 +206,9 @@
                             BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="6" Padding="12,8"
                             VerticalAlignment="Top">
                         <StackPanel>
-                            <TextBlock Text="Speakers" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <TextBlock Text="Speakers" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,2" />
+                            <TextBlock Text="Sliders = raw Sonos %. Offset is added only on Level all and Wake absolute levels."
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
                             <StackPanel x:Name="SpeakersPanel" />
                         </StackPanel>
                     </Border>
@@ -921,6 +923,95 @@
                                    Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
                     </StackPanel>
                 </ScrollViewer>
+            </TabItem>
+
+            <!-- ========== Topology monitor (rooms / Sub / Port in-out) ========== -->
+            <TabItem x:Name="TopologyTab" Header="Topology">
+                <Grid Margin="16,12,16,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" MinHeight="160" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="120" />
+                        <RowDefinition Height="90" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="#FFEEF2F7" CornerRadius="6" Padding="12" Margin="0,0,0,8"
+                            BorderBrush="#FFC5D0DC" BorderThickness="1">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Speaker / Sub / Port map" FontSize="15" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <CheckBox x:Name="TopologyMonitorEnabledCheck" Content="Monitor ON"
+                                          VerticalAlignment="Center" Margin="16,0,0,0" FontWeight="SemiBold"
+                                          ToolTip="When OFF (default): no bonded-Sub parse, no event log spam, no map diffs on every Sonos push. Turn ON only to debug group flaps."
+                                          Checked="TopologyMonitorEnabledCheck_Changed"
+                                          Unchecked="TopologyMonitorEnabledCheck_Changed" />
+                                <CheckBox x:Name="TopologyAutoScrollCheck" Content="Auto-scroll events" IsChecked="True"
+                                          VerticalAlignment="Center" Margin="12,0,0,0" />
+                                <Button Content="Refresh now" Height="28" Padding="12,0" Margin="12,0,0,0"
+                                        Click="TopologyRefresh_Click"
+                                        ToolTip="Pull topology from Sonos and redraw map (requires Monitor ON for full map)" />
+                                <Button x:Name="TopologyRegroupButton" Content="Regroup all" Height="28" Padding="12,0" Margin="8,0,0,0"
+                                        Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                        Click="TopologyRegroup_Click"
+                                        ToolTip="Pull every speaker into the active group (does not restart shuffle)" />
+                                <Button Content="Open log file" Height="28" Padding="12,0" Margin="8,0,0,0"
+                                        Click="TopologyOpenLog_Click" />
+                            </StackPanel>
+                            <TextBlock x:Name="TopologySummaryText" Text="Monitor OFF — not logging topology events (system stays light)."
+                                       Foreground="#FF1C2536" FontSize="12" Margin="0,8,0,4" TextWrapping="Wrap"
+                                       FontWeight="SemiBold" />
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                <Border Background="#FFE8F8EF" BorderBrush="#FF2ECC71" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
+                                    <TextBlock Text="Green = main/playing group" FontSize="10" Foreground="#FF1C8E54" />
+                                </Border>
+                                <Border Background="#FFFFF4E5" BorderBrush="#FFE6A23C" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
+                                    <TextBlock Text="Amber = solo / not in house" FontSize="10" Foreground="#FFB8821A" />
+                                </Border>
+                                <Border Background="#FFFDECEC" BorderBrush="#FFE74C3C" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
+                                    <TextBlock Text="Red = offline / vanished" FontSize="10" Foreground="#FFC0392B" />
+                                </Border>
+                                <Border Background="#FFE8EEF8" BorderBrush="#FF5B7C99" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
+                                    <TextBlock Text="Blue chip = Sub / bonded" FontSize="10" Foreground="#FF3D5A80" />
+                                </Border>
+                                <Border Background="#FFF3E8FA" BorderBrush="#FF9B59B6" BorderThickness="1" CornerRadius="3" Padding="6,2">
+                                    <TextBlock Text="Purple chip = Port / Theater" FontSize="10" Foreground="#FF7D3C98" />
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Graphical group map -->
+                    <Border Grid.Row="1" Background="White" BorderBrush="#FFD8DEE4" BorderThickness="1"
+                            CornerRadius="6" Margin="0,0,0,8" Padding="8">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <WrapPanel x:Name="TopologyMapPanel" Orientation="Horizontal" />
+                        </ScrollViewer>
+                    </Border>
+
+                    <TextBlock Grid.Row="2" Text="Event trail (newest at bottom)" FontWeight="SemiBold"
+                               Margin="0,0,0,4" />
+                    <ListBox x:Name="TopologyEventList" Grid.Row="3"
+                             BorderBrush="#FFD8DEE4" BorderThickness="1" Background="White"
+                             FontFamily="Consolas" FontSize="11"
+                             SelectionChanged="TopologyEventList_SelectionChanged"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding HeaderLine}" TextWrapping="Wrap" Margin="2,1"
+                                           Foreground="#FF1C2536" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <GroupBox Grid.Row="4" Header="Selected event" Margin="0,6,0,0" Padding="4">
+                        <TextBox x:Name="TopologyDetailBox" IsReadOnly="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas" FontSize="11" BorderThickness="0"
+                                 Background="Transparent" />
+                    </GroupBox>
+                </Grid>
             </TabItem>
 
             <!-- ========== MCP Debug ========== -->

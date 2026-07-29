@@ -14,6 +14,7 @@ public sealed class TrayController : IDisposable
         Action OpenSettings,
         Action OpenMcpDebug,
         Action OpenLibrary,
+        Action OpenTopology,
         Action Refresh,
         Action FreshStart,
         Action ShuffleLibrary,
@@ -55,6 +56,7 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Open HotSonos", null, (_, _) => _callbacks.OpenSettings());
         _menu.Items.Add("Library…", null, (_, _) => _callbacks.OpenLibrary());
+        _menu.Items.Add("Topology monitor…", null, (_, _) => _callbacks.OpenTopology());
         _menu.Items.Add("MCP Debug…", null, (_, _) => _callbacks.OpenMcpDebug());
         _menu.Items.Add("Refresh devices", null, (_, _) => _callbacks.Refresh());
         _menu.Items.Add(new ToolStripSeparator());
@@ -99,6 +101,12 @@ public sealed class TrayController : IDisposable
         };
         // Double-click primary action is user-configurable (Options → tray double-click).
         _notifyIcon.DoubleClick += (_, _) => _callbacks.DoubleClick();
+        // Single left-click: open / bring main window to front (even if already open).
+        _notifyIcon.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left)
+                _callbacks.OpenSettings();
+        };
     }
 
     /// <summary>

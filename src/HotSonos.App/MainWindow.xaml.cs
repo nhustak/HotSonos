@@ -109,7 +109,7 @@ public partial class MainWindow : Window
         _sonos.NowPlayingChanged += OnControlNowPlayingChanged;
     }
 
-    /// <summary>Select Settings, Library, Tags, or MCP Debug tab by name.</summary>
+    /// <summary>Select Settings, Library, Tags, Topology, or MCP Debug tab by name.</summary>
     public void SelectTab(string tab)
     {
         if (string.Equals(tab, "library", StringComparison.OrdinalIgnoreCase))
@@ -120,6 +120,10 @@ public partial class MainWindow : Window
         else if (string.Equals(tab, "tags", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "tag", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = TagsTab;
+        else if (string.Equals(tab, "topology", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "topo", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "speakers", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedItem = TopologyTab;
         else if (string.Equals(tab, "mcp", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "mcp debug", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = McpTab;
@@ -262,8 +266,10 @@ public partial class MainWindow : Window
         RefreshTagsCatalogGrid();
         StartLibraryStatusTimer();
         HookMcpActivityUi();
+        HookTopologyUi();
         RefreshMcpEndpointUi();
         RefreshMcpActivityList(scrollToEnd: true);
+        RefreshTopologyUi(scrollToEnd: true);
 
         PopulateRooms();
         _ = LoadFavoritesAsync();
@@ -285,6 +291,14 @@ public partial class MainWindow : Window
             McpActivityLog.Changed -= OnMcpActivityChanged;
             McpActivityLog.LibrarySearchPublished -= OnLibrarySearchFromMcp;
             _mcpUiHooked = false;
+        }
+        if (_topologyUiHooked)
+        {
+            _sonos.TopologyEvents.Changed -= OnTopologyEventsChanged;
+            _sonos.TopologyChanged -= OnTopologyUiTopologyChanged;
+            _topologyUiThrottle?.Stop();
+            _topologyUiThrottle = null;
+            _topologyUiHooked = false;
         }
         _libraryStatusTimer?.Stop();
     }
@@ -487,6 +501,499 @@ public partial class MainWindow : Window
         _mcpUiHooked = true;
     }
 
+    private bool _topologyUiHooked;
+    private DispatcherTimer? _topologyUiThrottle;
+    private bool _topologyUiDirty;
+    private bool _topologyUiScrollToEnd;
+
+    private void HookTopologyUi()
+    {
+        if (_topologyUiHooked) return;
+        _sonos.TopologyEvents.Changed += OnTopologyEventsChanged;
+        _sonos.TopologyChanged += OnTopologyUiTopologyChanged;
+        // Coalesce GENA floods: rebuild map at most ~1×/sec, only while Topology tab open AND monitor ON.
+        _topologyUiThrottle = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+        _topologyUiThrottle.Tick += (_, _) =>
+        {
+            if (!_topologyUiDirty) return;
+            _topologyUiDirty = false;
+            if (MainTabs.SelectedItem != TopologyTab) return;
+            if (!_settings.TopologyMonitorEnabled) return;
+            RefreshTopologyUi(scrollToEnd: _topologyUiScrollToEnd);
+            _topologyUiScrollToEnd = false;
+        };
+        _topologyUiThrottle.Start();
+
+        _suppressTopologyMonitorToggle = true;
+        TopologyMonitorEnabledCheck.IsChecked = _settings.TopologyMonitorEnabled;
+        _suppressTopologyMonitorToggle = false;
+        RefreshTopologySummaryOnly();
+
+        _topologyUiHooked = true;
+    }
+
+    private bool _suppressTopologyMonitorToggle;
+
+    private void TopologyMonitorEnabledCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressTopologyMonitorToggle || !_loaded) return;
+        var on = TopologyMonitorEnabledCheck.IsChecked == true;
+        _settings.TopologyMonitorEnabled = on;
+        try
+        {
+            _store.Save(_settings.EnsureShape());
+            AppLog.Info($"Topology monitor {(on ? "ON" : "OFF")}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Could not save TopologyMonitorEnabled", ex);
+        }
+
+        if (on)
+        {
+            SetStatus("Topology monitor ON — logging events (heavier).", warn: false);
+            _ = TopologyRefreshLightAsync();
+        }
+        else
+        {
+            TopologyMapPanel.Children.Clear();
+            TopologyEventList.ItemsSource = null;
+            TopologySummaryText.Text = "Monitor OFF — not logging topology events (system stays light).";
+            SetStatus("Topology monitor OFF.", warn: false);
+        }
+    }
+
+    private async Task TopologyRefreshLightAsync()
+    {
+        try
+        {
+            await _sonos.RefreshAsync(_settings.ActiveRoom);
+            RefreshTopologyUi(scrollToEnd: true);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Topology monitor enable refresh failed", ex);
+        }
+    }
+
+    private void OnTopologyEventsChanged() =>
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_settings.TopologyMonitorEnabled) return;
+            _topologyUiDirty = true;
+            if (TopologyAutoScrollCheck.IsChecked == true)
+                _topologyUiScrollToEnd = true;
+        });
+
+    private void OnTopologyUiTopologyChanged() =>
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_settings.TopologyMonitorEnabled) return;
+            if (MainTabs.SelectedItem != TopologyTab) return;
+            _topologyUiDirty = true;
+        });
+
+    private void RefreshTopologyUi(bool scrollToEnd)
+    {
+        RefreshTopologySummaryOnly();
+        if (!_settings.TopologyMonitorEnabled)
+        {
+            TopologyMapPanel.Children.Clear();
+            TopologyEventList.ItemsSource = null;
+            return;
+        }
+
+        RebuildTopologyMap();
+        var snap = _sonos.TopologyEvents.GetRecent(200);
+        var selected = TopologyEventList.SelectedItem as TopologyEventLog.TopologyEvent;
+        TopologyEventList.ItemsSource = snap;
+        if (selected is not null)
+        {
+            var match = snap.FirstOrDefault(e =>
+                e.Utc == selected.Utc && string.Equals(e.Display, selected.Display, StringComparison.Ordinal));
+            if (match is not null)
+                TopologyEventList.SelectedItem = match;
+        }
+
+        if (scrollToEnd && snap.Count > 0)
+        {
+            TopologyEventList.SelectedItem = snap[^1];
+            TopologyEventList.ScrollIntoView(snap[^1]);
+        }
+    }
+
+    private void RefreshTopologySummaryOnly()
+    {
+        if (!_settings.TopologyMonitorEnabled)
+        {
+            TopologySummaryText.Text =
+                $"Monitor OFF · {_sonos.Groups.Count} group(s) from light discovery · enable Monitor to log Sub/group flaps.";
+            return;
+        }
+
+        var t = _sonos.LastTopology;
+        if (t is null)
+        {
+            TopologySummaryText.Text = "Monitor ON — waiting for topology (Refresh now)…";
+            return;
+        }
+
+        var groups = _sonos.Groups.Select(g => g.DisplayName).ToList();
+        var subs = t.Subs.Select(s => s.DisplayLabel).ToList();
+        var subLine = subs.Count == 0 ? "Sub: (none in topology)" : "Sub: " + string.Join(", ", subs);
+        var van = t.VanishedRooms.Count == 0
+            ? "none offline"
+            : "offline: " + string.Join(", ", t.VanishedRooms);
+        TopologySummaryText.Text =
+            $"Monitor ON · {t.VisibleCount} room(s), {t.InvisibleCount} bonded · {t.GroupCount} group(s): {string.Join(" · ", groups)}  |  {subLine}  |  {van}";
+    }
+
+    /// <summary>
+    /// Builds a card-per-group map: rooms, Sub/bonded (blue), Port/Theater (purple),
+    /// solo groups amber, vanished strip red.
+    /// </summary>
+    private void RebuildTopologyMap()
+    {
+        TopologyMapPanel.Children.Clear();
+        var t = _sonos.LastTopology;
+        if (t is null || t.Members.Count == 0)
+        {
+            TopologyMapPanel.Children.Add(new TextBlock
+            {
+                Text = "No topology yet — click Refresh now.",
+                Foreground = System.Windows.Media.Brushes.Gray,
+                Margin = new Thickness(8),
+                FontSize = 13,
+            });
+            return;
+        }
+
+        var activeCoord = _sonos.ActiveRoom;
+        var groups = t.Members
+            .GroupBy(m => m.GroupId, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count(x => !x.Invisible))
+            .ThenBy(g => g.FirstOrDefault(x => x.IsCoordinator && !x.Invisible)?.RoomName
+                         ?? g.First().RoomName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var g in groups)
+        {
+            var members = g.OrderBy(m => m.Invisible)
+                .ThenByDescending(m => m.IsCoordinator)
+                .ThenBy(m => m.RoomName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var coordName = members.FirstOrDefault(m => m.IsCoordinator && !m.Invisible)?.RoomName
+                            ?? members.FirstOrDefault(m => !m.Invisible)?.RoomName
+                            ?? members[0].RoomName;
+            var visibleCount = members.Count(m => !m.Invisible);
+            var isActive = !string.IsNullOrEmpty(activeCoord)
+                           && members.Any(m =>
+                               !m.Invisible
+                               && string.Equals(m.RoomName, activeCoord, StringComparison.OrdinalIgnoreCase)
+                               && m.IsCoordinator);
+            // Prefer active coordinator match; else largest group is "main" if only one group.
+            if (!isActive && groups.Count == 1)
+                isActive = true;
+            else if (!isActive && !string.IsNullOrEmpty(activeCoord))
+            {
+                isActive = members.Any(m =>
+                    string.Equals(m.RoomName, activeCoord, StringComparison.OrdinalIgnoreCase));
+            }
+
+            var solo = visibleCount <= 1;
+            TopologyMapPanel.Children.Add(BuildTopologyGroupCard(coordName, visibleCount, members, isActive, solo));
+        }
+
+        if (t.VanishedRooms.Count > 0)
+            TopologyMapPanel.Children.Add(BuildTopologyOfflineCard(t.VanishedRooms));
+    }
+
+    private static UIElement BuildTopologyGroupCard(
+        string coordName,
+        int visibleCount,
+        IReadOnlyList<HotSonos.Core.Models.SonosTopologyMember> members,
+        bool isActive,
+        bool solo)
+    {
+        System.Windows.Media.Color border;
+        System.Windows.Media.Color headerBg;
+        System.Windows.Media.Color headerFg;
+        if (isActive)
+        {
+            border = System.Windows.Media.Color.FromRgb(0x2E, 0xCC, 0x71);
+            headerBg = System.Windows.Media.Color.FromRgb(0xE8, 0xF8, 0xEF);
+            headerFg = System.Windows.Media.Color.FromRgb(0x1C, 0x8E, 0x54);
+        }
+        else if (solo)
+        {
+            border = System.Windows.Media.Color.FromRgb(0xE6, 0xA2, 0x3C);
+            headerBg = System.Windows.Media.Color.FromRgb(0xFF, 0xF4, 0xE5);
+            headerFg = System.Windows.Media.Color.FromRgb(0xB8, 0x82, 0x1A);
+        }
+        else
+        {
+            border = System.Windows.Media.Color.FromRgb(0xA0, 0xB0, 0xC0);
+            headerBg = System.Windows.Media.Color.FromRgb(0xF0, 0xF4, 0xF8);
+            headerFg = System.Windows.Media.Color.FromRgb(0x3D, 0x4F, 0x5F);
+        }
+
+        var card = new Border
+        {
+            Width = 200,
+            MinHeight = 100,
+            Margin = new Thickness(0, 0, 10, 10),
+            Padding = new Thickness(0),
+            Background = System.Windows.Media.Brushes.White,
+            BorderBrush = new System.Windows.Media.SolidColorBrush(border),
+            BorderThickness = new Thickness(isActive ? 2.5 : 1.5),
+            CornerRadius = new CornerRadius(8),
+            SnapsToDevicePixels = true,
+        };
+
+        var stack = new StackPanel();
+        var title = visibleCount <= 1
+            ? coordName
+            : $"{coordName} + {visibleCount - 1}";
+        if (isActive)
+            title = "▶ " + title;
+
+        stack.Children.Add(new Border
+        {
+            Background = new System.Windows.Media.SolidColorBrush(headerBg),
+            Padding = new Thickness(10, 8, 10, 8),
+            CornerRadius = new CornerRadius(7, 7, 0, 0),
+            Child = new TextBlock
+            {
+                Text = title,
+                FontWeight = FontWeights.SemiBold,
+                FontSize = 13,
+                Foreground = new System.Windows.Media.SolidColorBrush(headerFg),
+                TextWrapping = TextWrapping.Wrap,
+            },
+        });
+
+        var body = new StackPanel { Margin = new Thickness(8, 6, 8, 8) };
+        foreach (var m in members)
+            body.Children.Add(BuildTopologyMemberChip(m));
+        stack.Children.Add(body);
+        card.Child = stack;
+        return card;
+    }
+
+    private static UIElement BuildTopologyMemberChip(HotSonos.Core.Models.SonosTopologyMember m)
+    {
+        var isSub = m.Invisible
+                    && (string.Equals(m.ChannelRole, "SW", StringComparison.OrdinalIgnoreCase)
+                        || m.RoomName.Contains("Sub", StringComparison.OrdinalIgnoreCase));
+        var isPort = !m.Invisible
+                     && (m.RoomName.Contains("Theater", StringComparison.OrdinalIgnoreCase)
+                         || m.RoomName.Contains("Port", StringComparison.OrdinalIgnoreCase)
+                         || m.RoomName.Contains("Media", StringComparison.OrdinalIgnoreCase));
+        var isBonded = m.Invisible && !isSub;
+
+        System.Windows.Media.Color bg, fg, edge;
+        string prefix;
+        if (isSub)
+        {
+            bg = System.Windows.Media.Color.FromRgb(0xE8, 0xEE, 0xF8);
+            fg = System.Windows.Media.Color.FromRgb(0x3D, 0x5A, 0x80);
+            edge = System.Windows.Media.Color.FromRgb(0x5B, 0x7C, 0x99);
+            prefix = "🔊 ";
+        }
+        else if (isPort)
+        {
+            bg = System.Windows.Media.Color.FromRgb(0xF3, 0xE8, 0xFA);
+            fg = System.Windows.Media.Color.FromRgb(0x7D, 0x3C, 0x98);
+            edge = System.Windows.Media.Color.FromRgb(0x9B, 0x59, 0xB6);
+            prefix = "🔌 ";
+        }
+        else if (isBonded)
+        {
+            bg = System.Windows.Media.Color.FromRgb(0xE8, 0xEE, 0xF8);
+            fg = System.Windows.Media.Color.FromRgb(0x3D, 0x5A, 0x80);
+            edge = System.Windows.Media.Color.FromRgb(0x5B, 0x7C, 0x99);
+            prefix = "⛓ ";
+        }
+        else if (m.IsCoordinator)
+        {
+            bg = System.Windows.Media.Color.FromRgb(0xF4, 0xF7, 0xFA);
+            fg = System.Windows.Media.Color.FromRgb(0x1C, 0x25, 0x36);
+            edge = System.Windows.Media.Color.FromRgb(0xC5, 0xD0, 0xDC);
+            prefix = "★ ";
+        }
+        else
+        {
+            bg = System.Windows.Media.Color.FromRgb(0xF8, 0xFA, 0xFC);
+            fg = System.Windows.Media.Color.FromRgb(0x2E, 0x3A, 0x48);
+            edge = System.Windows.Media.Color.FromRgb(0xD8, 0xDE, 0xE4);
+            prefix = "";
+        }
+
+        return new Border
+        {
+            Background = new System.Windows.Media.SolidColorBrush(bg),
+            BorderBrush = new System.Windows.Media.SolidColorBrush(edge),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 3, 6, 3),
+            Margin = new Thickness(0, 0, 0, 4),
+            Child = new TextBlock
+            {
+                Text = prefix + m.DisplayLabel,
+                FontSize = 11,
+                Foreground = new System.Windows.Media.SolidColorBrush(fg),
+                TextWrapping = TextWrapping.Wrap,
+                ToolTip = $"{m.DisplayLabel}\n{m.IpAddress}\nUUID {m.Uuid}"
+                          + (m.Invisible ? "\n(bonded/invisible)" : "")
+                          + (m.IsCoordinator ? "\n(group coordinator)" : ""),
+            },
+        };
+    }
+
+    private static UIElement BuildTopologyOfflineCard(IReadOnlyList<string> vanished)
+    {
+        var card = new Border
+        {
+            Width = 200,
+            MinHeight = 80,
+            Margin = new Thickness(0, 0, 10, 10),
+            Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFD, 0xEC, 0xEC)),
+            BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xE7, 0x4C, 0x3C)),
+            BorderThickness = new Thickness(2),
+            CornerRadius = new CornerRadius(8),
+        };
+        var stack = new StackPanel { Margin = new Thickness(10, 8, 10, 8) };
+        stack.Children.Add(new TextBlock
+        {
+            Text = "⚠ Offline / vanished",
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 13,
+            Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0x39, 0x2B)),
+            Margin = new Thickness(0, 0, 0, 6),
+        });
+        foreach (var room in vanished.OrderBy(r => r, StringComparer.OrdinalIgnoreCase))
+        {
+            stack.Children.Add(new Border
+            {
+                Background = System.Windows.Media.Brushes.White,
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xE7, 0x4C, 0x3C)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 3, 6, 3),
+                Margin = new Thickness(0, 0, 0, 4),
+                Child = new TextBlock
+                {
+                    Text = room,
+                    FontSize = 11,
+                    Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0x39, 0x2B)),
+                },
+            });
+        }
+
+        card.Child = stack;
+        return card;
+    }
+
+    private async void TopologyRefresh_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!_settings.TopologyMonitorEnabled)
+            {
+                SetStatus("Turn Monitor ON to load the full map / event trail.", warn: true);
+                return;
+            }
+
+            SetStatus("Refreshing topology…", warn: false);
+            await _sonos.RefreshAsync(_settings.ActiveRoom);
+            RefreshTopologyUi(scrollToEnd: true);
+            SetStatus($"Topology: {_sonos.Groups.Count} group(s), bonded={_sonos.LastTopology?.InvisibleCount ?? 0}.", warn: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Topology refresh failed", ex);
+            SetStatus(ex.Message, warn: true);
+        }
+    }
+
+    private async void TopologyRegroup_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            TopologyRegroupButton.IsEnabled = false;
+            SetStatus("Regrouping all speakers into active group…", warn: false);
+            AppLog.Info("Topology UI: regroup all");
+            await _sonos.GroupAllSpeakersAsync().ConfigureAwait(true);
+            await _sonos.RefreshAsync(_settings.ActiveRoom).ConfigureAwait(true);
+            RefreshTopologyUi(scrollToEnd: true);
+            var n = _sonos.Groups.FirstOrDefault()?.MemberCount ?? 0;
+            var g = _sonos.Groups.Count;
+            SetStatus(g <= 1
+                ? $"Regrouped → {_sonos.ActiveGroupLabel ?? "one group"} ({n} rooms)."
+                : $"Regroup done but still {g} group(s) — check amber cards / offline.", warn: g > 1);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Topology regroup failed", ex);
+            SetStatus($"Regroup failed: {ex.Message}", warn: true);
+        }
+        finally
+        {
+            TopologyRegroupButton.IsEnabled = true;
+        }
+    }
+
+    private void TopologyOpenLog_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var path = _sonos.TopologyEvents.FilePath;
+            if (!File.Exists(path))
+                File.WriteAllText(path, "");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not open topology log: {ex.Message}", warn: true);
+        }
+    }
+
+    private void TopologyEventList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (TopologyEventList.SelectedItem is TopologyEventLog.TopologyEvent evt)
+        {
+            var lines = new List<string>
+            {
+                evt.Display,
+                $"kind={evt.Kind}  utc={evt.Utc:o}  src={evt.Source}",
+            };
+            if (!string.IsNullOrWhiteSpace(evt.RoomName))
+                lines.Add($"room={evt.RoomName}  uuid={evt.Uuid}  ip={evt.IpAddress}");
+            if (evt.Invisible)
+                lines.Add($"bonded/invisible  channelRole={evt.ChannelRole ?? "(none)"}");
+            if (evt.GroupCount is int gc)
+                lines.Add($"groupCount={gc}");
+            if (!string.IsNullOrWhiteSpace(evt.Detail))
+                lines.Add(evt.Detail);
+
+            // Always append live membership for context.
+            var t = _sonos.LastTopology;
+            if (t is not null)
+            {
+                lines.Add("");
+                lines.Add("--- current members ---");
+                foreach (var m in t.Members.OrderBy(x => x.Invisible).ThenBy(x => x.RoomName, StringComparer.OrdinalIgnoreCase))
+                    lines.Add($"{m.DisplayLabel}  {m.IpAddress}  group={m.GroupId}");
+            }
+
+            TopologyDetailBox.Text = string.Join(Environment.NewLine, lines);
+        }
+    }
+
     private void OnMcpActivityChanged(object? sender, EventArgs e) =>
         Dispatcher.BeginInvoke(() =>
         {
@@ -564,6 +1071,8 @@ public partial class MainWindow : Window
             RefreshMcpEndpointUi();
             RefreshMcpActivityList(scrollToEnd: false);
         }
+        else if (MainTabs.SelectedItem == TopologyTab)
+            RefreshTopologyUi(scrollToEnd: false);
         else if (MainTabs.SelectedItem == LibraryTab)
             RefreshLibraryStatusUi();
         else if (MainTabs.SelectedItem == TagsTab)
@@ -1821,10 +2330,11 @@ public partial class MainWindow : Window
 
     private UIElement BuildSpeakerRow(SpeakerVolume speaker)
     {
-        // Star-sized name/slider so Mute always stays visible when the panel is wide.
+        // Name | slider | % | Offset | Mute
         var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star), MinWidth = 100 });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star), MinWidth = 120 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star), MinWidth = 90 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star), MinWidth = 100 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -1865,6 +2375,43 @@ public partial class MainWindow : Window
 
         Grid.SetColumn(valueLabel, 2);
 
+        var currentOffset = _settings.GetVolumeOffset(speaker.RoomName);
+        var offsetPanel = new StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(10, 0, 0, 0),
+            ToolTip = "Added to Level-all / Wake house levels for this room (e.g. +60 so level 20 → 80%). Not applied to the slider or ± volume hotkeys.",
+        };
+        offsetPanel.Children.Add(new TextBlock
+        {
+            Text = "Off",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 4, 0),
+            Foreground = System.Windows.Media.Brushes.DimGray,
+            FontSize = 11,
+        });
+        var offsetBox = new TextBox
+        {
+            Text = currentOffset == 0 ? "0" : currentOffset.ToString(),
+            Width = 40,
+            Padding = new Thickness(4, 2, 4, 2),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = System.Windows.HorizontalAlignment.Right,
+            ToolTip = "Volume offset % (−100…+100). 0 = none.",
+        };
+        offsetBox.LostKeyboardFocus += (_, _) => CommitSpeakerOffset(speaker.RoomName, offsetBox);
+        offsetBox.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                CommitSpeakerOffset(speaker.RoomName, offsetBox);
+                e.Handled = true;
+            }
+        };
+        offsetPanel.Children.Add(offsetBox);
+        Grid.SetColumn(offsetPanel, 3);
+
         var muteCheck = new System.Windows.Controls.CheckBox
         {
             Content = "Mute",
@@ -1875,13 +2422,39 @@ public partial class MainWindow : Window
         };
         muteCheck.Checked += async (_, _) => await _sonos.SetSpeakerMuteAsync(speaker.IpAddress, true);
         muteCheck.Unchecked += async (_, _) => await _sonos.SetSpeakerMuteAsync(speaker.IpAddress, false);
-        Grid.SetColumn(muteCheck, 3);
+        Grid.SetColumn(muteCheck, 4);
 
         row.Children.Add(name);
         row.Children.Add(slider);
         row.Children.Add(valueLabel);
+        row.Children.Add(offsetPanel);
         row.Children.Add(muteCheck);
         return row;
+    }
+
+    private void CommitSpeakerOffset(string roomName, TextBox box)
+    {
+        if (!int.TryParse(box.Text.Trim(), out var offset))
+        {
+            box.Text = _settings.GetVolumeOffset(roomName).ToString();
+            return;
+        }
+
+        offset = Math.Clamp(offset, -100, 100);
+        box.Text = offset.ToString();
+        if (_settings.GetVolumeOffset(roomName) == offset)
+            return;
+
+        _settings.SetVolumeOffset(roomName, offset);
+        try
+        {
+            _store.Save(_settings.EnsureShape());
+            AppLog.Info($"Volume offset for '{roomName}' → {offset:+#;-#;0}%");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Could not save volume offset for '{roomName}'", ex);
+        }
     }
 
     private async Task CommitSpeakerVolumeAsync(string ip, int percent)
@@ -2481,6 +3054,9 @@ public partial class MainWindow : Window
             _settings.VolumeStep = step;
         if (int.TryParse(LevelPercentBox.Text, out var level) && level is >= 0 and <= 100)
             _settings.LevelVolumePercent = level;
+        // Topology monitor is live-toggled on the Topology tab; keep settings in sync if present.
+        if (TopologyMonitorEnabledCheck is not null)
+            _settings.TopologyMonitorEnabled = TopologyMonitorEnabledCheck.IsChecked == true;
         _settings.ShowFlyoutOnTrackChange = FlyoutOnTrackChangeCheckBox.IsChecked == true;
         _settings.ShowFlyoutOnAction = FlyoutOnActionCheckBox.IsChecked == true;
         if (TrayDoubleClickCombo.SelectedItem is TrayDoubleClickPick pick)

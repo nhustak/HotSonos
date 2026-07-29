@@ -123,8 +123,62 @@ public sealed class AppSettings
     /// <summary>Set every speaker to this absolute volume when "level all volumes" runs.</summary>
     public int LevelVolumePercent { get; set; } = 20;
 
+    /// <summary>
+    /// Per-room offsets for absolute volume (Level all / wake). Example: Media Room +60 so
+    /// level 20% becomes 80% on that Sonos port (amp/Port calibration).
+    /// </summary>
+    public List<RoomVolumeOffset> RoomVolumeOffsets { get; set; } = [];
+
     /// <summary>Hotkey to set all speakers to <see cref="LevelVolumePercent"/>.</summary>
     public HotkeyConfig LevelVolumes { get; set; } = new();
+
+    /// <summary>Offset for a room name (0 if unset).</summary>
+    public int GetVolumeOffset(string? roomName)
+    {
+        if (string.IsNullOrWhiteSpace(roomName) || RoomVolumeOffsets is null || RoomVolumeOffsets.Count == 0)
+            return 0;
+        var hit = RoomVolumeOffsets.FirstOrDefault(o =>
+            string.Equals(o.RoomName, roomName.Trim(), StringComparison.OrdinalIgnoreCase));
+        return hit?.OffsetPercent ?? 0;
+    }
+
+    /// <summary>Logical house level + room offset, clamped 0–100.</summary>
+    public int ApplyVolumeOffset(string? roomName, int logicalPercent) =>
+        Math.Clamp(logicalPercent + GetVolumeOffset(roomName), 0, 100);
+
+    public void SetVolumeOffset(string roomName, int offsetPercent)
+    {
+        roomName = (roomName ?? "").Trim();
+        if (roomName.Length == 0) return;
+        offsetPercent = Math.Clamp(offsetPercent, -100, 100);
+        RoomVolumeOffsets ??= [];
+        var existing = RoomVolumeOffsets.FirstOrDefault(o =>
+            string.Equals(o.RoomName, roomName, StringComparison.OrdinalIgnoreCase));
+        if (offsetPercent == 0)
+        {
+            if (existing is not null)
+                RoomVolumeOffsets.Remove(existing);
+            return;
+        }
+
+        if (existing is not null)
+            existing.OffsetPercent = offsetPercent;
+        else
+            RoomVolumeOffsets.Add(new RoomVolumeOffset { RoomName = roomName, OffsetPercent = offsetPercent });
+    }
+
+    /// <summary>
+    /// Full topology monitor (bonded Sub parse, event JSONL, Topology map diffs).
+    /// Default <c>false</c> — GENA floods + file I/O delayed volume. Toggle on Topology tab only when debugging.
+    /// </summary>
+    public bool TopologyMonitorEnabled { get; set; }
+
+    /// <summary>
+    /// When true, if rooms peel into extra groups while still online, auto-regroup under
+    /// the active coordinator (debounced + cooldown). Default <c>false</c> — regroup storms
+    /// delay audio; use Topology → Regroup all, or enable only when hunting flaky rooms.
+    /// </summary>
+    public bool KeepHouseGrouped { get; set; }
 
     /// <summary>Silently regroup all speakers once a night (skipped if anything is playing).</summary>
     public bool NightlyResetEnabled { get; set; } = true;
@@ -420,6 +474,18 @@ public sealed class AppSettings
             QuickPlay = new HotkeyConfig { Control = true, Alt = true, Key = "P" };
         if (VolumeStep < 1) VolumeStep = 5;
         if (LevelVolumePercent is < 0 or > 100) LevelVolumePercent = 20;
+        RoomVolumeOffsets ??= [];
+        RoomVolumeOffsets = RoomVolumeOffsets
+            .Where(o => o is not null && !string.IsNullOrWhiteSpace(o.RoomName))
+            .Select(o => new RoomVolumeOffset
+            {
+                RoomName = o.RoomName.Trim(),
+                OffsetPercent = Math.Clamp(o.OffsetPercent, -100, 100),
+            })
+            .GroupBy(o => o.RoomName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last())
+            .Where(o => o.OffsetPercent != 0)
+            .ToList();
         if (NightlyResetMinutes is < 0 or > 1439) NightlyResetMinutes = 180;
         if (WakeMinutes is < 0 or > 1439) WakeMinutes = 7 * 60;
         if (WakeDaysMask is < 0 or > 0b1111111) WakeDaysMask = DefaultWakeDaysMask;

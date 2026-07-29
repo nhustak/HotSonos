@@ -16,9 +16,9 @@
 | Item | State |
 |------|--------|
 | **Git HEAD** | See git log |
-| **App version** | `1.0.0.27` |
+| **App version** | `1.0.0.28` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
-| **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug |
+| **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · MCP Debug |
 | **Play sources** | Control **From**: All / tag / genre · play list · Quick Play · slots 1–6 · MCP; genres optional (`ShowGenresInPlaySources`) |
 | **Next product slice** | **Library groups** (§5.1 / §6.2) — path modes; no group hotkeys |
 | **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** on this PC |
@@ -246,10 +246,20 @@ Concurrent shuffle / Fresh Start: exclusive gate + Busy feedback.
 ### Live speaker monitoring
 - Topology GENA; offline indicator; rejoin on reconnect  
 - No “just dropped” spam on first snapshot  
+- **Topology monitor** (`TopologyMonitorEnabled`, default **OFF**):  
+  - Topology tab checkbox **Monitor ON** — turn on only when debugging  
+  - When OFF: light zone parse only (no bonded-Sub graph, no event JSONL spam, no map rebuild on every GENA push)  
+  - When ON: full map + `topology-events.jsonl` + MCP topology tools  
+- Volume ± hotkeys never wait on the shared action gate  
+- **KeepHouseGrouped** (default off): optional auto-regroup  
+
+
+
 
 ### Volume
 - Group step + mute; level-all absolute %  
-- Per-speaker sliders in Settings  
+- Per-speaker sliders in Settings (raw Sonos %)  
+- **Per-room volume offset** — additive % for amp/Port calibration (e.g. Media Room +60 so house level 20 → 80 on that port). Applied on **Level all** and **Wake** absolute levels only; not on ± volume hotkeys or manual sliders. Stored as `RoomVolumeOffsets` in settings; UI: Control → Speakers → **Off** field.  
 
 ### Settings auto-refresh — Shipped
 - Opening Settings runs **full discovery** in background (rooms, favorites, volumes), not volumes-only  

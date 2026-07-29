@@ -56,15 +56,35 @@ public sealed class SonosDiscovery
     /// </summary>
     public async Task<IReadOnlyList<SonosZone>> GetZonesFromAsync(string ip, CancellationToken ct = default)
     {
+        var snap = await GetTopologySnapshotFromAsync(ip, ct).ConfigureAwait(false);
+        return snap.Members
+            .Where(m => !m.Invisible)
+            .Select(m => new SonosZone
+            {
+                RoomName = m.RoomName,
+                Uuid = m.Uuid,
+                IpAddress = m.IpAddress,
+                CoordinatorUuid = m.CoordinatorUuid,
+                CoordinatorIpAddress = m.CoordinatorIpAddress,
+                GroupId = m.GroupId,
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// Full topology snapshot (visible + bonded/invisible + vanished) from a known player IP.
+    /// </summary>
+    public async Task<SonosTopologySnapshot> GetTopologySnapshotFromAsync(string ip, CancellationToken ct = default)
+    {
         var response = await _soap.InvokeAsync(
             ip, SonosService.ZoneGroupTopology, "GetZoneGroupState",
             [], ct).ConfigureAwait(false);
 
         var stateXml = SonosSoapClient.ReadValue(response, "ZoneGroupState");
         if (string.IsNullOrWhiteSpace(stateXml))
-            return [];
+            return new SonosTopologySnapshot();
 
-        return ParseZoneGroupState(stateXml);
+        return ParseTopologySnapshot(stateXml);
     }
 
     /// <summary>Parses the (already-unescaped) ZoneGroupState XML into zones.</summary>
@@ -126,6 +146,81 @@ public sealed class SonosDiscovery
             .Select(n => n!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// Full topology: visible rooms, invisible bonded members (Sub / pair mate / surrounds),
+    /// channel roles from ChannelMapSet, and vanished rooms. Use for monitoring; control
+    /// paths should keep using <see cref="ParseZoneGroupState"/> (visible only).
+    /// </summary>
+    public static SonosTopologySnapshot ParseTopologySnapshot(string stateXml)
+    {
+        var doc = XDocument.Parse(stateXml);
+        var members = new List<SonosTopologyMember>();
+
+        foreach (var group in doc.Descendants().Where(e => e.Name.LocalName == "ZoneGroup"))
+        {
+            var coordinatorUuid = (string?)group.Attribute("Coordinator") ?? "";
+            var groupId = (string?)group.Attribute("ID") ?? "";
+
+            var groupMembers = group.Elements()
+                .Where(e => e.Name.LocalName == "ZoneGroupMember")
+                .ToList();
+
+            var coordinator = groupMembers.FirstOrDefault(m =>
+                string.Equals((string?)m.Attribute("UUID"), coordinatorUuid, StringComparison.OrdinalIgnoreCase));
+            var coordinatorIp = HostFromLocation((string?)coordinator?.Attribute("Location")) ?? "";
+
+            // ChannelMapSet may appear on the primary (visible) member: UUID:ROLE,ROLE;UUID:ROLE
+            var roleByUuid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var gm in groupMembers)
+            {
+                var map = (string?)gm.Attribute("ChannelMapSet")
+                          ?? (string?)gm.Attribute("HTSatChanMapSet");
+                if (string.IsNullOrWhiteSpace(map))
+                    continue;
+                foreach (var part in map.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var colon = part.IndexOf(':');
+                    if (colon <= 0) continue;
+                    var uuid = part[..colon].Trim();
+                    var roles = part[(colon + 1)..].Trim();
+                    if (uuid.Length == 0 || roles.Length == 0) continue;
+                    // Prefer SW / LF / RF first token if comma-separated duplicates.
+                    var primary = roles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .FirstOrDefault() ?? roles;
+                    roleByUuid[uuid] = primary;
+                }
+            }
+
+            foreach (var member in groupMembers)
+            {
+                var uuid = (string?)member.Attribute("UUID");
+                var zoneName = (string?)member.Attribute("ZoneName");
+                var ip = HostFromLocation((string?)member.Attribute("Location"));
+                if (uuid is null || zoneName is null || ip is null)
+                    continue;
+
+                roleByUuid.TryGetValue(uuid, out var role);
+                members.Add(new SonosTopologyMember
+                {
+                    RoomName = zoneName,
+                    Uuid = uuid,
+                    IpAddress = ip,
+                    CoordinatorUuid = coordinatorUuid,
+                    CoordinatorIpAddress = coordinatorIp,
+                    GroupId = groupId,
+                    Invisible = (string?)member.Attribute("Invisible") == "1",
+                    ChannelRole = role,
+                });
+            }
+        }
+
+        return new SonosTopologySnapshot
+        {
+            Members = members,
+            VanishedRooms = ParseVanishedRooms(stateXml),
+        };
     }
 
     private static string? HostFromLocation(string? location) =>

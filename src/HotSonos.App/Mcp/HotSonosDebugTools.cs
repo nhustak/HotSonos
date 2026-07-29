@@ -226,6 +226,9 @@ public sealed class HotSonosDebugTools
                 s.ActiveRoom,
                 s.VolumeStep,
                 s.LevelVolumePercent,
+                roomVolumeOffsets = s.RoomVolumeOffsets
+                    .Select(o => new { o.RoomName, o.OffsetPercent })
+                    .ToList(),
                 s.NightlyResetEnabled,
                 s.NightlyResetMinutes,
                 s.NightlyResetReshuffle,
@@ -712,6 +715,82 @@ public sealed class HotSonosDebugTools
                     e.Artist,
                     e.Key,
                     e.Source,
+                }),
+            }, JsonOptions);
+        });
+
+    [McpServerTool(Name = "get_topology_events")]
+    [Description("Recent speaker/Sub/Port topology events: group join/leave, vanished/returned, bonded Sub appear/disappear. File: %LocalAppData%\\HotSonos\\topology-events.jsonl. UI: Topology tab.")]
+    public string GetTopologyEvents(
+        [Description("Max events (default 80, max 300)")] int max = 80,
+        [Description("Optional kind: baseline|groups_changed|vanished|returned|appeared|disappeared|bonded_appeared|bonded_disappeared|joined_group|left_group|moved_group")] string? kind = null) =>
+        McpActivityLog.Run("get_topology_events", new { max, kind }, () =>
+        {
+            max = Math.Clamp(max, 1, 300);
+            var events = _state.Sonos.TopologyEvents.GetRecent(max, kind);
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                file = _state.Sonos.TopologyEvents.FilePath,
+                count = events.Count,
+                events = events.Select(e => new
+                {
+                    utc = e.Utc,
+                    e.Kind,
+                    e.Display,
+                    e.RoomName,
+                    e.Uuid,
+                    e.IpAddress,
+                    e.Invisible,
+                    e.ChannelRole,
+                    e.GroupCount,
+                    e.Source,
+                }),
+            }, JsonOptions);
+        });
+
+    [McpServerTool(Name = "list_topology_members")]
+    [Description("Current full topology including bonded/invisible devices (Sub, stereo pair mate). Use to see if Sub is present and which group Theater/Port is in.")]
+    public string ListTopologyMembers() =>
+        McpActivityLog.Run("list_topology_members", null, () =>
+        {
+            var snap = _state.Sonos.LastTopology;
+            if (snap is null)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    message = "No topology snapshot yet — wait for GENA or call refresh_devices.",
+                }, JsonOptions);
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                groupCount = snap.GroupCount,
+                visibleCount = snap.VisibleCount,
+                invisibleCount = snap.InvisibleCount,
+                vanished = snap.VanishedRooms,
+                subs = snap.Subs.Select(s => new
+                {
+                    s.RoomName,
+                    s.Uuid,
+                    s.IpAddress,
+                    s.ChannelRole,
+                    s.GroupId,
+                    label = s.DisplayLabel,
+                }),
+                members = snap.Members.Select(m => new
+                {
+                    m.RoomName,
+                    m.Uuid,
+                    m.IpAddress,
+                    m.Invisible,
+                    m.ChannelRole,
+                    m.GroupId,
+                    m.CoordinatorUuid,
+                    isCoordinator = m.IsCoordinator,
+                    label = m.DisplayLabel,
                 }),
             }, JsonOptions);
         });

@@ -96,6 +96,7 @@ public static class AppLog
                     line += $" | {firstFrame}";
             }
 
+            string? pathToWrite = null;
             lock (Gate)
             {
                 if (Ring.Count >= RingCapacity)
@@ -109,8 +110,21 @@ public static class AppLog
                     _pruned = true;
                 }
 
-                var file = Path.Combine(DirectoryPath, $"hotsonos-{DateTime.Now:yyyyMMdd}.log");
-                File.AppendAllText(file, line + Environment.NewLine, Encoding.UTF8);
+                // Do not hold the lock while writing disk — dual-write spam was
+                // serializing the app (including volume hotkeys).
+                pathToWrite = Path.Combine(DirectoryPath, $"hotsonos-{DateTime.Now:yyyyMMdd}.log");
+            }
+
+            if (pathToWrite is not null)
+            {
+                try
+                {
+                    File.AppendAllText(pathToWrite, line + Environment.NewLine, Encoding.UTF8);
+                }
+                catch
+                {
+                    /* ignore disk errors */
+                }
             }
 
             Debug.WriteLine(line);

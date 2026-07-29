@@ -37,10 +37,12 @@ public sealed class SonosManager
     private readonly SonosEventSubscriber _events = new();
     private readonly PlayHistoryStore _playHistory;
     private readonly PlayEventLog _playEvents;
+    private readonly TopologyEventLog _topologyEvents;
     private readonly Func<AppSettings> _settings;
 
     private IReadOnlyList<SonosZone> _zones = [];
     private SonosController? _controller;
+    private SonosTopologySnapshot? _lastTopology;
 
     private IReadOnlyList<string> _offline = [];
     private bool _topologySeen;
@@ -134,11 +136,13 @@ public sealed class SonosManager
     public SonosManager(
         Func<AppSettings>? settings = null,
         PlayHistoryStore? playHistory = null,
-        PlayEventLog? playEvents = null)
+        PlayEventLog? playEvents = null,
+        TopologyEventLog? topologyEvents = null)
     {
         _settings = settings ?? AppSettings.CreateDefault;
         _playHistory = playHistory ?? new PlayHistoryStore(() => _settings().EnsureShape().ShuffleHistoryDays);
         _playEvents = playEvents ?? new PlayEventLog();
+        _topologyEvents = topologyEvents ?? new TopologyEventLog();
         _discovery = new SonosDiscovery(_soap);
         _events.NowPlayingChanged += np =>
         {
@@ -167,6 +171,12 @@ public sealed class SonosManager
     public PlayHistoryStore PlayHistory => _playHistory;
 
     public PlayEventLog PlayEvents => _playEvents;
+
+    /// <summary>Rooms / Sub / Port group join-leave and vanish trail.</summary>
+    public TopologyEventLog TopologyEvents => _topologyEvents;
+
+    /// <summary>Last full topology (includes bonded Sub / invisible members).</summary>
+    public SonosTopologySnapshot? LastTopology => _lastTopology;
 
     /// <summary>
     /// Log start / pause / resume / stop from GENA now-playing changes.
@@ -226,6 +236,7 @@ public sealed class SonosManager
     {
         try
         {
+            // Always: light path only (visible zones + vanished list). No full bonded parse / JSONL unless monitor on.
             var zones = SonosDiscovery.ParseZoneGroupState(stateXml);
             if (zones.Count > 0)
             {
@@ -235,6 +246,15 @@ public sealed class SonosManager
             }
 
             var vanishedNow = SonosDiscovery.ParseVanishedRooms(stateXml);
+
+            // Heavy monitor: full member graph + event log (expensive on GENA floods).
+            if (_settings().EnsureShape().TopologyMonitorEnabled)
+            {
+                var snap = SonosDiscovery.ParseTopologySnapshot(stateXml);
+                _lastTopology = snap;
+                _topologyEvents.Observe(snap, source: "gena");
+                vanishedNow = snap.VanishedRooms;
+            }
 
             // Skip drop/return balloons for the first snapshot — speakers already
             // offline at startup populate the indicator without a "just dropped" alert.
@@ -259,6 +279,33 @@ public sealed class SonosManager
         }
     }
 
+    /// <summary>
+    /// Pulls full topology (incl. Sub / bonded) and logs a diff — only when monitor is enabled.
+    /// </summary>
+    public async Task ObserveTopologyAsync(string source = "refresh", CancellationToken ct = default)
+    {
+        if (!_settings().EnsureShape().TopologyMonitorEnabled)
+            return;
+
+        var ip = _zones.FirstOrDefault()?.IpAddress
+                 ?? Groups.FirstOrDefault()?.CoordinatorIp;
+        if (string.IsNullOrWhiteSpace(ip))
+            return;
+
+        try
+        {
+            var snap = await _discovery.GetTopologySnapshotFromAsync(ip, ct).ConfigureAwait(false);
+            if (snap.Members.Count == 0)
+                return;
+            _lastTopology = snap;
+            _topologyEvents.Observe(snap, source);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Topology observe failed ({source})", ex);
+        }
+    }
+
     public ValueTask DisposeEventsAsync() => _events.DisposeAsync();
 
     /// <summary>Discovered groups, largest first (so "All Speakers" leads).</summary>
@@ -279,6 +326,7 @@ public sealed class SonosManager
 
         ActiveRoom = desired;
         RebuildController();
+        await ObserveTopologyAsync("refresh", ct).ConfigureAwait(false);
     }
 
     /// <summary>Points subsequent commands at the group whose coordinator room is <paramref name="room"/>.</summary>
@@ -406,7 +454,10 @@ public sealed class SonosManager
                 return await ToggleMuteAsync(ct).ConfigureAwait(false) ? "🔇 Muted" : "🔊 Unmuted";
             case HotsonosAction.LevelVolumes:
                 var n = await LevelAllVolumesAsync(settings.LevelVolumePercent, ct).ConfigureAwait(false);
-                return $"🔉 Set {n} speaker(s) to {settings.LevelVolumePercent}%";
+                var offsets = settings.RoomVolumeOffsets?.Count(o => o.OffsetPercent != 0) ?? 0;
+                return offsets > 0
+                    ? $"🔉 Set {n} speaker(s) to {settings.LevelVolumePercent}% (with {offsets} room offset(s))"
+                    : $"🔉 Set {n} speaker(s) to {settings.LevelVolumePercent}%";
             default:
                 return null;
         }
@@ -414,16 +465,55 @@ public sealed class SonosManager
 
     // ---- Volume (group-wide) ----------------------------------------------
     // Group-volume WRITE actions (SetGroupVolume/SetGroupMute) return 803 on
-    // systems with a fixed-volume member, so we nudge each visible member via
-    // per-player RenderingControl and read back the group value for display.
+    // systems with a fixed-volume member, so we nudge each player via
+    // per-player RenderingControl.
+    //
+    // Snappy hotkeys: await ONLY the coordinator (what you hear at Office). Fan
+    // out to other rooms in the background with a short timeout. Waiting on all
+    // members made volume feel multi-second when Kitchen/etc. were flaky (TCP
+    // hang ignores CancelAfter until connect fails ~2–3s each batch).
 
-    /// <summary>Adjusts every group member's volume by <paramref name="delta"/> and returns the new group volume.</summary>
+    /// <summary>
+    /// Adjusts volume by <paramref name="delta"/>. Returns coordinator Master % for toast.
+    /// Other group members are updated in the background (best-effort).
+    /// </summary>
     private async Task<int> ChangeVolumeAsync(int delta, CancellationToken ct)
     {
         var members = ActiveGroupMemberIps();
-        await Task.WhenAll(members.Select(ip => AdjustMemberVolumeAsync(ip, delta, ct))).ConfigureAwait(false);
-        return await GetGroupVolumeAsync(ct).ConfigureAwait(false);
+        var coordIp = _controller?.CoordinatorIp;
+
+        // Background: everyone except coordinator — do not await.
+        foreach (var ip in members)
+        {
+            if (coordIp is not null
+                && string.Equals(ip, coordIp, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var target = ip;
+            _ = Task.Run(async () =>
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+                await AdjustMemberVolumeAsync(target, delta, cts.Token).ConfigureAwait(false);
+            });
+        }
+
+        // Foreground: coordinator only (fast path).
+        if (coordIp is not null)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromMilliseconds(500));
+            await AdjustMemberVolumeAsync(coordIp, delta, cts.Token).ConfigureAwait(false);
+        }
+
+        return await GetCoordinatorMasterVolumeAsync(ct).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Public volume step for coalesced hotkeys. Prefer one call with a combined delta
+    /// over many stacked VolumeUp actions (which walked volume to 100% during lag).
+    /// </summary>
+    public Task<int> AdjustVolumeByAsync(int delta, CancellationToken ct = default) =>
+        ChangeVolumeAsync(delta, ct);
 
     private async Task AdjustMemberVolumeAsync(string ip, int delta, CancellationToken ct)
     {
@@ -438,20 +528,48 @@ public sealed class SonosManager
         }
         catch
         {
-            // Fixed-volume members (Sub/Port/Amp line-out) reject this; ignore them.
+            // Fixed-volume members, offline, or timed out — ignore.
+        }
+    }
+
+    /// <summary>Coordinator Master volume for toast (short timeout).</summary>
+    private async Task<int> GetCoordinatorMasterVolumeAsync(CancellationToken ct)
+    {
+        if (_controller is null)
+            return 0;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromMilliseconds(300));
+        try
+        {
+            var r = await _soap.InvokeAsync(
+                _controller.CoordinatorIp, SonosService.RenderingControl, "GetVolume",
+                [new("InstanceID", "0"), new("Channel", "Master")], cts.Token).ConfigureAwait(false);
+            return int.TryParse(SonosSoapClient.ReadValue(r, "CurrentVolume"), out var v) ? v : 0;
+        }
+        catch
+        {
+            return 0;
         }
     }
 
     /// <summary>
-    /// Sets EVERY visible speaker (across all groups) to the same absolute volume
-    /// and unmutes them, so the whole house plays at one level. Returns the count
-    /// of speakers that accepted the change (fixed-volume members are not counted).
+    /// Sets EVERY visible speaker (across all groups) to the absolute volume
+    /// (plus any per-room offset) and unmutes them. Returns the count of speakers
+    /// that accepted the change (fixed-volume members are not counted).
     /// </summary>
     public async Task<int> LevelAllVolumesAsync(int percent, CancellationToken ct = default)
     {
         percent = Math.Clamp(percent, 0, 100);
-        var ips = _zones.Select(z => z.IpAddress).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var results = await Task.WhenAll(ips.Select(ip => SetMemberVolumeAsync(ip, percent, ct))).ConfigureAwait(false);
+        var s = _settings().EnsureShape();
+        var byIp = _zones
+            .GroupBy(z => z.IpAddress, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+        var results = await Task.WhenAll(byIp.Select(z =>
+        {
+            var actual = s.ApplyVolumeOffset(z.RoomName, percent);
+            return SetMemberVolumeAsync(z.IpAddress, actual, ct);
+        })).ConfigureAwait(false);
         return results.Count(ok => ok);
     }
 
@@ -625,11 +743,22 @@ public sealed class SonosManager
     public IReadOnlyList<string> AllVisibleIps() =>
         _zones.Select(z => z.IpAddress).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-    /// <summary>Sets absolute volume and unmutes every IP in <paramref name="ips"/>.</summary>
+    /// <summary>
+    /// Sets absolute volume and unmutes every IP in <paramref name="ips"/>.
+    /// Applies per-room offsets from settings (same as Level all) so wake ramps
+    /// and house levels stay calibrated for amp-fed ports.
+    /// </summary>
     public async Task SetVolumesAbsoluteAsync(IReadOnlyList<string> ips, int percent, CancellationToken ct = default)
     {
         percent = Math.Clamp(percent, 0, 100);
-        await Task.WhenAll(ips.Select(ip => SetMemberVolumeAsync(ip, percent, ct))).ConfigureAwait(false);
+        var s = _settings().EnsureShape();
+        await Task.WhenAll(ips.Select(ip =>
+        {
+            var room = _zones.FirstOrDefault(z =>
+                string.Equals(z.IpAddress, ip, StringComparison.OrdinalIgnoreCase))?.RoomName;
+            var actual = s.ApplyVolumeOffset(room, percent);
+            return SetMemberVolumeAsync(ip, actual, ct);
+        })).ConfigureAwait(false);
     }
 
     /// <summary>
