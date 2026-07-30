@@ -31,7 +31,7 @@ public partial class MainWindow : Window
     private readonly LibraryService? _library;
     private readonly Func<IReadOnlyList<HotsonosAction>> _applyBindings;
     private readonly Action<string> _onRoomChanged;
-    private readonly Action<HotsonosAction> _runAction;
+    private readonly Func<HotsonosAction, Task> _runAction;
     private readonly Func<string?> _mcpEndpoint;
     private DispatcherTimer? _libraryStatusTimer;
     private bool _mcpUiHooked;
@@ -75,7 +75,7 @@ public partial class MainWindow : Window
         LibraryService? library,
         Func<IReadOnlyList<HotsonosAction>> applyBindings,
         Action<string> onRoomChanged,
-        Action<HotsonosAction> runAction,
+        Func<HotsonosAction, Task> runAction,
         Func<string?>? mcpEndpoint = null)
     {
         _sonos = sonos;
@@ -386,22 +386,22 @@ public partial class MainWindow : Window
     }
 
     private void ControlTransportPlayPause_Click(object sender, RoutedEventArgs e) =>
-        _runAction(HotsonosAction.PlayPause);
+        _ = _runAction(HotsonosAction.PlayPause);
 
     private void ControlTransportNext_Click(object sender, RoutedEventArgs e) =>
-        _runAction(HotsonosAction.Next);
+        _ = _runAction(HotsonosAction.Next);
 
     private void ControlTransportPrevious_Click(object sender, RoutedEventArgs e) =>
-        _runAction(HotsonosAction.Previous);
+        _ = _runAction(HotsonosAction.Previous);
 
     private void ControlTransportVolUp_Click(object sender, RoutedEventArgs e) =>
-        _runAction(HotsonosAction.VolumeUp);
+        _ = _runAction(HotsonosAction.VolumeUp);
 
     private void ControlTransportVolDown_Click(object sender, RoutedEventArgs e) =>
-        _runAction(HotsonosAction.VolumeDown);
+        _ = _runAction(HotsonosAction.VolumeDown);
 
     private void ControlTransportMute_Click(object sender, RoutedEventArgs e) =>
-        _runAction(HotsonosAction.Mute);
+        _ = _runAction(HotsonosAction.Mute);
 
     private void ControlDeleteNowPlaying_Click(object sender, RoutedEventArgs e)
     {
@@ -2328,6 +2328,28 @@ public partial class MainWindow : Window
             SpeakersPanel.Children.Add(BuildSpeakerRow(speaker));
     }
 
+    private async void RefreshVolumesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (RefreshVolumesButton is not null)
+            RefreshVolumesButton.IsEnabled = false;
+        try
+        {
+            SetStatus("Reading speaker volumes…", warn: false);
+            await LoadSpeakerVolumesAsync().ConfigureAwait(true);
+            SetStatus($"Volumes refreshed ({SpeakersPanel.Children.Count} speaker(s)).", warn: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Refresh volumes failed", ex);
+            SetStatus(ex.Message, warn: true);
+        }
+        finally
+        {
+            if (RefreshVolumesButton is not null)
+                RefreshVolumesButton.IsEnabled = true;
+        }
+    }
+
     private UIElement BuildSpeakerRow(SpeakerVolume speaker)
     {
         // Name | slider | % | Offset | Mute
@@ -3511,8 +3533,17 @@ public partial class MainWindow : Window
             ?? TrayDoubleClickCombo.Items[0];
     }
 
-    private void ShuffleLibraryButton_Click(object sender, RoutedEventArgs e)
+    private bool _controlShuffleBusy;
+
+    private async void ShuffleLibraryButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_controlShuffleBusy)
+        {
+            SetControlShuffleFeedback("Already working — wait for this shuffle to finish.", warn: true);
+            SetStatus("Shuffle already in progress — please wait.", warn: true);
+            return;
+        }
+
         // Persist picker selection immediately.
         if (ControlShuffleSourceCombo.SelectedItem is ControlShufflePick pick)
             _settings.ControlShuffleSource = pick.Token;
@@ -3521,8 +3552,13 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(token) ||
             string.Equals(token, AppSettings.ControlShuffleAll, StringComparison.OrdinalIgnoreCase))
         {
-            SetStatus("Starting full library shuffle…", warn: false);
-            _runAction(HotsonosAction.ShuffleLibrary);
+            await RunControlShuffleBusyAsync(
+                "⏳ Starting full library shuffle (scanning / building queue)…",
+                async () =>
+                {
+                    await _runAction(HotsonosAction.ShuffleLibrary).ConfigureAwait(true);
+                    return "✓ Full library shuffle started — music should be playing.";
+                }).ConfigureAwait(true);
             return;
         }
 
@@ -3535,21 +3571,13 @@ public partial class MainWindow : Window
             }
 
             var name = System.IO.Path.GetFileName(folderPath.TrimEnd('\\', '/'));
-            SetStatus($"Shuffling folder “{name}”…", warn: false);
-            Dispatcher.BeginInvoke(new Action(async () =>
-            {
-                try
+            await RunControlShuffleBusyAsync(
+                $"⏳ Shuffling folder “{name}”…",
+                async () =>
                 {
-                    await _sonos.GroupAllSpeakersAsync();
-                    var toast = await _sonos.PlayLibraryFolderAsync(_library, folderPath, shuffle: true);
-                    SetStatus(toast, warn: false);
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Warn("Control shuffle folder failed", ex);
-                    SetStatus(ex.Message, warn: true);
-                }
-            }), DispatcherPriority.Background);
+                    await _sonos.GroupAllSpeakersAsync().ConfigureAwait(true);
+                    return await _sonos.PlayLibraryFolderAsync(_library, folderPath, shuffle: true).ConfigureAwait(true);
+                }).ConfigureAwait(true);
             return;
         }
 
@@ -3569,20 +3597,10 @@ public partial class MainWindow : Window
             }
 
             var label = _settings.FindTag(key)?.Label ?? key;
-            SetStatus($"Shuffling tag “{label}”…", warn: false);
-            Dispatcher.BeginInvoke(new Action(async () =>
-            {
-                try
-                {
-                    var toast = await _sonos.PlayTaggedTracksAsync(_library, key, shuffle: true);
-                    SetStatus(toast, warn: false);
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Warn("Control shuffle tag failed", ex);
-                    SetStatus(ex.Message, warn: true);
-                }
-            }), DispatcherPriority.Background);
+            await RunControlShuffleBusyAsync(
+                $"⏳ Shuffling tag “{label}”…",
+                async () => await _sonos.PlayTaggedTracksAsync(_library, key, shuffle: true).ConfigureAwait(true))
+                .ConfigureAwait(true);
             return;
         }
 
@@ -3601,34 +3619,114 @@ public partial class MainWindow : Window
                 return;
             }
 
-            SetStatus($"Shuffling genre “{genre}”…", warn: false);
-            Dispatcher.BeginInvoke(new Action(async () =>
-            {
-                try
-                {
-                    var toast = await _sonos.PlayGenreTracksAsync(_library, genre, shuffle: true);
-                    SetStatus(toast, warn: false);
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Warn("Control shuffle genre failed", ex);
-                    SetStatus(ex.Message, warn: true);
-                }
-            }), DispatcherPriority.Background);
+            await RunControlShuffleBusyAsync(
+                $"⏳ Shuffling genre “{genre}”…",
+                async () => await _sonos.PlayGenreTracksAsync(_library, genre, shuffle: true).ConfigureAwait(true))
+                .ConfigureAwait(true);
             return;
         }
 
-        SetStatus("Starting full library shuffle…", warn: false);
-        _runAction(HotsonosAction.ShuffleLibrary);
+        await RunControlShuffleBusyAsync(
+            "⏳ Starting full library shuffle…",
+            async () =>
+            {
+                await _runAction(HotsonosAction.ShuffleLibrary).ConfigureAwait(true);
+                return "✓ Full library shuffle started — music should be playing.";
+            }).ConfigureAwait(true);
     }
 
-    private void FreshStartButton_Click(object sender, RoutedEventArgs e)
+    private async void FreshStartButton_Click(object sender, RoutedEventArgs e)
     {
-        SetStatus("Re-syncing all speakers and starting a fresh shuffle…", warn: false);
-        _runAction(HotsonosAction.FreshStart);
+        if (_controlShuffleBusy)
+        {
+            SetControlShuffleFeedback("Already working — wait for current shuffle/fresh start.", warn: true);
+            SetStatus("Already busy — please wait.", warn: true);
+            return;
+        }
+
+        await RunControlShuffleBusyAsync(
+            "⏳ Fresh start: re-discovering, regrouping, building shuffle…",
+            async () =>
+            {
+                await _runAction(HotsonosAction.FreshStart).ConfigureAwait(true);
+                return "✓ Fresh start complete — new shuffle should be playing.";
+            },
+            isFreshStart: true).ConfigureAwait(true);
     }
 
-    private void LevelVolumesButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Disables shuffle/fresh buttons, shows progress under Control shuffle, then result.
+    /// Prevents double-clicks while scanning/enqueuing.
+    /// </summary>
+    private async Task RunControlShuffleBusyAsync(
+        string workingMessage,
+        Func<Task<string?>> work,
+        bool isFreshStart = false)
+    {
+        _controlShuffleBusy = true;
+        SetControlShuffleBusyChrome(true, workingMessage, isFreshStart);
+        SetStatus(workingMessage, warn: false);
+        try
+        {
+            var result = await work().ConfigureAwait(true);
+            var ok = string.IsNullOrWhiteSpace(result)
+                ? "✓ Done."
+                : (result!.StartsWith('✓') || result.StartsWith("🔀") || result.StartsWith("🔄")
+                    ? result
+                    : "✓ " + result);
+            SetControlShuffleFeedback(ok, warn: false);
+            SetStatus(ok, warn: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Control shuffle/fresh failed", ex);
+            SetControlShuffleFeedback("✗ " + ex.Message, warn: true);
+            SetStatus(ex.Message, warn: true);
+        }
+        finally
+        {
+            _controlShuffleBusy = false;
+            SetControlShuffleBusyChrome(false, null, isFreshStart);
+        }
+    }
+
+    private void SetControlShuffleBusyChrome(bool busy, string? workingMessage, bool isFreshStart)
+    {
+        if (ControlShuffleStartButton is not null)
+        {
+            ControlShuffleStartButton.IsEnabled = !busy;
+            ControlShuffleStartButton.Content = busy && !isFreshStart
+                ? "⏳  Working…"
+                : "🔀  Start shuffle now";
+            ControlShuffleStartButton.Opacity = busy ? 0.7 : 1.0;
+        }
+
+        if (ControlFreshStartButton is not null)
+        {
+            ControlFreshStartButton.IsEnabled = !busy;
+            ControlFreshStartButton.Content = busy && isFreshStart
+                ? "⏳  Working…"
+                : "🔄  Restart fresh now";
+            ControlFreshStartButton.Opacity = busy ? 0.7 : 1.0;
+        }
+
+        if (ControlShuffleSourceCombo is not null)
+            ControlShuffleSourceCombo.IsEnabled = !busy;
+
+        if (busy && workingMessage is not null)
+            SetControlShuffleFeedback(workingMessage, warn: false);
+    }
+
+    private void SetControlShuffleFeedback(string message, bool warn)
+    {
+        if (ControlShuffleFeedback is null) return;
+        ControlShuffleFeedback.Text = message;
+        ControlShuffleFeedback.Foreground = warn
+            ? System.Windows.Media.Brushes.IndianRed
+            : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1C, 0x8E, 0x54));
+    }
+
+    private async void LevelVolumesButton_Click(object sender, RoutedEventArgs e)
     {
         var pct = int.TryParse(LevelPercentBox.Text, out var p) && p is >= 0 and <= 100 ? p : 20;
         SetStatus($"Setting all speakers to {pct}%…", warn: false);
@@ -3637,7 +3735,21 @@ public partial class MainWindow : Window
             _settings.LevelVolumePercent = pct; // honor the field value even if not yet Saved
             TrySaveLevelPercent();
         }
-        _runAction(HotsonosAction.LevelVolumes);
+
+        try
+        {
+            await _runAction(HotsonosAction.LevelVolumes).ConfigureAwait(true);
+            await LoadSpeakerVolumesAsync().ConfigureAwait(true);
+            var off = _settings.RoomVolumeOffsets?.Count(o => o.OffsetPercent != 0) ?? 0;
+            SetStatus(off > 0
+                ? $"Set speakers to {pct}% (with {off} room offset(s)) — list refreshed."
+                : $"Set speakers to {pct}% — list refreshed.", warn: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Level all volumes failed", ex);
+            SetStatus(ex.Message, warn: true);
+        }
     }
 
     private void TrySaveLevelPercent()

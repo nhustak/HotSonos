@@ -4,7 +4,7 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.28** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
+**Version 1.0.0.29** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
@@ -238,6 +238,11 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 ---
 
 ## Changelog
+
+### 1.0.0.29
+- **Control shuffle / fresh start:** busy UI feedback, disable double-click while queue builds  
+- **Level all** refreshes speaker list after apply; **Refresh volumes** on Speakers panel  
+- Volume path polish (coordinator-first steps, non-blocking AppLog writes)  
 
 ### 1.0.0.28
 - **Per-room volume offset** for Level all / Wake (amp/Port calibration); relative volume stays raw  

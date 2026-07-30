@@ -101,16 +101,22 @@
                                         <ComboBox x:Name="ControlShuffleSourceCombo" Height="32" Width="220" MinWidth="160"
                                                   VerticalContentAlignment="Center" Margin="0,0,10,0"
                                                   SelectionChanged="ControlShuffleSourceCombo_SelectionChanged" />
-                                        <Button Content="🔀  Start shuffle now" Height="32" Padding="14,0" Margin="0,0,12,0"
+                                        <Button x:Name="ControlShuffleStartButton"
+                                                Content="🔀  Start shuffle now" Height="32" Padding="14,0" Margin="0,0,12,0"
                                                 Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
                                                 Click="ShuffleLibraryButton_Click" />
                                     </StackPanel>
+                                    <TextBlock x:Name="ControlShuffleFeedback"
+                                               Text=""
+                                               FontSize="12" FontWeight="SemiBold"
+                                               Foreground="#FF1C8E54" Margin="0,8,0,0" TextWrapping="Wrap" />
                                     <Separator Margin="0,12,0,10" Background="#FF2ECC71" Opacity="0.4" />
                                     <TextBlock Text="🔄 Restart fresh" FontSize="15" FontWeight="SemiBold" Foreground="#FF1C2536" />
                                     <TextBlock Text="Re-discover, regroup all speakers, and start a new shuffle."
                                                Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
                                     <StackPanel Orientation="Horizontal">
-                                        <Button Content="🔄  Restart fresh now" Height="32" Padding="14,0" Margin="0,0,12,0"
+                                        <Button x:Name="ControlFreshStartButton"
+                                                Content="🔄  Restart fresh now" Height="32" Padding="14,0" Margin="0,0,12,0"
                                                 Background="#FF1C8E54" Foreground="White" FontWeight="SemiBold"
                                                 Click="FreshStartButton_Click" />
                                     </StackPanel>
@@ -206,7 +212,14 @@
                             BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="6" Padding="12,8"
                             VerticalAlignment="Top">
                         <StackPanel>
-                            <TextBlock Text="Speakers" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,2" />
+                            <DockPanel LastChildFill="True" Margin="0,0,0,2">
+                                <Button DockPanel.Dock="Right" x:Name="RefreshVolumesButton"
+                                        Content="Refresh volumes" Height="28" Padding="12,0" Margin="12,0,0,0"
+                                        Click="RefreshVolumesButton_Click"
+                                        ToolTip="Re-read mute/volume from every speaker (after Sonos app or hardware changes)" />
+                                <TextBlock Text="Speakers" FontSize="15" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                            </DockPanel>
                             <TextBlock Text="Sliders = raw Sonos %. Offset is added only on Level all and Wake absolute levels."
                                        Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
                             <StackPanel x:Name="SpeakersPanel" />

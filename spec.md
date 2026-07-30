@@ -16,7 +16,7 @@
 | Item | State |
 |------|--------|
 | **Git HEAD** | See git log |
-| **App version** | `1.0.0.28` |
+| **App version** | `1.0.0.29` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
 | **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · MCP Debug |
 | **Play sources** | Control **From**: All / tag / genre · play list · Quick Play · slots 1–6 · MCP; genres optional (`ShowGenresInPlaySources`) |

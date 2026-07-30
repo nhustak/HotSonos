@@ -662,8 +662,8 @@ public partial class App : System.Windows.Application
             if (!await _actionGate.WaitAsync(0))
             {
                 AppLog.Info($"Ignored concurrent exclusive action: {action}");
-                if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
-                    EnsureFlyout().ShowAction("Busy — already re-syncing / shuffling…");
+                // Always surface — double-hit while scanning is easy to miss.
+                EnsureFlyout().ShowAction("Busy — already re-syncing / shuffling…");
                 return;
             }
         }
@@ -674,10 +674,11 @@ public partial class App : System.Windows.Application
 
         try
         {
-            // FreshStart re-discovers (SSDP) then regroups then shuffles, which can take
-            // several seconds; acknowledge the keypress immediately so it doesn't look ignored.
-            if (action == HotsonosAction.FreshStart && (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned))
+            // Acknowledge immediately so UI/hotkey doesn't look dead during long queue builds.
+            if (action == HotsonosAction.FreshStart)
                 EnsureFlyout().ShowAction("🔄 Fresh start: re-syncing…");
+            else if (action == HotsonosAction.ShuffleLibrary)
+                EnsureFlyout().ShowAction("🔀 Building shuffle queue…");
 
             try
             {
@@ -686,7 +687,10 @@ public partial class App : System.Windows.Application
                 if (!string.IsNullOrEmpty(toast))
                 {
                     AppLog.Info($"Action {action} → {toast}");
-                    if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                    // Always show completion for exclusive work (user needs to know it finished).
+                    if (IsExclusiveAction(action)
+                        || _settings.ShowFlyoutOnAction
+                        || _settings.FlyoutPinned)
                         EnsureFlyout().ShowAction(toast!);
                 }
             }
@@ -999,7 +1003,7 @@ public partial class App : System.Windows.Application
         if (_mainWindow is null)
         {
             _mainWindow = new MainWindow(_sonos, _store, _settings, _library, ApplyBindings, OnRoomChangedFromWindow,
-                action => _ = ExecuteActionAsync(action),
+                action => ExecuteActionAsync(action),
                 mcpEndpoint: () => _mcpHost?.Endpoint ?? _mcpState?.Endpoint);
             _mainWindow.HideToTrayRequested += (_, _) => _mainWindow?.Hide();
             _mainWindow.Closing += OnMainWindowClosing;
