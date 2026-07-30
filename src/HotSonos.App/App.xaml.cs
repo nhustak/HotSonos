@@ -924,6 +924,7 @@ public partial class App : System.Windows.Application
             {
                 AppLog.Warn(
                     $"Sonos TransportStatus={status} title={nowPlaying.Title} uri={nowPlaying.TrackUri}");
+                // Auto-recover is handled in SonosManager (Next → Play → reshuffle).
             }
 
             if (string.IsNullOrWhiteSpace(nowPlaying.TrackUri)

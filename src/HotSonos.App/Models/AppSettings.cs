@@ -168,6 +168,13 @@ public sealed class AppSettings
     }
 
     /// <summary>
+    /// When the coordinator hits ERROR_* or unexpected STOPPED after playing, try Next/Play
+    /// and if still dead rebuild library shuffle. Default on — recovers queue/resource failures.
+    /// Does not resume a deliberate Pause.
+    /// </summary>
+    public bool AutoRecoverPlayback { get; set; } = true;
+
+    /// <summary>
     /// Full topology monitor (bonded Sub parse, event JSONL, Topology map diffs).
     /// Default <c>false</c> — GENA floods + file I/O delayed volume. Toggle on Topology tab only when debugging.
     /// </summary>

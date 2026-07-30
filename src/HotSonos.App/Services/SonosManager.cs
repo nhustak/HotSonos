@@ -47,6 +47,15 @@ public sealed class SonosManager
     private IReadOnlyList<string> _offline = [];
     private bool _topologySeen;
     private int _topUpInFlight; // 0/1
+    private int _recoverInFlight; // 0/1
+    private int _jumpReshuffleInFlight; // 0/1
+    private DateTime _lastRecoverUtc = DateTime.MinValue;
+    private int _recoverAttemptsInWindow;
+    private DateTime _recoverWindowStartUtc = DateTime.MinValue;
+
+    /// <summary>Last GENA queue index — used to detect Sonos jumping back to track 1 (same queue repeat).</summary>
+    private int? _lastQueueTrackNum;
+    private int? _lastQueueTotal;
 
     /// <summary>Last track/state observed via GENA — drives start/pause/resume event logging.</summary>
     private string? _lastEventTrackKey;
@@ -146,7 +155,12 @@ public sealed class SonosManager
         _discovery = new SonosDiscovery(_soap);
         _events.NowPlayingChanged += np =>
         {
+            var prevState = _lastEventState;
             ObservePlayLifecycle(np);
+
+            // App restart clears in-memory mode → top-up dies and the same NORMAL queue can loop.
+            MaybeRearmShuffleFromLibraryQueue(np);
+            MaybeDetectQueueRestartLoop(np);
 
             if (!string.IsNullOrWhiteSpace(np.TrackUri)
                 && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning)
@@ -162,6 +176,9 @@ public sealed class SonosManager
             {
                 _ = TryTopUpQueueAsync();
             }
+
+            // ERROR_NO_RESOURCE / unexpected STOPPED — try to keep music going.
+            _ = MaybeRecoverPlaybackAsync(np, prevState);
 
             NowPlayingChanged?.Invoke(np);
         };
@@ -231,6 +248,318 @@ public sealed class SonosManager
 
     private static bool IsPausedLike(SonosTransportState s) =>
         s is SonosTransportState.PausedPlayback;
+
+    /// <summary>
+    /// After app restart, in-memory <see cref="_playbackMode"/> is "none" even while Sonos is
+    /// still playing the library queue — top-up never runs and the same NORMAL queue can loop.
+    /// </summary>
+    private void MaybeRearmShuffleFromLibraryQueue(NowPlaying np)
+    {
+        if (!string.Equals(_playbackMode, "none", StringComparison.OrdinalIgnoreCase))
+            return;
+        if (!IsPlayingLike(np.State))
+            return;
+        if (!LooksLikeLibraryTrack(np.TrackUri))
+            return;
+
+        _playbackMode = "shuffle";
+        AppLog.Info(
+            $"Re-armed shuffle session from active library queue (mode was none; top-up enabled). " +
+            $"track={np.CurrentTrack}/{np.NumberOfTracks} title={np.Title}");
+    }
+
+    private static bool LooksLikeLibraryTrack(string? trackUri)
+    {
+        if (string.IsNullOrWhiteSpace(trackUri))
+            return false;
+        return trackUri.Contains("x-file-cifs", StringComparison.OrdinalIgnoreCase)
+               || trackUri.Contains("x-file-smb", StringComparison.OrdinalIgnoreCase)
+               || trackUri.Contains("://", StringComparison.Ordinal)
+                  && trackUri.Contains("/Music/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Sonos sometimes restarts the same queue at track 1 (Play after STOPPED / glitch).
+    /// Detect a large backward jump on an unchanged queue length and rebuild shuffle.
+    /// </summary>
+    private void MaybeDetectQueueRestartLoop(NowPlaying np)
+    {
+        if (np.CurrentTrack is not int cur || np.NumberOfTracks is not int total || total < 10)
+            return;
+
+        var prev = _lastQueueTrackNum;
+        var prevTotal = _lastQueueTotal;
+        _lastQueueTrackNum = cur;
+        _lastQueueTotal = total;
+
+        if (prev is not int p || prevTotal is not int pt)
+            return;
+
+        // New shuffle changes length; ignore.
+        if (pt != total)
+            return;
+
+        // Jump from deep in the queue back near the start (not a couple of Previous presses).
+        if (p < 15 || cur > 5 || p - cur < 10)
+            return;
+
+        if (!IsPlayingLike(np.State) || !LooksLikeLibraryTrack(np.TrackUri))
+            return;
+
+        AppLog.Warn(
+            $"Queue position jumped backward {p}→{cur} of {total} (same queue) — " +
+            "reshuffling to break repeat loop");
+        _ = BreakRepeatLoopAsync($"queue jump {p}→{cur}/{total}");
+    }
+
+    private async Task BreakRepeatLoopAsync(string reason)
+    {
+        if (Interlocked.CompareExchange(ref _jumpReshuffleInFlight, 1, 0) != 0)
+            return;
+
+        try
+        {
+            // Cooldown shared with recovery so we don't thrash.
+            if ((DateTime.UtcNow - _lastRecoverUtc).TotalSeconds < 15)
+                return;
+
+            await Task.Delay(800).ConfigureAwait(false);
+            if (_controller is null)
+                return;
+
+            _lastRecoverUtc = DateTime.UtcNow;
+            AppLog.Info($"Break repeat loop: {reason}");
+            await GroupAllSpeakersAsync().ConfigureAwait(false);
+            var summary = await ShuffleWithHistoryAsync().ConfigureAwait(false);
+            AppLog.Info($"Break repeat loop: reshuffle OK ({summary})");
+            _lastQueueTrackNum = 1;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Break repeat loop reshuffle failed", ex);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _jumpReshuffleInFlight, 0);
+        }
+    }
+
+    /// <summary>
+    /// Recover from transport ERROR_* or unexpected STOPPED (after we were playing).
+    /// Does not resume deliberate Pause. Rate-limited to avoid thrash loops.
+    /// Never uses Play alone at end-of-queue — that restarts the same queue from track 1.
+    /// </summary>
+    private async Task MaybeRecoverPlaybackAsync(NowPlaying np, SonosTransportState prevState)
+    {
+        var s = _settings().EnsureShape();
+        if (!s.AutoRecoverPlayback)
+            return;
+        if (_controller is null)
+            return;
+
+        var status = np.TransportStatus ?? "";
+        var hasError = status.Length > 0
+                       && !status.Equals("OK", StringComparison.OrdinalIgnoreCase)
+                       && status.Contains("ERROR", StringComparison.OrdinalIgnoreCase);
+
+        // User Pause must never auto-resume.
+        if (np.State is SonosTransportState.PausedPlayback)
+            return;
+
+        var unexpectedStop = np.State is SonosTransportState.Stopped
+                             && prevState is SonosTransportState.Playing
+                                 or SonosTransportState.Transitioning;
+
+        // Empty title+uri with ERROR is the classic ERROR_NO_RESOURCE blip mid-queue.
+        if (!hasError && !unexpectedStop)
+            return;
+
+        // Ignore first snapshot after app start (Unknown → Stopped).
+        if (prevState is SonosTransportState.Unknown)
+            return;
+
+        // Cooldown between recoveries.
+        if ((DateTime.UtcNow - _lastRecoverUtc).TotalSeconds < 10)
+            return;
+
+        // Burst limit: at most 4 recovers per 15 minutes.
+        if ((DateTime.UtcNow - _recoverWindowStartUtc).TotalMinutes > 15
+            || _recoverWindowStartUtc == DateTime.MinValue)
+        {
+            _recoverWindowStartUtc = DateTime.UtcNow;
+            _recoverAttemptsInWindow = 0;
+        }
+
+        if (_recoverAttemptsInWindow >= 4)
+            return;
+
+        if (Interlocked.CompareExchange(ref _recoverInFlight, 1, 0) != 0)
+            return;
+
+        var failedUri = np.TrackUri;
+        var failedKey = PlayHistoryStore.NormalizeKey(failedUri);
+        var atOrPastEnd = np.CurrentTrack is int cur
+                          && np.NumberOfTracks is int total
+                          && total > 0
+                          && cur >= total;
+
+        try
+        {
+            // Debounce GENA double-fires.
+            await Task.Delay(1200).ConfigureAwait(false);
+            if (_controller is null)
+                return;
+
+            var state = await _controller.GetTransportStateAsync().ConfigureAwait(false);
+            if (IsPlayingLike(state))
+                return; // already recovered on its own
+
+            if (state is SonosTransportState.PausedPlayback)
+                return; // user paused during debounce
+
+            _recoverAttemptsInWindow++;
+            _lastRecoverUtc = DateTime.UtcNow;
+
+            AppLog.Info(
+                $"Playback recovery start: prev={prevState} gena={np.State} status={status} " +
+                $"track={np.CurrentTrack}/{np.NumberOfTracks} end={atOrPastEnd} " +
+                $"title={np.Title} uri={np.TrackUri}");
+
+            // Natural end of NORMAL queue (or STOPPED on last track) → fresh shuffle,
+            // never Play (Play restarts the same order from track 1).
+            if (!hasError && (atOrPastEnd || np.IsNearQueueEnd(1)))
+            {
+                AppLog.Info("Playback recovery: end of queue — reshuffling (not Play)");
+                await GroupAllSpeakersAsync().ConfigureAwait(false);
+                var endSummary = await ShuffleWithHistoryAsync().ConfigureAwait(false);
+                AppLog.Info($"Playback recovery: end-of-queue reshuffle OK ({endSummary})");
+                return;
+            }
+
+            // 1) Bad resource / stuck stop mid-queue → skip to next item.
+            try
+            {
+                await _controller.NextAsync().ConfigureAwait(false);
+                AppLog.Info("Playback recovery: Next");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Playback recovery Next failed", ex);
+            }
+
+            await Task.Delay(600).ConfigureAwait(false);
+            state = await _controller.GetTransportStateAsync().ConfigureAwait(false);
+            if (IsPlayingLike(state))
+            {
+                // Guard: Next can no-op at end of queue and leave us on the same broken track after Play.
+                var afterUri = await _controller.GetCurrentTrackUriAsync().ConfigureAwait(false);
+                var afterKey = PlayHistoryStore.NormalizeKey(afterUri);
+                if (hasError
+                    && failedKey.Length > 0
+                    && string.Equals(afterKey, failedKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    AppLog.Info("Playback recovery: still on failed track after Next — try Next again");
+                    try { await _controller.NextAsync().ConfigureAwait(false); }
+                    catch (Exception ex) { AppLog.Warn("Playback recovery second Next failed", ex); }
+                    await Task.Delay(600).ConfigureAwait(false);
+                    state = await _controller.GetTransportStateAsync().ConfigureAwait(false);
+                    afterUri = await _controller.GetCurrentTrackUriAsync().ConfigureAwait(false);
+                    afterKey = PlayHistoryStore.NormalizeKey(afterUri);
+                    if (IsPlayingLike(state)
+                        && string.Equals(afterKey, failedKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLog.Info("Playback recovery: same track stuck — reshuffling");
+                        await GroupAllSpeakersAsync().ConfigureAwait(false);
+                        var stuckSummary = await ShuffleWithHistoryAsync().ConfigureAwait(false);
+                        AppLog.Info($"Playback recovery: stuck-track reshuffle OK ({stuckSummary})");
+                        return;
+                    }
+                }
+
+                AppLog.Info($"Playback recovery: playing after Next ({state})");
+                if (string.Equals(_playbackMode, "none", StringComparison.OrdinalIgnoreCase))
+                    _playbackMode = "shuffle";
+                return;
+            }
+
+            // 2) Still dead mid-queue → Play (resume at current index). Skip when we already
+            // know we're at end — Play would restart the whole queue.
+            if (atOrPastEnd)
+            {
+                AppLog.Info("Playback recovery: still stopped at end — reshuffling");
+                await GroupAllSpeakersAsync().ConfigureAwait(false);
+                var endSummary2 = await ShuffleWithHistoryAsync().ConfigureAwait(false);
+                AppLog.Info($"Playback recovery: reshuffle OK ({endSummary2})");
+                return;
+            }
+
+            try
+            {
+                await _controller.PlayAsync().ConfigureAwait(false);
+                AppLog.Info("Playback recovery: Play");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Playback recovery Play failed", ex);
+            }
+
+            await Task.Delay(800).ConfigureAwait(false);
+            state = await _controller.GetTransportStateAsync().ConfigureAwait(false);
+            if (IsPlayingLike(state))
+            {
+                var afterUri = await _controller.GetCurrentTrackUriAsync().ConfigureAwait(false);
+                var afterKey = PlayHistoryStore.NormalizeKey(afterUri);
+                // Play after ERROR often restarts the same bad track — skip it.
+                if (hasError
+                    && failedKey.Length > 0
+                    && string.Equals(afterKey, failedKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    AppLog.Info("Playback recovery: Play restarted failed track — Next");
+                    try { await _controller.NextAsync().ConfigureAwait(false); }
+                    catch (Exception ex) { AppLog.Warn("Playback recovery Next-after-Play failed", ex); }
+                    await Task.Delay(600).ConfigureAwait(false);
+                    state = await _controller.GetTransportStateAsync().ConfigureAwait(false);
+                    afterUri = await _controller.GetCurrentTrackUriAsync().ConfigureAwait(false);
+                    afterKey = PlayHistoryStore.NormalizeKey(afterUri);
+                    if (IsPlayingLike(state)
+                        && string.Equals(afterKey, failedKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLog.Info("Playback recovery: still failed track — reshuffling");
+                        await GroupAllSpeakersAsync().ConfigureAwait(false);
+                        var sameSummary = await ShuffleWithHistoryAsync().ConfigureAwait(false);
+                        AppLog.Info($"Playback recovery: reshuffle OK ({sameSummary})");
+                        return;
+                    }
+                }
+
+                AppLog.Info($"Playback recovery: playing after Play ({state})");
+                if (string.Equals(_playbackMode, "none", StringComparison.OrdinalIgnoreCase))
+                    _playbackMode = "shuffle";
+                return;
+            }
+
+            // 3) Last resort: rebuild a history-aware library shuffle (keeps house music going).
+            AppLog.Info("Playback recovery: reshuffling library (queue unrecoverable)");
+            try
+            {
+                await GroupAllSpeakersAsync().ConfigureAwait(false);
+                var summary = await ShuffleWithHistoryAsync().ConfigureAwait(false);
+                AppLog.Info($"Playback recovery: reshuffle OK ({summary})");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Playback recovery reshuffle failed", ex);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Playback recovery failed", ex);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _recoverInFlight, 0);
+        }
+    }
 
     private void OnTopologyEvent(string stateXml)
     {
@@ -851,6 +1180,8 @@ public sealed class SonosManager
         // New queue replaces the old one — restart session served set from this batch.
         ClearSessionServed();
         RememberServed(result.EnqueuedUris);
+        _lastQueueTrackNum = null;
+        _lastQueueTotal = null;
 
         _playbackMode = "shuffle";
         _folderShufflePrefix = null;
