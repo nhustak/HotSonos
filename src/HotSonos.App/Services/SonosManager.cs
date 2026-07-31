@@ -186,26 +186,39 @@ public sealed class SonosManager
             _lastGenaNpSignature = sig;
 
             var prevState = _lastEventState;
-            ObservePlayLifecycle(np);
+            try { ObservePlayLifecycle(np); }
+            catch (Exception ex) { AppLog.Warn("ObservePlayLifecycle failed", ex); }
 
-            MaybeRearmShuffleFromLibraryQueue(np);
+            try { MaybeRearmShuffleFromLibraryQueue(np); }
+            catch (Exception ex) { AppLog.Warn("Rearm shuffle failed", ex); }
 
-            if (!string.IsNullOrWhiteSpace(np.TrackUri)
-                && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning)
+            // History / top-up off the hot path — never block poll/UI on disk or library shuffle.
+            var uri = np.TrackUri;
+            var playing = np.State is SonosTransportState.Playing or SonosTransportState.Transitioning;
+            if (playing && !string.IsNullOrWhiteSpace(uri))
             {
-                _playHistory.RecordPlayed(np.TrackUri);
+                _ = Task.Run(() =>
+                {
+                    try { _playHistory.RecordPlayed(uri); }
+                    catch (Exception ex) { AppLog.Warn("RecordPlayed failed", ex); }
+                });
             }
 
-            var s = _settings().EnsureShape();
-            if (s.ShuffleAutoTopUp
-                && ShouldAutoTopUp(s)
-                && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning
-                && np.IsNearQueueEnd(s.ShuffleTopUpWhenRemaining))
+            try
             {
-                _ = TryTopUpQueueAsync();
+                var s = _settings().EnsureShape();
+                if (s.ShuffleAutoTopUp
+                    && ShouldAutoTopUp(s)
+                    && playing
+                    && np.IsNearQueueEnd(s.ShuffleTopUpWhenRemaining))
+                {
+                    _ = TryTopUpQueueAsync();
+                }
             }
+            catch (Exception ex) { AppLog.Warn("Top-up check failed", ex); }
 
-            _ = MaybeRecoverPlaybackAsync(np, prevState);
+            try { _ = MaybeRecoverPlaybackAsync(np, prevState); }
+            catch (Exception ex) { AppLog.Warn("Recover schedule failed", ex); }
 
             try { NowPlayingChanged?.Invoke(np); }
             catch (Exception uiEx)

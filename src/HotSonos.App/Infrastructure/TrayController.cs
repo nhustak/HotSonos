@@ -100,12 +100,18 @@ public sealed class TrayController : IDisposable
             Visible = true,
         };
         // Double-click primary action is user-configurable (Options → tray double-click).
-        _notifyIcon.DoubleClick += (_, _) => _callbacks.DoubleClick();
+        _notifyIcon.DoubleClick += (_, _) =>
+        {
+            try { _callbacks.DoubleClick(); }
+            catch { /* never let tray UI take down the process */ }
+        };
         // Single left-click: open / bring main window to front (even if already open).
         _notifyIcon.MouseClick += (_, e) =>
         {
-            if (e.Button == MouseButtons.Left)
-                _callbacks.OpenSettings();
+            if (e.Button != MouseButtons.Left)
+                return;
+            try { _callbacks.OpenSettings(); }
+            catch { /* never let tray UI take down the process */ }
         };
     }
 
@@ -176,8 +182,19 @@ public sealed class TrayController : IDisposable
     /// <summary>Sets the tray hover tooltip to the current track (truncated to fit).</summary>
     public void UpdateNowPlaying(string? line)
     {
-        var text = string.IsNullOrWhiteSpace(line) ? _versionLabel : $"♪ {line}";
-        _notifyIcon.Text = text.Length <= 63 ? text : text[..62] + "…";
+        try
+        {
+            // NotifyIcon.Text max is 63 chars; invalid chars / length can throw on some builds.
+            var text = string.IsNullOrWhiteSpace(line) ? _versionLabel : "♪ " + line;
+            text = text.Replace('\0', ' ').Trim();
+            if (text.Length > 63)
+                text = text[..60] + "...";
+            _notifyIcon.Text = text;
+        }
+        catch
+        {
+            try { _notifyIcon.Text = _versionLabel; } catch { /* ignore */ }
+        }
     }
 
     public void ShowBalloon(string title, string message)
