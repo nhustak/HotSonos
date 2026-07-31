@@ -58,6 +58,12 @@ public sealed class SonosManager
     /// around subscription renew (~2.5–5 min). Poll GetPositionInfo instead until GENA is rewritten.
     /// </summary>
     public static bool UseGenaSubscriptions { get; set; }
+
+    /// <summary>
+    /// When false, do not poll now-playing either (hotkeys/SOAP control only). Used to isolate
+    /// whether transport polling is involved in the ~5 min hard death.
+    /// </summary>
+    public static bool UseNowPlayingPoll { get; set; } = true; // set false only for ultra-minimal isolation
     private int _recoverAttemptsInWindow;
     private DateTime _recoverWindowStartUtc = DateTime.MinValue;
 
@@ -163,8 +169,10 @@ public sealed class SonosManager
         _events.NowPlayingChanged += HandleNowPlayingSnapshot;
         _events.TopologyChanged += OnTopologyEvent;
 
-        if (!UseGenaSubscriptions)
+        if (!UseGenaSubscriptions && UseNowPlayingPoll)
             EnsureNowPlayingPoller();
+        else if (!UseGenaSubscriptions)
+            AppLog.Info("GENA OFF and now-playing poll OFF — control-only stability mode");
     }
 
     /// <summary>Shared path for GENA or poll-based now-playing.</summary>
@@ -1704,7 +1712,8 @@ public sealed class SonosManager
 
         if (!UseGenaSubscriptions)
         {
-            EnsureNowPlayingPoller();
+            if (UseNowPlayingPoll)
+                EnsureNowPlayingPoller();
             return;
         }
 

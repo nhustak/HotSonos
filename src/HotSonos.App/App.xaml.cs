@@ -31,7 +31,8 @@ public partial class App : System.Windows.Application
     private NowPlaying? _lastNowPlaying;
     private MainWindow? _mainWindow;
     private System.Threading.Timer? _nightlyTimer;
-    private System.Threading.Timer? _heartbeatTimer;
+    private System.Threading.Timer? _heartbeatTimer; // unused; UI timer below
+    private System.Windows.Threading.DispatcherTimer? _heartbeatUiTimer;
     private WakeMusicService? _wake;
     private HotSonosMcpHost? _mcpHost;
     private HotSonosMcpState? _mcpState;
@@ -46,6 +47,7 @@ public partial class App : System.Windows.Application
     private bool _isExiting;
     /// <summary>False until first discovery finishes — GENA/flyout must not run UI work before tray + room exist.</summary>
     private bool _startupReady;
+
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -144,6 +146,8 @@ public partial class App : System.Windows.Application
             AppLog.Lifecycle($"WPF Exit Application.ExitCode={args.ApplicationExitCode} isExiting={_isExiting}");
             _heartbeatTimer?.Dispose();
             _heartbeatTimer = null;
+            try { _heartbeatUiTimer?.Stop(); } catch { /* ignore */ }
+            _heartbeatUiTimer = null;
         };
 
         try
@@ -178,6 +182,9 @@ public partial class App : System.Windows.Application
         try { _store.Save(_settings); }
         catch (Exception ex) { AppLog.Warn("Settings save after load/normalize failed", ex); }
 
+        // GENA off (hard death). Poll for now-playing / top-up.
+        SonosManager.UseGenaSubscriptions = false;
+        SonosManager.UseNowPlayingPoll = true;
         _sonos = new SonosManager(() => _settings);
         _sonos.NowPlayingChanged += OnNowPlayingChanged;
         _sonos.TopologyChanged += OnTopologyChanged;
@@ -209,45 +216,36 @@ public partial class App : System.Windows.Application
         // Must NOT re-run every launch — was dual-writing 100+ FLACs to NAS and thrashing TagLib.
         ScheduleLegacyTagMigrationOnce();
         // Retry tag writes that were deferred while Sonos had the file open.
-        // TagLib on a thread-pool timer — never on the WPF dispatcher (native crashes / UI freezes).
-        _pendingTagTimer = new System.Threading.Timer(
-            _ =>
+        // No pending-tag Threading.Timer (isolation). Heartbeat on UI DispatcherTimer only.
+        _pendingTagTimer = null;
+        _heartbeatUiTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(15),
+        };
+        _heartbeatUiTimer.Tick += (_, _) =>
+        {
+            try
             {
-                try { ProcessPendingTagWritesSafe(); }
-                catch (Exception ex) { AppLog.Warn("Pending tag timer failed", ex); }
-            },
-            null,
-            TimeSpan.FromSeconds(30),
-            TimeSpan.FromSeconds(30));
-        // Heartbeat so silent death leaves a last-seen timestamp in the daily log.
-        _heartbeatTimer = new System.Threading.Timer(
-            _ =>
+                var wsMb = Process.GetCurrentProcess().WorkingSet64 / (1024.0 * 1024.0);
+                var mode = _sonos is null
+                    ? "?"
+                    : _sonos.ShuffleSessionActive
+                        ? "shuffle"
+                        : _sonos.CanResumeShuffle
+                            ? "special/folder"
+                            : "none";
+                var np = _lastNowPlaying?.DisplayLine ?? "(none)";
+                if (np.Length > 60) np = np[..57] + "...";
+                AppLog.Lifecycle(
+                    $"Heartbeat uptime={_uptime.Elapsed:hh\\:mm\\:ss} ws={wsMb:F0}MB " +
+                    $"groups={_sonos?.Groups.Count ?? 0} mode={mode} mcp={_mcpHost?.IsRunning == true} np={np}");
+            }
+            catch (Exception ex)
             {
-                try
-                {
-                    var wsMb = Process.GetCurrentProcess().WorkingSet64 / (1024.0 * 1024.0);
-                    var mode = _sonos is null
-                        ? "?"
-                        : _sonos.ShuffleSessionActive
-                            ? "shuffle"
-                            : _sonos.CanResumeShuffle
-                                ? "special/folder"
-                                : "none";
-                    var np = _lastNowPlaying?.DisplayLine ?? "(none)";
-                    if (np.Length > 60) np = np[..57] + "...";
-                    // Also touch last-exit so we know last-alive time if ProcessExit never runs.
-                    AppLog.Lifecycle(
-                        $"Heartbeat uptime={_uptime.Elapsed:hh\\:mm\\:ss} ws={wsMb:F0}MB " +
-                        $"groups={_sonos?.Groups.Count ?? 0} mode={mode} mcp={_mcpHost?.IsRunning == true} np={np}");
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Warn("Heartbeat failed", ex);
-                }
-            },
-            null,
-            TimeSpan.FromMinutes(2),
-            TimeSpan.FromMinutes(2));
+                AppLog.Warn("Heartbeat failed", ex);
+            }
+        };
+        _heartbeatUiTimer.Start();
 
         _mcpState = new HotSonosMcpState
         {
@@ -302,18 +300,12 @@ public partial class App : System.Windows.Application
         if (failures.Count > 0)
             AppLog.Warn($"Hotkey registration failed for: {string.Join(", ", failures)}");
 
-        // Tray-only until proven stable. Opening MainWindow on every manual launch raced discovery
-        // and pulls a huge WPF surface; open from tray when needed.
+        // Tray-only on start (open Settings from tray). Discover → ready → optional MCP.
         _ = StartupSequenceAsync(openMainWindow: false);
 
-        // Empty cache: discover roots from Sonos (if needed) and scan in the background.
-        if (_library.GetStatus().TrackCount == 0)
-        {
-            var (started, msg) = _library.RequestRescan(forceAll: false, rediscoverRoots: false);
-            if (started) AppLog.Info($"Library auto-scan: {msg}");
-            else AppLog.Info($"Library auto-scan skipped: {msg}");
+        // Isolation: no library auto-scan on start (disk thrash).
         }
-        }
+
         catch (Exception ex)
         {
             AppLog.Error("Fatal startup failure", ex);
@@ -586,6 +578,7 @@ public partial class App : System.Windows.Application
         try
         {
             await InitialDiscoveryAsync().ConfigureAwait(true);
+            // MCP stays off in stability isolation (settings forced false).
             await StartMcpIfEnabledAsync().ConfigureAwait(true);
             if (openMainWindow)
             {
@@ -595,6 +588,8 @@ public partial class App : System.Windows.Application
                     catch (Exception ex) { AppLog.Error("ShowMainWindow after discovery failed", ex); }
                 });
             }
+
+            AppLog.Info("Startup sequence complete (GENA off, MCP off, tray-only)");
         }
         catch (Exception ex)
         {
