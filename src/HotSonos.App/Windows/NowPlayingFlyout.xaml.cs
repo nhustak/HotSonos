@@ -75,17 +75,34 @@ public partial class NowPlayingFlyout : Window
     private void PositionFlyout()
     {
         UpdateLayout();
-        if (_settings.FlyoutLeft is { } left && _settings.FlyoutTop is { } top)
-        {
-            Left = left;
-            Top = top;
-            return;
-        }
-
         var work = SystemParameters.WorkArea;
         const double margin = 24;
-        Left = work.Right - ActualWidth - margin;
-        Top = work.Bottom - ActualHeight - margin;
+        var w = Math.Max(ActualWidth, 200);
+        var h = Math.Max(ActualHeight, 80);
+
+        double left;
+        double top;
+        if (_settings.FlyoutLeft is { } savedLeft && _settings.FlyoutTop is { } savedTop)
+        {
+            left = savedLeft;
+            top = savedTop;
+        }
+        else
+        {
+            left = work.Right - w - margin;
+            top = work.Bottom - h - margin;
+        }
+
+        // Clamp to virtual screen — multi-monitor saved coords (e.g. 4700+) can be off all
+        // displays after layout changes and have crashed/blanked the tray UI on Show().
+        var vx = SystemParameters.VirtualScreenLeft;
+        var vy = SystemParameters.VirtualScreenTop;
+        var vw = SystemParameters.VirtualScreenWidth;
+        var vh = SystemParameters.VirtualScreenHeight;
+        left = Math.Clamp(left, vx, vx + vw - w);
+        top = Math.Clamp(top, vy, vy + vh - h);
+        Left = left;
+        Top = top;
     }
 
     private async void SetArt(string? uri)

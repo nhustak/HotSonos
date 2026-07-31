@@ -225,8 +225,22 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
         var meta = WebUtility.HtmlDecode(metaEscaped);
         var art = Tag(meta, "upnp:albumArtURI");
-        if (!string.IsNullOrEmpty(art) && art.StartsWith('/') && coordinatorIp is not null)
-            art = $"http://{coordinatorIp}:1400{art}";
+        // Sonos often sends relative /getaa?... — make absolute when we know the coordinator.
+        if (!string.IsNullOrEmpty(art)
+            && !art.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            && coordinatorIp is not null)
+        {
+            if (art.StartsWith('/'))
+                art = $"http://{coordinatorIp}:1400{art}";
+            else
+                art = $"http://{coordinatorIp}:1400/{art}";
+        }
+        else if (!string.IsNullOrEmpty(art)
+                 && !art.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            // No coordinator yet — drop relative art rather than throw on HttpClient.
+            art = null;
+        }
 
         return new NowPlaying
         {

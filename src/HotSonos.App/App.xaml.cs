@@ -44,22 +44,12 @@ public partial class App : System.Windows.Application
     private int _pendingVolumeDelta;
     private int _volumeDrainRunning; // 0/1
     private bool _isExiting;
-    private static bool _isWatchdogProcess;
+    /// <summary>False until first discovery finishes — GENA/flyout must not run UI work before tray + room exist.</summary>
+    private bool _startupReady;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-
-        // Companion process: if the tray dies uncleanly, restart it. Clean Exit Application skips restart.
-        if (e.Args is { Length: >= 2 }
-            && string.Equals(e.Args[0], "--watchdog", StringComparison.OrdinalIgnoreCase)
-            && int.TryParse(e.Args[1], out var parentPid))
-        {
-            _isWatchdogProcess = true;
-            RunWatchdogLoop(parentPid);
-            Shutdown();
-            return;
-        }
 
         _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var isNew);
         if (!isNew)
@@ -119,7 +109,6 @@ public partial class App : System.Windows.Application
         RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
 
         AppLog.Lifecycle($"Starting {AppVersion.DisplayName} pid={Environment.ProcessId} (args: {string.Join(' ', e.Args)})");
-        StartWatchdogCompanion();
 
         // A tray utility must survive stray errors (e.g. flaky album-art loads or
         // event-callback hiccups) rather than vanish. Log + surface instead.
@@ -145,8 +134,6 @@ public partial class App : System.Windows.Application
         };
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
-            if (_isWatchdogProcess)
-                return;
             // Last chance — may run after WPF teardown; keep it tiny and durable.
             AppLog.Lifecycle(
                 $"ProcessExit uptime={_uptime.Elapsed:hh\\:mm\\:ss} isExiting={_isExiting} " +
@@ -154,8 +141,7 @@ public partial class App : System.Windows.Application
         };
         Exit += (_, args) =>
         {
-            if (!_isWatchdogProcess)
-                AppLog.Lifecycle($"WPF Exit Application.ExitCode={args.ApplicationExitCode} isExiting={_isExiting}");
+            AppLog.Lifecycle($"WPF Exit Application.ExitCode={args.ApplicationExitCode} isExiting={_isExiting}");
             _heartbeatTimer?.Dispose();
             _heartbeatTimer = null;
         };
@@ -589,6 +575,17 @@ public partial class App : System.Windows.Application
             // Discovery failures are non-fatal; the user can Refresh from the tray.
             AppLog.Warn("Initial discovery failed", ex);
         }
+        finally
+        {
+            _startupReady = true;
+            // Replay last GENA snapshot now that tray/controller exist (safe path).
+            if (_lastNowPlaying is not null)
+            {
+                try { OnNowPlayingChanged(_lastNowPlaying); }
+                catch (Exception ex) { AppLog.Warn("Deferred now-playing apply failed", ex); }
+            }
+            AppLog.Info("Startup ready (discovery finished)");
+        }
     }
 
     /// <summary>Re-registers hotkeys from settings and refreshes the tray; returns failures.</summary>
@@ -642,6 +639,12 @@ public partial class App : System.Windows.Application
 
     private async void OnHotkeyPressed(HotsonosAction action)
     {
+        if (!_startupReady)
+        {
+            AppLog.Info($"Hotkey {action} ignored — still starting");
+            return;
+        }
+
         if (action == HotsonosAction.QuickTag)
         {
             ShowQuickTagOverlay();
@@ -896,7 +899,6 @@ public partial class App : System.Windows.Application
     private int _keepHouseGroupedInFlight; // 0/1
     private DateTime _keepHouseGroupedLastUtc = DateTime.MinValue;
     private DateTime _lastTrayTopologyRefreshUtc = DateTime.MinValue;
-    private Process? _watchdogProcess;
 
     private void OnTopologyChanged()
     {
@@ -987,6 +989,13 @@ public partial class App : System.Windows.Application
     private void OnNowPlayingChanged(NowPlaying nowPlaying)
     {
         // Raised on a background (listener) thread — marshal to the UI thread.
+        // Cache only until startup discovery finishes (GENA often fires before tray/controller ready).
+        if (!_startupReady)
+        {
+            _lastNowPlaying = nowPlaying;
+            return;
+        }
+
         TryLogUnplayableNowPlaying(nowPlaying);
 
         var key = $"{nowPlaying.State}|{PlayHistoryStore.NormalizeKey(nowPlaying.TrackUri)}|{nowPlaying.Title}";
@@ -997,6 +1006,9 @@ public partial class App : System.Windows.Application
 
         Dispatcher.BeginInvoke(() =>
         {
+            if (_isExiting || _tray is null)
+                return;
+
             _lastNowPlaying = nowPlaying;
             try { _tray.UpdateNowPlaying(nowPlaying.IsEmpty ? null : nowPlaying.DisplayLine); }
             catch (Exception ex) { AppLog.Warn("Tray now-playing update failed", ex); }
@@ -1228,140 +1240,10 @@ public partial class App : System.Windows.Application
         }
     }
 
-    /// <summary>
-    /// Spawns <c>HotSonos.exe --watchdog {pid}</c> which restarts us if we die without a clean exit.
-    /// </summary>
-    private void StartWatchdogCompanion()
-    {
-        try
-        {
-            var exe = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(exe) || !File.Exists(exe))
-                return;
-
-            _watchdogProcess = Process.Start(new ProcessStartInfo
-            {
-                FileName = exe,
-                Arguments = $"--watchdog {Environment.ProcessId}",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory,
-            });
-            AppLog.Info($"Watchdog companion started (pid={_watchdogProcess?.Id})");
-        }
-        catch (Exception ex)
-        {
-            AppLog.Warn("Could not start watchdog companion", ex);
-        }
-    }
-
-    /// <summary>
-    /// Runs in a headless second process. Waits for the tray PID to exit; if last-exit is not clean, relaunches.
-    /// </summary>
-    private static void RunWatchdogLoop(int parentPid)
-    {
-        // Watchdog must not write last-exit.txt (would race with the tray app).
-        try
-        {
-            AppLog.Info($"Watchdog watching parent pid={parentPid}");
-            try
-            {
-                using var parent = Process.GetProcessById(parentPid);
-                parent.WaitForExit();
-            }
-            catch (ArgumentException)
-            {
-                // Parent already gone.
-            }
-
-            Thread.Sleep(1500);
-
-            var lastExitPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "HotSonos", "last-exit.txt");
-            var last = "";
-            try
-            {
-                if (File.Exists(lastExitPath))
-                    last = File.ReadAllText(lastExitPath);
-            }
-            catch { /* ignore */ }
-
-            // Clean tray exit — do not resurrect.
-            if (last.Contains("Exit requested", StringComparison.OrdinalIgnoreCase)
-                || last.Contains("Second instance exit", StringComparison.OrdinalIgnoreCase)
-                || (last.Contains("WPF Exit", StringComparison.OrdinalIgnoreCase)
-                    && last.Contains("isExiting=True", StringComparison.OrdinalIgnoreCase))
-                || (last.Contains("ProcessExit", StringComparison.OrdinalIgnoreCase)
-                    && last.Contains("isExiting=True", StringComparison.OrdinalIgnoreCase)))
-            {
-                AppLog.Info("Watchdog: clean exit detected — not restarting");
-                return;
-            }
-
-            // Avoid restart storms if something is wrong with the build.
-            var stampPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "HotSonos", "watchdog-restarts.txt");
-            var recentRestarts = 0;
-            try
-            {
-                if (File.Exists(stampPath))
-                {
-                    var lines = File.ReadAllLines(stampPath);
-                    var cutoff = DateTime.UtcNow.AddMinutes(-10);
-                    foreach (var line in lines)
-                    {
-                        if (DateTime.TryParse(line, null, System.Globalization.DateTimeStyles.RoundtripKind, out var t)
-                            && t > cutoff)
-                            recentRestarts++;
-                    }
-                }
-            }
-            catch { /* ignore */ }
-
-            if (recentRestarts >= 5)
-            {
-                AppLog.Info($"Watchdog: abort restart storm ({recentRestarts} in 10m)");
-                return;
-            }
-
-            try
-            {
-                File.AppendAllText(stampPath, DateTime.UtcNow.ToString("o") + Environment.NewLine);
-            }
-            catch { /* ignore */ }
-
-            var exe = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(exe))
-                return;
-
-            AppLog.Info($"Watchdog: parent died uncleanly — restarting {exe}");
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = exe,
-                UseShellExecute = true,
-                WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory,
-            });
-        }
-        catch (Exception ex)
-        {
-            try { AppLog.Error("Watchdog failed", ex); } catch { /* ignore */ }
-        }
-    }
-
     private void ExitApplication()
     {
         _isExiting = true;
         AppLog.Lifecycle($"Exit requested (tray/menu) uptime={_uptime.Elapsed:hh\\:mm\\:ss}");
-
-        // Stop watchdog from resurrecting a deliberate exit.
-        try
-        {
-            if (_watchdogProcess is { HasExited: false })
-                _watchdogProcess.Kill(entireProcessTree: false);
-        }
-        catch { /* ignore */ }
 
         try { _showWindowEvent?.Set(); } catch { /* exit */ }
         try { _showWindowEvent?.Dispose(); } catch { /* exit */ }
