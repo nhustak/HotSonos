@@ -149,14 +149,19 @@ public partial class MainWindow : Window
     private void RestoreWindowGeometry()
     {
         if (_settings.MainWindowWidth is double w && w > 300)
-            Width = w;
+            Width = Math.Clamp(w, 400, SystemParameters.VirtualScreenWidth);
         if (_settings.MainWindowHeight is double h && h > 300)
-            Height = h;
+            Height = Math.Clamp(h, 300, SystemParameters.VirtualScreenHeight);
         if (_settings.MainWindowLeft is { } left && _settings.MainWindowTop is { } top)
         {
             WindowStartupLocation = WindowStartupLocation.Manual;
-            Left = left;
-            Top = top;
+            var vx = SystemParameters.VirtualScreenLeft;
+            var vy = SystemParameters.VirtualScreenTop;
+            var vw = SystemParameters.VirtualScreenWidth;
+            var vh = SystemParameters.VirtualScreenHeight;
+            // Multi-monitor saved coords can land off-screen after layout changes.
+            Left = Math.Clamp(left, vx, vx + vw - Math.Max(Width, 400));
+            Top = Math.Clamp(top, vy, vy + vh - Math.Max(Height, 300));
         }
     }
 
@@ -279,8 +284,12 @@ public partial class MainWindow : Window
         ApplyControlNowPlaying(null);
         _loaded = true;
 
-        // First open: full discovery in the background (same as every subsequent show).
-        RefreshDevicesInBackground();
+        // Only re-discover if groups are still empty. Startup already ran RefreshAsync once;
+        // a second concurrent discovery used to race GENA subscribe and hard-crash the process.
+        if (_sonos.Groups.Count == 0)
+            RefreshDevicesInBackground();
+        else
+            AppLog.Info($"Settings open: reusing {_sonos.Groups.Count} group(s) from startup discovery");
     }
 
     private void OnClosed(object? sender, EventArgs e)

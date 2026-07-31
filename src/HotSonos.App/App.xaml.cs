@@ -192,11 +192,16 @@ public partial class App : System.Windows.Application
         // Must NOT re-run every launch — was dual-writing 100+ FLACs to NAS and thrashing TagLib.
         ScheduleLegacyTagMigrationOnce();
         // Retry tag writes that were deferred while Sonos had the file open.
+        // TagLib on a thread-pool timer — never on the WPF dispatcher (native crashes / UI freezes).
         _pendingTagTimer = new System.Threading.Timer(
-            _ => Dispatcher.InvokeAsync(ProcessPendingTagWritesSafe),
+            _ =>
+            {
+                try { ProcessPendingTagWritesSafe(); }
+                catch (Exception ex) { AppLog.Warn("Pending tag timer failed", ex); }
+            },
             null,
-            TimeSpan.FromSeconds(12),
-            TimeSpan.FromSeconds(12));
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(30));
         // Heartbeat so silent death leaves a last-seen timestamp in the daily log.
         _heartbeatTimer = new System.Threading.Timer(
             _ =>
@@ -279,12 +284,11 @@ public partial class App : System.Windows.Application
         if (failures.Count > 0)
             AppLog.Warn($"Hotkey registration failed for: {string.Join(", ", failures)}");
 
-        var launchedFromAutorun = e.Args.Any(a => string.Equals(a, WindowsStartupManager.AutorunArgument, StringComparison.OrdinalIgnoreCase));
-        if (!launchedFromAutorun)
-            ShowMainWindow(); // manual launches open Settings directly; Windows autorun stays silent in the tray
-
-        _ = InitialDiscoveryAsync();
-        _ = StartMcpIfEnabledAsync();
+        // Discover FIRST, then open UI. Opening MainWindow immediately used to race a second
+        // RefreshAsync (Settings auto-refresh) against InitialDiscovery → GENA thrash / hard exit.
+        var openUiAfterDiscovery = !e.Args.Any(a =>
+            string.Equals(a, WindowsStartupManager.AutorunArgument, StringComparison.OrdinalIgnoreCase));
+        _ = StartupSequenceAsync(openUiAfterDiscovery);
 
         // Empty cache: discover roots from Sonos (if needed) and scan in the background.
         if (_library.GetStatus().TrackCount == 0)
@@ -561,11 +565,33 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private async Task StartupSequenceAsync(bool openMainWindow)
+    {
+        try
+        {
+            await InitialDiscoveryAsync().ConfigureAwait(true);
+            await StartMcpIfEnabledAsync().ConfigureAwait(true);
+            if (openMainWindow)
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    try { ShowMainWindow(); }
+                    catch (Exception ex) { AppLog.Error("ShowMainWindow after discovery failed", ex); }
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Startup sequence failed", ex);
+            _startupReady = true;
+        }
+    }
+
     private async Task InitialDiscoveryAsync()
     {
         try
         {
-            await _sonos.RefreshAsync(_settings.ActiveRoom);
+            await _sonos.RefreshAsync(_settings.ActiveRoom).ConfigureAwait(true);
             _settings.ActiveRoom ??= _sonos.ActiveRoom;
             UpdateTrayDynamic();
             AppLog.Info($"Initial discovery: {_sonos.Groups.Count} group(s), active={_settings.ActiveRoom ?? "(none)"}");

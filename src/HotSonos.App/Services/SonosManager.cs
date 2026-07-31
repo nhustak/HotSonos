@@ -48,6 +48,7 @@ public sealed class SonosManager
     private bool _topologySeen;
     private int _topUpInFlight; // 0/1
     private int _recoverInFlight; // 0/1
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private DateTime _lastRecoverUtc = DateTime.MinValue;
     private int _recoverAttemptsInWindow;
     private DateTime _recoverWindowStartUtc = DateTime.MinValue;
@@ -634,19 +635,31 @@ public sealed class SonosManager
     /// <summary>Coordinator room name of the active group; the persisted target key.</summary>
     public string? ActiveRoom { get; private set; }
 
-    /// <summary>Re-discovers the topology and (re)resolves the active group's controller.</summary>
+    /// <summary>
+    /// Re-discovers the topology and (re)resolves the active group's controller.
+    /// Serialized — concurrent App startup + MainWindow open used to race SUBSCRIBE/UNSUBSCRIBE
+    /// and hard-kill the process without a managed exception.
+    /// </summary>
     public async Task RefreshAsync(string? preferredRoom = null, CancellationToken ct = default)
     {
-        _zones = await _discovery.DiscoverZonesAsync(TimeSpan.FromSeconds(4), ct).ConfigureAwait(false);
-        RebuildGroups();
+        await _refreshGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            _zones = await _discovery.DiscoverZonesAsync(TimeSpan.FromSeconds(4), ct).ConfigureAwait(false);
+            RebuildGroups();
 
-        var desired = preferredRoom ?? ActiveRoom;
-        if (desired is null || !Groups.Any(g => ContainsRoom(g, desired)))
-            desired = Groups.FirstOrDefault()?.CoordinatorRoom;
+            var desired = preferredRoom ?? ActiveRoom;
+            if (desired is null || !Groups.Any(g => ContainsRoom(g, desired)))
+                desired = Groups.FirstOrDefault()?.CoordinatorRoom;
 
-        ActiveRoom = desired;
-        RebuildController();
-        await ObserveTopologyAsync("refresh", ct).ConfigureAwait(false);
+            ActiveRoom = desired;
+            RebuildController();
+            await ObserveTopologyAsync("refresh", ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
     }
 
     /// <summary>Points subsequent commands at the group whose coordinator room is <paramref name="room"/>.</summary>
