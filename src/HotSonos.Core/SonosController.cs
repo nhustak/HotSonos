@@ -65,6 +65,89 @@ public sealed class SonosController
         return string.IsNullOrWhiteSpace(uri) ? null : uri.Trim();
     }
 
+    /// <summary>
+    /// Poll-based now-playing snapshot (no GENA). Used when event subscriptions are disabled
+    /// for stability.
+    /// </summary>
+    public async Task<NowPlaying> GetNowPlayingSnapshotAsync(CancellationToken ct = default)
+    {
+        var transport = await _soap.InvokeAsync(
+            CoordinatorIp, SonosService.AvTransport, "GetTransportInfo",
+            [new("InstanceID", "0")], ct).ConfigureAwait(false);
+        var state = SonosTransportStateParser.Parse(
+            SonosSoapClient.ReadValue(transport, "CurrentTransportState"));
+        var status = SonosSoapClient.ReadValue(transport, "CurrentTransportStatus");
+
+        var pos = await _soap.InvokeAsync(
+            CoordinatorIp, SonosService.AvTransport, "GetPositionInfo",
+            [new("InstanceID", "0")], ct).ConfigureAwait(false);
+        var uri = SonosSoapClient.ReadValue(pos, "TrackURI");
+        if (!string.IsNullOrWhiteSpace(uri))
+            uri = uri.Trim();
+
+        int? currentTrack = null;
+        if (int.TryParse(SonosSoapClient.ReadValue(pos, "Track"), out var t) && t > 0)
+            currentTrack = t;
+
+        string? title = null;
+        string? artist = null;
+        string? album = null;
+        string? art = null;
+        var meta = SonosSoapClient.ReadValue(pos, "TrackMetaData");
+        if (!string.IsNullOrWhiteSpace(meta))
+        {
+            // TrackMetaData is DIDL-Lite (often XML-escaped once).
+            var didl = System.Net.WebUtility.HtmlDecode(meta);
+            title = ExtractDidlTag(didl, "dc:title");
+            artist = ExtractDidlTag(didl, "dc:creator") ?? ExtractDidlTag(didl, "upnp:artist");
+            album = ExtractDidlTag(didl, "upnp:album");
+            art = ExtractDidlTag(didl, "upnp:albumArtURI");
+            if (!string.IsNullOrEmpty(art)
+                && !art.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                art = art.StartsWith('/')
+                    ? $"http://{CoordinatorIp}:1400{art}"
+                    : $"http://{CoordinatorIp}:1400/{art}";
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(uri))
+        {
+            try
+            {
+                var path = Uri.UnescapeDataString(uri);
+                title = System.IO.Path.GetFileNameWithoutExtension(path.Replace('\\', '/'));
+            }
+            catch { /* ignore */ }
+        }
+
+        return new NowPlaying
+        {
+            State = state,
+            TransportStatus = status,
+            TrackUri = uri,
+            Title = title,
+            Artist = artist,
+            Album = album,
+            AlbumArtUri = art,
+            CurrentTrack = currentTrack,
+        };
+    }
+
+    private static string? ExtractDidlTag(string xml, string tag)
+    {
+        try
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(
+                xml, $"<{System.Text.RegularExpressions.Regex.Escape(tag)}[^>]*>([^<]*)</{System.Text.RegularExpressions.Regex.Escape(tag)}>");
+            return m.Success ? System.Net.WebUtility.HtmlDecode(m.Groups[1].Value) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>Toggles play/pause based on the current state. Returns the new intended state.</summary>
     public async Task<SonosTransportState> PlayPauseAsync(CancellationToken ct = default)
     {

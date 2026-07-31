@@ -48,8 +48,16 @@ public sealed class SonosManager
     private bool _topologySeen;
     private int _topUpInFlight; // 0/1
     private int _recoverInFlight; // 0/1
+    private int _nowPlayingPollInFlight; // 0/1
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private System.Threading.Timer? _nowPlayingPollTimer;
     private DateTime _lastRecoverUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// When false (default), do not use Sonos GENA TCP callbacks — they hard-killed the process
+    /// around subscription renew (~2.5–5 min). Poll GetPositionInfo instead until GENA is rewritten.
+    /// </summary>
+    public static bool UseGenaSubscriptions { get; set; }
     private int _recoverAttemptsInWindow;
     private DateTime _recoverWindowStartUtc = DateTime.MinValue;
 
@@ -152,54 +160,91 @@ public sealed class SonosManager
         _playEvents = playEvents ?? new PlayEventLog();
         _topologyEvents = topologyEvents ?? new TopologyEventLog();
         _discovery = new SonosDiscovery(_soap);
-        _events.NowPlayingChanged += np =>
-        {
-            // GENA callback thread — never let handler bugs kill the process.
-            try
-            {
-                // Sonos often re-NOTIFYs the same state; processing every one flooded UI/recovery
-                // and correlated with hard process death after recent recovery work landed.
-                var sig = GenaNowPlayingSignature(np);
-                if (string.Equals(sig, _lastGenaNpSignature, StringComparison.Ordinal))
-                    return;
-                _lastGenaNpSignature = sig;
-
-                var prevState = _lastEventState;
-                ObservePlayLifecycle(np);
-
-                // App restart clears in-memory mode → top-up dies mid-queue.
-                MaybeRearmShuffleFromLibraryQueue(np);
-
-                if (!string.IsNullOrWhiteSpace(np.TrackUri)
-                    && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning)
-                {
-                    _playHistory.RecordPlayed(np.TrackUri);
-                }
-
-                var s = _settings().EnsureShape();
-                if (s.ShuffleAutoTopUp
-                    && ShouldAutoTopUp(s)
-                    && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning
-                    && np.IsNearQueueEnd(s.ShuffleTopUpWhenRemaining))
-                {
-                    _ = TryTopUpQueueAsync();
-                }
-
-                // ERROR_NO_RESOURCE / unexpected STOPPED — try to keep music going.
-                _ = MaybeRecoverPlaybackAsync(np, prevState);
-
-                try { NowPlayingChanged?.Invoke(np); }
-                catch (Exception uiEx)
-                {
-                    AppLog.Warn("NowPlayingChanged subscriber failed", uiEx);
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error("NowPlaying GENA handler failed", ex);
-            }
-        };
+        _events.NowPlayingChanged += HandleNowPlayingSnapshot;
         _events.TopologyChanged += OnTopologyEvent;
+
+        if (!UseGenaSubscriptions)
+            EnsureNowPlayingPoller();
+    }
+
+    /// <summary>Shared path for GENA or poll-based now-playing.</summary>
+    private void HandleNowPlayingSnapshot(NowPlaying np)
+    {
+        try
+        {
+            var sig = GenaNowPlayingSignature(np);
+            if (string.Equals(sig, _lastGenaNpSignature, StringComparison.Ordinal))
+                return;
+            _lastGenaNpSignature = sig;
+
+            var prevState = _lastEventState;
+            ObservePlayLifecycle(np);
+
+            MaybeRearmShuffleFromLibraryQueue(np);
+
+            if (!string.IsNullOrWhiteSpace(np.TrackUri)
+                && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning)
+            {
+                _playHistory.RecordPlayed(np.TrackUri);
+            }
+
+            var s = _settings().EnsureShape();
+            if (s.ShuffleAutoTopUp
+                && ShouldAutoTopUp(s)
+                && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning
+                && np.IsNearQueueEnd(s.ShuffleTopUpWhenRemaining))
+            {
+                _ = TryTopUpQueueAsync();
+            }
+
+            _ = MaybeRecoverPlaybackAsync(np, prevState);
+
+            try { NowPlayingChanged?.Invoke(np); }
+            catch (Exception uiEx)
+            {
+                AppLog.Warn("NowPlayingChanged subscriber failed", uiEx);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Now-playing handler failed", ex);
+        }
+    }
+
+    private void EnsureNowPlayingPoller()
+    {
+        if (_nowPlayingPollTimer is not null)
+            return;
+
+        AppLog.Info("GENA subscriptions OFF — polling now-playing every 5s (crash isolation)");
+        _nowPlayingPollTimer = new System.Threading.Timer(
+            _ => _ = PollNowPlayingOnceAsync(),
+            null,
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(5));
+    }
+
+    private async Task PollNowPlayingOnceAsync()
+    {
+        if (Interlocked.CompareExchange(ref _nowPlayingPollInFlight, 1, 0) != 0)
+            return;
+
+        try
+        {
+            if (_controller is null)
+                return;
+
+            var np = await _controller.GetNowPlayingSnapshotAsync().ConfigureAwait(false);
+            HandleNowPlayingSnapshot(np);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Now-playing poll failed", ex);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _nowPlayingPollInFlight, 0);
+        }
     }
 
     public PlayHistoryStore PlayHistory => _playHistory;
@@ -1654,8 +1699,16 @@ public sealed class SonosManager
 
     private void SubscribeToActiveCoordinator()
     {
-        if (_controller is not null)
-            _ = _events.SubscribeAsync(_controller.CoordinatorIp);
+        if (_controller is null)
+            return;
+
+        if (!UseGenaSubscriptions)
+        {
+            EnsureNowPlayingPoller();
+            return;
+        }
+
+        _ = _events.SubscribeAsync(_controller.CoordinatorIp);
     }
 
     private bool ContainsRoom(SonosGroup group, string? room) =>
