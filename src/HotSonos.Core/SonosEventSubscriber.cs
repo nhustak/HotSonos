@@ -402,12 +402,12 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
                     if (renewed)
                         continue;
 
-                    // Renew failed — re-subscribe without stopping this loop (manageRenewLoop: false).
-                    var ip = _coordinatorIp;
-                    System.Diagnostics.Debug.WriteLine($"[HotSonos GENA] renew failed for {ip}; re-subscribing");
-                    await ClearSubscriptionAsync(stopRenewLoop: false).ConfigureAwait(false);
-                    if (!_disposed && ip is not null && !ct.IsCancellationRequested)
-                        await SubscribeCoreAsync(ip, ct, manageRenewLoop: false).ConfigureAwait(false);
+                    // Renew failed. Do NOT Clear+Subscribe from inside the renew loop while NOTIFY
+                    // handlers may be mid-flight — that race hard-killed the tray process (~2.5–5 min
+                    // after start = first/second renew). Wait for the next tick and try Renew again.
+                    // Explicit SubscribeAsync (room change / refresh) still does a full re-subscribe.
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[HotSonos GENA] renew failed for {_coordinatorIp}; will retry next cycle (no re-sub)");
                 }
                 finally
                 {

@@ -17,6 +17,8 @@ public sealed class PlayHistoryStore
     private readonly Func<int> _retentionDays;
     private readonly object _gate = new();
     private HistoryDoc _doc = new();
+    private int _savePending; // 0/1
+    private DateTime _lastSaveUtc = DateTime.MinValue;
 
     public int MaxEntries { get; init; } = 5000;
 
@@ -105,8 +107,42 @@ public sealed class PlayHistoryStore
                 Kind = "played",
             });
             PruneUnlocked();
-            SaveUnlocked();
+            // Debounce disk rewrite — full JSON save on every track was heavy and raced GENA.
+            ScheduleSaveUnlocked();
         }
+    }
+
+    private void ScheduleSaveUnlocked()
+    {
+        if (Interlocked.CompareExchange(ref _savePending, 1, 0) != 0)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(2000).ConfigureAwait(false);
+                lock (_gate)
+                {
+                    // Coalesce bursts of track changes.
+                    if ((DateTime.UtcNow - _lastSaveUtc).TotalMilliseconds < 500)
+                    {
+                        Interlocked.Exchange(ref _savePending, 0);
+                        ScheduleSaveUnlocked();
+                        return;
+                    }
+
+                    SaveUnlocked();
+                    _lastSaveUtc = DateTime.UtcNow;
+                    Interlocked.Exchange(ref _savePending, 0);
+                }
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Exchange(ref _savePending, 0);
+                AppLog.Warn("Play history deferred save failed", ex);
+            }
+        });
     }
 
     public static string NormalizeKey(string? uri)

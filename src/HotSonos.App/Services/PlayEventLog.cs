@@ -118,8 +118,14 @@ public sealed class PlayEventLog
         }
     }
 
+    private int _appendsSinceTrim;
+
     private void MaybeTrimFileUnlocked()
     {
+        // Only check occasionally — ReadAllLines on a growing JSONL from the GENA thread was brutal.
+        if (++_appendsSinceTrim < 50)
+            return;
+        _appendsSinceTrim = 0;
         try
         {
             if (!File.Exists(_path)) return;
