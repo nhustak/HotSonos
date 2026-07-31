@@ -23,7 +23,10 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(8) };
     private readonly SemaphoreSlim _gate = new(1, 1);
+    /// <summary>Serializes NOTIFY handling so GENA floods cannot stack hundreds of concurrent handlers.</summary>
+    private readonly SemaphoreSlim _callbackHandlerGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private int _inflightCallbacks;
 
     private TcpListener? _listener;
     private int _port;
@@ -130,21 +133,44 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
                 var stream = client.GetStream();
                 var request = await ReadRequestAsync(stream, ct).ConfigureAwait(false);
 
+                // ACK immediately so Sonos does not retry-storm while we process.
                 var ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray();
                 await stream.WriteAsync(ok, ct).ConfigureAwait(false);
 
-                // Route by body content: AVTransport carries <LastChange>, topology <ZoneGroupState>.
-                if (request.Contains("<LastChange>", StringComparison.Ordinal))
+                // Drop excess concurrency — topology floods were stacking handlers and killing the tray.
+                if (Interlocked.Increment(ref _inflightCallbacks) > 8)
                 {
-                    var nowPlaying = ParseNotify(request, _coordinatorIp);
-                    if (nowPlaying is not null)
-                        NowPlayingChanged?.Invoke(nowPlaying);
+                    Interlocked.Decrement(ref _inflightCallbacks);
+                    return;
                 }
-                else if (request.Contains("<ZoneGroupState>", StringComparison.Ordinal))
+
+                try
                 {
-                    var stateXml = ExtractTopology(request);
-                    if (stateXml is not null)
-                        TopologyChanged?.Invoke(stateXml);
+                    await _callbackHandlerGate.WaitAsync(ct).ConfigureAwait(false);
+                    try
+                    {
+                        // Route by body content: AVTransport carries <LastChange>, topology <ZoneGroupState>.
+                        if (request.Contains("<LastChange>", StringComparison.Ordinal))
+                        {
+                            var nowPlaying = ParseNotify(request, _coordinatorIp);
+                            if (nowPlaying is not null)
+                                NowPlayingChanged?.Invoke(nowPlaying);
+                        }
+                        else if (request.Contains("<ZoneGroupState>", StringComparison.Ordinal))
+                        {
+                            var stateXml = ExtractTopology(request);
+                            if (stateXml is not null)
+                                TopologyChanged?.Invoke(stateXml);
+                        }
+                    }
+                    finally
+                    {
+                        _callbackHandlerGate.Release();
+                    }
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _inflightCallbacks);
                 }
             }
         }
@@ -372,11 +398,13 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
                     if (_disposed || _coordinatorIp is null || _sidByPath.Count == 0)
                         continue;
 
-                    if (await RenewAsync(ct).ConfigureAwait(false))
+                    var renewed = await RenewAsync(ct).ConfigureAwait(false);
+                    if (renewed)
                         continue;
 
                     // Renew failed — re-subscribe without stopping this loop (manageRenewLoop: false).
                     var ip = _coordinatorIp;
+                    System.Diagnostics.Debug.WriteLine($"[HotSonos GENA] renew failed for {ip}; re-subscribing");
                     await ClearSubscriptionAsync(stopRenewLoop: false).ConfigureAwait(false);
                     if (!_disposed && ip is not null && !ct.IsCancellationRequested)
                         await SubscribeCoreAsync(ip, ct, manageRenewLoop: false).ConfigureAwait(false);

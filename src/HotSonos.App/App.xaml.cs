@@ -157,6 +157,23 @@ public partial class App : System.Windows.Application
             _settings.TopologyMonitorEnabled = false;
             AppLog.Warn("Topology monitor was ON — forced OFF at startup for stability (re-enable on Topology tab if debugging)");
         }
+        // Hard isolation while process is dying ~4min after start with no managed exception:
+        // ASP.NET MCP host in-process has been on every crashing run; keep tray stable first.
+        if (_settings.McpEnabled)
+        {
+            _settings.McpEnabled = false;
+            AppLog.Warn("MCP forced OFF at startup (stability isolation) — re-enable on MCP Debug tab when stable");
+        }
+        if (_settings.AutoRecoverPlayback)
+        {
+            _settings.AutoRecoverPlayback = false;
+            AppLog.Warn("AutoRecoverPlayback forced OFF at startup (stability isolation)");
+        }
+        if (_settings.ShowFlyoutOnTrackChange)
+        {
+            _settings.ShowFlyoutOnTrackChange = false;
+            AppLog.Warn("ShowFlyoutOnTrackChange forced OFF at startup (stability isolation)");
+        }
         // Persist freshly seeded tag catalog (or other EnsureShape defaults) once.
         try { _store.Save(_settings); }
         catch (Exception ex) { AppLog.Warn("Settings save after load/normalize failed", ex); }
@@ -218,7 +235,8 @@ public partial class App : System.Windows.Application
                                 : "none";
                     var np = _lastNowPlaying?.DisplayLine ?? "(none)";
                     if (np.Length > 60) np = np[..57] + "...";
-                    AppLog.Info(
+                    // Also touch last-exit so we know last-alive time if ProcessExit never runs.
+                    AppLog.Lifecycle(
                         $"Heartbeat uptime={_uptime.Elapsed:hh\\:mm\\:ss} ws={wsMb:F0}MB " +
                         $"groups={_sonos?.Groups.Count ?? 0} mode={mode} mcp={_mcpHost?.IsRunning == true} np={np}");
                 }
@@ -284,11 +302,9 @@ public partial class App : System.Windows.Application
         if (failures.Count > 0)
             AppLog.Warn($"Hotkey registration failed for: {string.Join(", ", failures)}");
 
-        // Discover FIRST, then open UI. Opening MainWindow immediately used to race a second
-        // RefreshAsync (Settings auto-refresh) against InitialDiscovery → GENA thrash / hard exit.
-        var openUiAfterDiscovery = !e.Args.Any(a =>
-            string.Equals(a, WindowsStartupManager.AutorunArgument, StringComparison.OrdinalIgnoreCase));
-        _ = StartupSequenceAsync(openUiAfterDiscovery);
+        // Tray-only until proven stable. Opening MainWindow on every manual launch raced discovery
+        // and pulls a huge WPF surface; open from tray when needed.
+        _ = StartupSequenceAsync(openMainWindow: false);
 
         // Empty cache: discover roots from Sonos (if needed) and scan in the background.
         if (_library.GetStatus().TrackCount == 0)
