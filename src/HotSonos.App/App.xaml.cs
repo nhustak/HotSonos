@@ -47,6 +47,7 @@ public partial class App : System.Windows.Application
     private bool _isExiting;
     /// <summary>False until first discovery finishes — GENA/flyout must not run UI work before tray + room exist.</summary>
     private bool _startupReady;
+    private Window? _keepAliveWindow;
 
 
     protected override void OnStartup(StartupEventArgs e)
@@ -109,6 +110,23 @@ public partial class App : System.Windows.Application
         // always-on tray utilities on some multi-monitor / hybrid-GPU setups
         // (same approach as HotNotify). Slightly higher CPU than hardware render.
         RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
+
+        // Hidden non-transparent WPF window — required so Application.Run keeps a live
+        // dispatcher when UI is tray-only (WinForms NotifyIcon). Without this the process
+        // can exit ~15–20s after startup with no exception once async startup completes.
+        _keepAliveWindow = new Window
+        {
+            Title = "HotSonos",
+            Width = 0,
+            Height = 0,
+            WindowStyle = WindowStyle.ToolWindow,
+            ShowInTaskbar = false,
+            ShowActivated = false,
+            ResizeMode = ResizeMode.NoResize,
+            Left = -32000,
+            Top = -32000,
+        };
+        _keepAliveWindow.Show();
 
         AppLog.Lifecycle($"Starting {AppVersion.DisplayName} pid={Environment.ProcessId} (args: {string.Join(' ', e.Args)})");
 
@@ -182,7 +200,7 @@ public partial class App : System.Windows.Application
         try { _store.Save(_settings); }
         catch (Exception ex) { AppLog.Warn("Settings save after load/normalize failed", ex); }
 
-        // GENA off (hard death). Poll for now-playing / top-up.
+        // Isolation: no GENA, no poll — only discovery + tray + hotkeys (SOAP on demand).
         SonosManager.UseGenaSubscriptions = false;
         SonosManager.UseNowPlayingPoll = true;
         _sonos = new SonosManager(() => _settings);
