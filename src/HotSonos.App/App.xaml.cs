@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -43,10 +44,22 @@ public partial class App : System.Windows.Application
     private int _pendingVolumeDelta;
     private int _volumeDrainRunning; // 0/1
     private bool _isExiting;
+    private static bool _isWatchdogProcess;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // Companion process: if the tray dies uncleanly, restart it. Clean Exit Application skips restart.
+        if (e.Args is { Length: >= 2 }
+            && string.Equals(e.Args[0], "--watchdog", StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(e.Args[1], out var parentPid))
+        {
+            _isWatchdogProcess = true;
+            RunWatchdogLoop(parentPid);
+            Shutdown();
+            return;
+        }
 
         _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var isNew);
         if (!isNew)
@@ -106,6 +119,7 @@ public partial class App : System.Windows.Application
         RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
 
         AppLog.Lifecycle($"Starting {AppVersion.DisplayName} pid={Environment.ProcessId} (args: {string.Join(' ', e.Args)})");
+        StartWatchdogCompanion();
 
         // A tray utility must survive stray errors (e.g. flaky album-art loads or
         // event-callback hiccups) rather than vanish. Log + surface instead.
@@ -131,6 +145,8 @@ public partial class App : System.Windows.Application
         };
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
+            if (_isWatchdogProcess)
+                return;
             // Last chance — may run after WPF teardown; keep it tiny and durable.
             AppLog.Lifecycle(
                 $"ProcessExit uptime={_uptime.Elapsed:hh\\:mm\\:ss} isExiting={_isExiting} " +
@@ -138,7 +154,8 @@ public partial class App : System.Windows.Application
         };
         Exit += (_, args) =>
         {
-            AppLog.Lifecycle($"WPF Exit Application.ExitCode={args.ApplicationExitCode} isExiting={_isExiting}");
+            if (!_isWatchdogProcess)
+                AppLog.Lifecycle($"WPF Exit Application.ExitCode={args.ApplicationExitCode} isExiting={_isExiting}");
             _heartbeatTimer?.Dispose();
             _heartbeatTimer = null;
         };
@@ -878,9 +895,8 @@ public partial class App : System.Windows.Application
     private CancellationTokenSource? _keepHouseGroupedCts;
     private int _keepHouseGroupedInFlight; // 0/1
     private DateTime _keepHouseGroupedLastUtc = DateTime.MinValue;
-    private DateTime _lastSpeakerRejoinUtc = DateTime.MinValue;
-    private int _speakerRejoinInFlight; // 0/1
     private DateTime _lastTrayTopologyRefreshUtc = DateTime.MinValue;
+    private Process? _watchdogProcess;
 
     private void OnTopologyChanged()
     {
@@ -955,70 +971,45 @@ public partial class App : System.Windows.Application
     }
 
     private void OnSpeakerAvailabilityChanged(string room, bool isOnline) =>
-        Dispatcher.InvokeAsync(async () =>
+        Dispatcher.BeginInvoke(() =>
         {
-            // CRITICAL: Do NOT GroupAll on every "online" flap. That used to cascade:
-            // GroupAll → topology GENA flood → more online events → more GroupAll →
-            // WPF stack overflow / hard process death. Debounce hard.
-            if (isOnline)
-                await MaybeRejoinAfterSpeakerOnlineAsync(room).ConfigureAwait(true);
-
+            // Notify only — never auto GroupAll from topology flaps. That cascade (GroupAll →
+            // GENA flood → more online events) is the best match for hard process death after
+            // recent "keep house grouped on reconnect" work. User can Regroup / Shuffle manually.
             var message = isOnline ? $"✓ {room} back online" : $"⚠️ {room} dropped off the network";
-            AppLog.Info(isOnline ? $"Speaker online: {room}" : $"Speaker offline: {room}");
+            AppLog.Info(isOnline ? $"Speaker online: {room} (no auto-regroup)" : $"Speaker offline: {room}");
             if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                 EnsureFlyout().ShowAction(message);
         });
 
-    /// <summary>
-    /// At most one whole-house regroup per 45s when a room reappears. Coalesces multi-room flaps.
-    /// </summary>
-    private async Task MaybeRejoinAfterSpeakerOnlineAsync(string room)
-    {
-        if ((DateTime.UtcNow - _lastSpeakerRejoinUtc).TotalSeconds < 45)
-        {
-            AppLog.Info($"Speaker online: {room} — rejoin skipped (cooldown)");
-            return;
-        }
-
-        if (Interlocked.CompareExchange(ref _speakerRejoinInFlight, 1, 0) != 0)
-        {
-            AppLog.Info($"Speaker online: {room} — rejoin already in flight");
-            return;
-        }
-
-        try
-        {
-            // Wait for topology to settle before regrouping.
-            await Task.Delay(3000).ConfigureAwait(true);
-            _lastSpeakerRejoinUtc = DateTime.UtcNow;
-            AppLog.Info($"Speaker online: {room} — regrouping house (debounced)");
-            await _sonos.GroupAllSpeakersAsync().ConfigureAwait(true);
-        }
-        catch (Exception ex)
-        {
-            AppLog.Warn($"Rejoin after reconnect failed for {room}", ex);
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _speakerRejoinInFlight, 0);
-        }
-    }
+    private string? _lastUiNowPlayingKey;
 
     private void OnNowPlayingChanged(NowPlaying nowPlaying)
     {
         // Raised on a background (listener) thread — marshal to the UI thread.
-        // Cross-check library cache for format flags; Sonos rarely reports "can't play".
         TryLogUnplayableNowPlaying(nowPlaying);
 
-        Dispatcher.InvokeAsync(() =>
+        var key = $"{nowPlaying.State}|{PlayHistoryStore.NormalizeKey(nowPlaying.TrackUri)}|{nowPlaying.Title}";
+        var trackOrStateChanged = !string.Equals(key, _lastUiNowPlayingKey, StringComparison.Ordinal);
+        if (!trackOrStateChanged)
+            return;
+        _lastUiNowPlayingKey = key;
+
+        Dispatcher.BeginInvoke(() =>
         {
             _lastNowPlaying = nowPlaying;
-            _tray.UpdateNowPlaying(nowPlaying.IsEmpty ? null : nowPlaying.DisplayLine);
-            if (_settings.ShowFlyoutOnTrackChange || _settings.FlyoutPinned)
-                EnsureFlyout().ShowNowPlaying(nowPlaying);
+            try { _tray.UpdateNowPlaying(nowPlaying.IsEmpty ? null : nowPlaying.DisplayLine); }
+            catch (Exception ex) { AppLog.Warn("Tray now-playing update failed", ex); }
 
-            // Previous track file is often released when the transport advances.
-            ProcessPendingTagWritesSafe();
+            // Flyout only on real track/state changes (already filtered). Art load is still expensive.
+            if (_settings.ShowFlyoutOnTrackChange || _settings.FlyoutPinned)
+            {
+                try { EnsureFlyout().ShowNowPlaying(nowPlaying); }
+                catch (Exception ex) { AppLog.Warn("Flyout now-playing update failed", ex); }
+            }
+
+            // Do NOT ProcessPendingTagWrites here — TagLib on the UI path under GENA was risky.
+            // Timer every 12s handles the queue.
         });
     }
 
@@ -1237,10 +1228,140 @@ public partial class App : System.Windows.Application
         }
     }
 
+    /// <summary>
+    /// Spawns <c>HotSonos.exe --watchdog {pid}</c> which restarts us if we die without a clean exit.
+    /// </summary>
+    private void StartWatchdogCompanion()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe) || !File.Exists(exe))
+                return;
+
+            _watchdogProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = exe,
+                Arguments = $"--watchdog {Environment.ProcessId}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory,
+            });
+            AppLog.Info($"Watchdog companion started (pid={_watchdogProcess?.Id})");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Could not start watchdog companion", ex);
+        }
+    }
+
+    /// <summary>
+    /// Runs in a headless second process. Waits for the tray PID to exit; if last-exit is not clean, relaunches.
+    /// </summary>
+    private static void RunWatchdogLoop(int parentPid)
+    {
+        // Watchdog must not write last-exit.txt (would race with the tray app).
+        try
+        {
+            AppLog.Info($"Watchdog watching parent pid={parentPid}");
+            try
+            {
+                using var parent = Process.GetProcessById(parentPid);
+                parent.WaitForExit();
+            }
+            catch (ArgumentException)
+            {
+                // Parent already gone.
+            }
+
+            Thread.Sleep(1500);
+
+            var lastExitPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "HotSonos", "last-exit.txt");
+            var last = "";
+            try
+            {
+                if (File.Exists(lastExitPath))
+                    last = File.ReadAllText(lastExitPath);
+            }
+            catch { /* ignore */ }
+
+            // Clean tray exit — do not resurrect.
+            if (last.Contains("Exit requested", StringComparison.OrdinalIgnoreCase)
+                || last.Contains("Second instance exit", StringComparison.OrdinalIgnoreCase)
+                || (last.Contains("WPF Exit", StringComparison.OrdinalIgnoreCase)
+                    && last.Contains("isExiting=True", StringComparison.OrdinalIgnoreCase))
+                || (last.Contains("ProcessExit", StringComparison.OrdinalIgnoreCase)
+                    && last.Contains("isExiting=True", StringComparison.OrdinalIgnoreCase)))
+            {
+                AppLog.Info("Watchdog: clean exit detected — not restarting");
+                return;
+            }
+
+            // Avoid restart storms if something is wrong with the build.
+            var stampPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "HotSonos", "watchdog-restarts.txt");
+            var recentRestarts = 0;
+            try
+            {
+                if (File.Exists(stampPath))
+                {
+                    var lines = File.ReadAllLines(stampPath);
+                    var cutoff = DateTime.UtcNow.AddMinutes(-10);
+                    foreach (var line in lines)
+                    {
+                        if (DateTime.TryParse(line, null, System.Globalization.DateTimeStyles.RoundtripKind, out var t)
+                            && t > cutoff)
+                            recentRestarts++;
+                    }
+                }
+            }
+            catch { /* ignore */ }
+
+            if (recentRestarts >= 5)
+            {
+                AppLog.Info($"Watchdog: abort restart storm ({recentRestarts} in 10m)");
+                return;
+            }
+
+            try
+            {
+                File.AppendAllText(stampPath, DateTime.UtcNow.ToString("o") + Environment.NewLine);
+            }
+            catch { /* ignore */ }
+
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe))
+                return;
+
+            AppLog.Info($"Watchdog: parent died uncleanly — restarting {exe}");
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = exe,
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory,
+            });
+        }
+        catch (Exception ex)
+        {
+            try { AppLog.Error("Watchdog failed", ex); } catch { /* ignore */ }
+        }
+    }
+
     private void ExitApplication()
     {
         _isExiting = true;
         AppLog.Lifecycle($"Exit requested (tray/menu) uptime={_uptime.Elapsed:hh\\:mm\\:ss}");
+
+        // Stop watchdog from resurrecting a deliberate exit.
+        try
+        {
+            if (_watchdogProcess is { HasExited: false })
+                _watchdogProcess.Kill(entireProcessTree: false);
+        }
+        catch { /* ignore */ }
 
         try { _showWindowEvent?.Set(); } catch { /* exit */ }
         try { _showWindowEvent?.Dispose(); } catch { /* exit */ }
