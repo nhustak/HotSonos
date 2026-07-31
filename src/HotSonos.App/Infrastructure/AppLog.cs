@@ -28,6 +28,32 @@ public static class AppLog
 
     public static void Error(string message, Exception? ex = null) => Write("ERROR", message, ex);
 
+    /// <summary>
+    /// Process-lifecycle line that also updates <c>last-exit.txt</c> so a silent death
+    /// still leaves a timestamp + reason even when the daily log was not flushed.
+    /// </summary>
+    public static void Lifecycle(string message)
+    {
+        Write("LIFE", message, null);
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "HotSonos");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, "last-exit.txt");
+            File.WriteAllText(
+                path,
+                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} | {message}{Environment.NewLine}" +
+                $"pid={Environment.ProcessId} exitCode={Environment.ExitCode}{Environment.NewLine}",
+                Encoding.UTF8);
+        }
+        catch
+        {
+            /* ignore */
+        }
+    }
+
     /// <summary>Recent ring lines (newest last), for clipboard / support dumps.</summary>
     public static string GetRecentText(int maxLines = 200)
     {

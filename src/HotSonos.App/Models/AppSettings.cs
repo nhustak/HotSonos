@@ -175,6 +175,12 @@ public sealed class AppSettings
     public bool AutoRecoverPlayback { get; set; } = true;
 
     /// <summary>
+    /// UTC ISO timestamp when one-shot legacy tag/tempo migration finished successfully.
+    /// When set, startup skips rewriting every tagged file (was thrashing NAS + TagLib every launch).
+    /// </summary>
+    public string? LegacyTagMigrationCompletedUtc { get; set; }
+
+    /// <summary>
     /// Full topology monitor (bonded Sub parse, event JSONL, Topology map diffs).
     /// Default <c>false</c> — GENA floods + file I/O delayed volume. Toggle on Topology tab only when debugging.
     /// </summary>

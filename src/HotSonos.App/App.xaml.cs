@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -29,12 +30,14 @@ public partial class App : System.Windows.Application
     private NowPlaying? _lastNowPlaying;
     private MainWindow? _mainWindow;
     private System.Threading.Timer? _nightlyTimer;
+    private System.Threading.Timer? _heartbeatTimer;
     private WakeMusicService? _wake;
     private HotSonosMcpHost? _mcpHost;
     private HotSonosMcpState? _mcpState;
     private LibraryService? _library;
     private System.Threading.Timer? _pendingTagTimer;
     private readonly SemaphoreSlim _actionGate = new(1, 1);
+    private readonly Stopwatch _uptime = Stopwatch.StartNew();
 
     /// <summary>Coalesced ±volume while gate/Sonos is slow — never one hotkey = one queued full action.</summary>
     private int _pendingVolumeDelta;
@@ -75,6 +78,7 @@ public partial class App : System.Windows.Application
                     MessageBoxImage.Information);
             }
 
+            AppLog.Lifecycle("Second instance exit (single-instance mutex held)");
             Shutdown();
             return;
         }
@@ -101,7 +105,7 @@ public partial class App : System.Windows.Application
         // (same approach as HotNotify). Slightly higher CPU than hardware render.
         RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
 
-        AppLog.Info($"Starting {AppVersion.DisplayName} (args: {string.Join(' ', e.Args)})");
+        AppLog.Lifecycle($"Starting {AppVersion.DisplayName} pid={Environment.ProcessId} (args: {string.Join(' ', e.Args)})");
 
         // A tray utility must survive stray errors (e.g. flaky album-art loads or
         // event-callback hiccups) rather than vanish. Log + surface instead.
@@ -120,13 +124,36 @@ public partial class App : System.Windows.Application
         AppDomain.CurrentDomain.UnhandledException += (_, ex) =>
         {
             var err = ex.ExceptionObject as Exception;
-            AppLog.Error("AppDomain unhandled exception", err);
+            AppLog.Error("AppDomain unhandled exception (IsTerminating=" + ex.IsTerminating + ")", err);
+            AppLog.Lifecycle(
+                $"AppDomain unhandled IsTerminating={ex.IsTerminating}: " +
+                (err?.GetType().Name ?? "?") + " " + (err?.Message ?? ex.ExceptionObject?.ToString() ?? "?"));
+        };
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            // Last chance — may run after WPF teardown; keep it tiny and durable.
+            AppLog.Lifecycle(
+                $"ProcessExit uptime={_uptime.Elapsed:hh\\:mm\\:ss} isExiting={_isExiting} " +
+                $"exitCode={Environment.ExitCode}");
+        };
+        Exit += (_, args) =>
+        {
+            AppLog.Lifecycle($"WPF Exit Application.ExitCode={args.ApplicationExitCode} isExiting={_isExiting}");
+            _heartbeatTimer?.Dispose();
+            _heartbeatTimer = null;
         };
 
         try
         {
         _store = new ConfigStore();
         _settings = _store.Load().EnsureShape();
+        // Crash dumps: System.StackOverflowException in PresentationFramework under topology thrash.
+        // Monitor is debug-only; never leave it ON across restarts (GENA + UI map + GroupAll cascade).
+        if (_settings.TopologyMonitorEnabled)
+        {
+            _settings.TopologyMonitorEnabled = false;
+            AppLog.Warn("Topology monitor was ON — forced OFF at startup for stability (re-enable on Topology tab if debugging)");
+        }
         // Persist freshly seeded tag catalog (or other EnsureShape defaults) once.
         try { _store.Save(_settings); }
         catch (Exception ex) { AppLog.Warn("Settings save after load/normalize failed", ex); }
@@ -158,25 +185,43 @@ public partial class App : System.Windows.Application
                 try { _store.Save(_settings); }
                 catch (Exception ex) { AppLog.Warn("Settings save after library root discovery failed", ex); }
             });
-        // Map leftover slow/medium/… tokens → catalog keys; clear HOTSONOS_TEMPO (no tempo support).
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                var r = _library.MigrateLegacyTagTokens();
-                AppLog.Info(r.Message);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Warn("Legacy tag migration failed", ex);
-            }
-        });
+        // One-shot: map leftover slow/medium/… tokens → catalog keys; clear HOTSONOS_TEMPO.
+        // Must NOT re-run every launch — was dual-writing 100+ FLACs to NAS and thrashing TagLib.
+        ScheduleLegacyTagMigrationOnce();
         // Retry tag writes that were deferred while Sonos had the file open.
         _pendingTagTimer = new System.Threading.Timer(
             _ => Dispatcher.InvokeAsync(ProcessPendingTagWritesSafe),
             null,
             TimeSpan.FromSeconds(12),
             TimeSpan.FromSeconds(12));
+        // Heartbeat so silent death leaves a last-seen timestamp in the daily log.
+        _heartbeatTimer = new System.Threading.Timer(
+            _ =>
+            {
+                try
+                {
+                    var wsMb = Process.GetCurrentProcess().WorkingSet64 / (1024.0 * 1024.0);
+                    var mode = _sonos is null
+                        ? "?"
+                        : _sonos.ShuffleSessionActive
+                            ? "shuffle"
+                            : _sonos.CanResumeShuffle
+                                ? "special/folder"
+                                : "none";
+                    var np = _lastNowPlaying?.DisplayLine ?? "(none)";
+                    if (np.Length > 60) np = np[..57] + "...";
+                    AppLog.Info(
+                        $"Heartbeat uptime={_uptime.Elapsed:hh\\:mm\\:ss} ws={wsMb:F0}MB " +
+                        $"groups={_sonos?.Groups.Count ?? 0} mode={mode} mcp={_mcpHost?.IsRunning == true} np={np}");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Heartbeat failed", ex);
+                }
+            },
+            null,
+            TimeSpan.FromMinutes(2),
+            TimeSpan.FromMinutes(2));
 
         _mcpState = new HotSonosMcpState
         {
@@ -249,6 +294,7 @@ public partial class App : System.Windows.Application
         catch (Exception ex)
         {
             AppLog.Error("Fatal startup failure", ex);
+            AppLog.Lifecycle($"Fatal startup failure: {ex.GetType().Name}: {ex.Message}");
             try
             {
                 System.Windows.MessageBox.Show(
@@ -260,6 +306,54 @@ public partial class App : System.Windows.Application
             catch { /* ignore */ }
             Shutdown();
         }
+    }
+
+    /// <summary>
+    /// Runs legacy tag/tempo migration at most once. After success, stamps
+    /// <see cref="AppSettings.LegacyTagMigrationCompletedUtc"/> so restarts stay light.
+    /// </summary>
+    private void ScheduleLegacyTagMigrationOnce()
+    {
+        if (_library is null)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(_settings.LegacyTagMigrationCompletedUtc))
+        {
+            AppLog.Info(
+                $"Legacy tag migration already completed ({_settings.LegacyTagMigrationCompletedUtc}) — skipped");
+            return;
+        }
+
+        // Prior builds rewrote all tagged files on every boot (dual-write to NAS). If we got
+        // this far with a populated library, assume that work already happened — stamp and skip
+        // so this launch is not another 100+ TagLib dual-write storm (crash suspect).
+        if (_library.GetStatus().TrackCount > 0)
+        {
+            _settings.LegacyTagMigrationCompletedUtc = DateTime.UtcNow.ToString("o");
+            try { _store.Save(_settings); }
+            catch (Exception ex) { AppLog.Warn("Could not persist LegacyTagMigrationCompletedUtc", ex); }
+            AppLog.Info(
+                "Legacy tag migration assumed complete (library already scanned; prior boots rewrote tags) — skipped");
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                AppLog.Info("Legacy tag migration starting (one-shot, empty cache path)");
+                var r = _library.MigrateLegacyTagTokens();
+                AppLog.Info(r.Message);
+                _settings.LegacyTagMigrationCompletedUtc = DateTime.UtcNow.ToString("o");
+                try { _store.Save(_settings); }
+                catch (Exception saveEx) { AppLog.Warn("Could not persist LegacyTagMigrationCompletedUtc", saveEx); }
+                AppLog.Info("Legacy tag migration marked complete (will not re-run on next start)");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Legacy tag migration failed", ex);
+            }
+        });
     }
 
     private async Task StartMcpIfEnabledAsync()
@@ -784,10 +878,19 @@ public partial class App : System.Windows.Application
     private CancellationTokenSource? _keepHouseGroupedCts;
     private int _keepHouseGroupedInFlight; // 0/1
     private DateTime _keepHouseGroupedLastUtc = DateTime.MinValue;
+    private DateTime _lastSpeakerRejoinUtc = DateTime.MinValue;
+    private int _speakerRejoinInFlight; // 0/1
+    private DateTime _lastTrayTopologyRefreshUtc = DateTime.MinValue;
 
     private void OnTopologyChanged()
     {
         // Tray only — never do SOAP/regroup/UI map work on the GENA thread path.
+        // Throttle: GENA can fire dozens of times during GroupAll; rebuilding the tray menu
+        // that often contributed to WPF StackOverflowException (PresentationFramework).
+        var now = DateTime.UtcNow;
+        if ((now - _lastTrayTopologyRefreshUtc).TotalMilliseconds < 750)
+            return;
+        _lastTrayTopologyRefreshUtc = now;
         Dispatcher.BeginInvoke(UpdateTrayDynamic);
         MaybeScheduleKeepHouseGrouped();
     }
@@ -854,20 +957,52 @@ public partial class App : System.Windows.Application
     private void OnSpeakerAvailabilityChanged(string room, bool isOnline) =>
         Dispatcher.InvokeAsync(async () =>
         {
+            // CRITICAL: Do NOT GroupAll on every "online" flap. That used to cascade:
+            // GroupAll → topology GENA flood → more online events → more GroupAll →
+            // WPF stack overflow / hard process death. Debounce hard.
             if (isOnline)
-            {
-                try { await _sonos.GroupAllSpeakersAsync(); }
-                catch (Exception ex)
-                {
-                    // Best-effort rejoin; still confirm it's back via flyout.
-                    AppLog.Warn($"Rejoin after reconnect failed for {room}", ex);
-                }
-            }
-            var message = isOnline ? $"✓ {room} rejoined the group" : $"⚠️ {room} dropped off the network";
+                await MaybeRejoinAfterSpeakerOnlineAsync(room).ConfigureAwait(true);
+
+            var message = isOnline ? $"✓ {room} back online" : $"⚠️ {room} dropped off the network";
             AppLog.Info(isOnline ? $"Speaker online: {room}" : $"Speaker offline: {room}");
             if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                 EnsureFlyout().ShowAction(message);
         });
+
+    /// <summary>
+    /// At most one whole-house regroup per 45s when a room reappears. Coalesces multi-room flaps.
+    /// </summary>
+    private async Task MaybeRejoinAfterSpeakerOnlineAsync(string room)
+    {
+        if ((DateTime.UtcNow - _lastSpeakerRejoinUtc).TotalSeconds < 45)
+        {
+            AppLog.Info($"Speaker online: {room} — rejoin skipped (cooldown)");
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _speakerRejoinInFlight, 1, 0) != 0)
+        {
+            AppLog.Info($"Speaker online: {room} — rejoin already in flight");
+            return;
+        }
+
+        try
+        {
+            // Wait for topology to settle before regrouping.
+            await Task.Delay(3000).ConfigureAwait(true);
+            _lastSpeakerRejoinUtc = DateTime.UtcNow;
+            AppLog.Info($"Speaker online: {room} — regrouping house (debounced)");
+            await _sonos.GroupAllSpeakersAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Rejoin after reconnect failed for {room}", ex);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _speakerRejoinInFlight, 0);
+        }
+    }
 
     private void OnNowPlayingChanged(NowPlaying nowPlaying)
     {
@@ -1105,13 +1240,15 @@ public partial class App : System.Windows.Application
     private void ExitApplication()
     {
         _isExiting = true;
-        AppLog.Info("Exit requested");
+        AppLog.Lifecycle($"Exit requested (tray/menu) uptime={_uptime.Elapsed:hh\\:mm\\:ss}");
 
         try { _showWindowEvent?.Set(); } catch { /* exit */ }
         try { _showWindowEvent?.Dispose(); } catch { /* exit */ }
         _showWindowEvent = null;
 
         _nightlyTimer?.Dispose();
+        _heartbeatTimer?.Dispose();
+        _heartbeatTimer = null;
         _pendingTagTimer?.Dispose();
         _pendingTagTimer = null;
         _wake?.Dispose();

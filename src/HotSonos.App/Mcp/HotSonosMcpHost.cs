@@ -1,6 +1,8 @@
 using HotSonos.App.Infrastructure;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
@@ -38,6 +40,8 @@ public sealed class HotSonosMcpHost : IAsyncDisposable
         builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
         builder.Logging.ClearProviders();
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
+        // Route /mcp vs /mcp/ was matching two endpoints → AmbiguousMatchException on GET probes.
+        builder.Services.Configure<RouteOptions>(o => o.AppendTrailingSlash = false);
 
         builder.Services.AddSingleton(state);
         builder.Services
@@ -46,10 +50,43 @@ public sealed class HotSonosMcpHost : IAsyncDisposable
             .WithTools<HotSonosDebugTools>();
 
         _app = builder.Build();
+
+        // Never let a single bad MCP request take down the host (or the tray app).
+        _app.Use(async (ctx, next) =>
+        {
+            try
+            {
+                await next().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error($"MCP request failed {ctx.Request.Method} {ctx.Request.Path}", ex);
+                if (!ctx.Response.HasStarted)
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                    await ctx.Response.WriteAsync("MCP error").ConfigureAwait(false);
+                }
+            }
+        });
+
         // Prefix /mcp so clients use http://127.0.0.1:{port}/mcp (SSE: /mcp/sse, messages: /mcp/message).
         _app.MapMcp("/mcp");
 
         _runTask = _app.RunAsync();
+        // Surface host-level failures (bind error, fatal) — do not let them vanish.
+        _ = _runTask.ContinueWith(
+            t =>
+            {
+                state.IsRunning = false;
+                if (t.IsFaulted)
+                    AppLog.Error("MCP host run task faulted", t.Exception?.GetBaseException());
+                else if (t.IsCanceled)
+                    AppLog.Info("MCP host run task canceled");
+                else
+                    AppLog.Info("MCP host run task completed");
+            },
+            TaskScheduler.Default);
+
         state.IsRunning = true;
 
         // Brief yield so bind failures surface before we claim success.

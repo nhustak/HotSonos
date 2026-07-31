@@ -111,6 +111,8 @@ public partial class NowPlayingFlyout : Window
             bmp.BeginInit();
             bmp.StreamSource = new MemoryStream(bytes);
             bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.DecodePixelWidth = 160; // cap decode size (avoids huge WIC work on UI thread)
+            bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             bmp.EndInit();
             bmp.Freeze();
             ArtImage.Source = bmp;

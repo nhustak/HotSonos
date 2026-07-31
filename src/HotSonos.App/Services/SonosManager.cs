@@ -155,32 +155,44 @@ public sealed class SonosManager
         _discovery = new SonosDiscovery(_soap);
         _events.NowPlayingChanged += np =>
         {
-            var prevState = _lastEventState;
-            ObservePlayLifecycle(np);
-
-            // App restart clears in-memory mode → top-up dies and the same NORMAL queue can loop.
-            MaybeRearmShuffleFromLibraryQueue(np);
-            MaybeDetectQueueRestartLoop(np);
-
-            if (!string.IsNullOrWhiteSpace(np.TrackUri)
-                && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning)
+            // GENA callback thread — never let handler bugs kill the process.
+            try
             {
-                _playHistory.RecordPlayed(np.TrackUri);
-            }
+                var prevState = _lastEventState;
+                ObservePlayLifecycle(np);
 
-            var s = _settings().EnsureShape();
-            if (s.ShuffleAutoTopUp
-                && ShouldAutoTopUp(s)
-                && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning
-                && np.IsNearQueueEnd(s.ShuffleTopUpWhenRemaining))
+                // App restart clears in-memory mode → top-up dies and the same NORMAL queue can loop.
+                MaybeRearmShuffleFromLibraryQueue(np);
+                MaybeDetectQueueRestartLoop(np);
+
+                if (!string.IsNullOrWhiteSpace(np.TrackUri)
+                    && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning)
+                {
+                    _playHistory.RecordPlayed(np.TrackUri);
+                }
+
+                var s = _settings().EnsureShape();
+                if (s.ShuffleAutoTopUp
+                    && ShouldAutoTopUp(s)
+                    && np.State is SonosTransportState.Playing or SonosTransportState.Transitioning
+                    && np.IsNearQueueEnd(s.ShuffleTopUpWhenRemaining))
+                {
+                    _ = TryTopUpQueueAsync();
+                }
+
+                // ERROR_NO_RESOURCE / unexpected STOPPED — try to keep music going.
+                _ = MaybeRecoverPlaybackAsync(np, prevState);
+
+                try { NowPlayingChanged?.Invoke(np); }
+                catch (Exception uiEx)
+                {
+                    AppLog.Warn("NowPlayingChanged subscriber failed", uiEx);
+                }
+            }
+            catch (Exception ex)
             {
-                _ = TryTopUpQueueAsync();
+                AppLog.Error("NowPlaying GENA handler failed", ex);
             }
-
-            // ERROR_NO_RESOURCE / unexpected STOPPED — try to keep music going.
-            _ = MaybeRecoverPlaybackAsync(np, prevState);
-
-            NowPlayingChanged?.Invoke(np);
         };
         _events.TopologyChanged += OnTopologyEvent;
     }
@@ -567,11 +579,18 @@ public sealed class SonosManager
         {
             // Always: light path only (visible zones + vanished list). No full bonded parse / JSONL unless monitor on.
             var zones = SonosDiscovery.ParseZoneGroupState(stateXml);
+            var groupsChanged = false;
+            var controllerIpBefore = _controller?.CoordinatorIp;
+
             if (zones.Count > 0)
             {
+                var prevGroupSig = GroupsSignature();
                 _zones = zones;
                 RebuildGroups();
-                RebuildController();
+                groupsChanged = !string.Equals(prevGroupSig, GroupsSignature(), StringComparison.Ordinal);
+                // Re-subscribe only when the active coordinator IP actually changes.
+                // GENA topology floods used to call RebuildController every time → SUBSCRIBE thrash.
+                RebuildController(onlyIfCoordinatorChanged: true);
             }
 
             var vanishedNow = SonosDiscovery.ParseVanishedRooms(stateXml);
@@ -585,6 +604,7 @@ public sealed class SonosManager
                 vanishedNow = snap.VanishedRooms;
             }
 
+            var offlineChanged = false;
             // Skip drop/return balloons for the first snapshot — speakers already
             // offline at startup populate the indicator without a "just dropped" alert.
             if (_topologySeen)
@@ -592,14 +612,35 @@ public sealed class SonosManager
                 var previous = new HashSet<string>(_offline, StringComparer.OrdinalIgnoreCase);
                 var current = new HashSet<string>(vanishedNow, StringComparer.OrdinalIgnoreCase);
                 foreach (var dropped in current.Where(r => !previous.Contains(r)))
-                    SpeakerAvailabilityChanged?.Invoke(dropped, false);
+                {
+                    offlineChanged = true;
+                    try { SpeakerAvailabilityChanged?.Invoke(dropped, false); }
+                    catch (Exception ex) { AppLog.Warn($"SpeakerAvailabilityChanged(offline {dropped}) failed", ex); }
+                }
+
                 foreach (var returned in previous.Where(r => !current.Contains(r)))
-                    SpeakerAvailabilityChanged?.Invoke(returned, true);
+                {
+                    offlineChanged = true;
+                    try { SpeakerAvailabilityChanged?.Invoke(returned, true); }
+                    catch (Exception ex) { AppLog.Warn($"SpeakerAvailabilityChanged(online {returned}) failed", ex); }
+                }
+            }
+            else
+            {
+                offlineChanged = vanishedNow.Count > 0 || _offline.Count > 0;
             }
 
             _offline = vanishedNow;
             _topologySeen = true;
-            TopologyChanged?.Invoke();
+
+            // Only notify UI when something meaningful changed — GENA often re-sends identical topology.
+            var controllerIpAfter = _controller?.CoordinatorIp;
+            var controllerChanged = !string.Equals(controllerIpBefore, controllerIpAfter, StringComparison.OrdinalIgnoreCase);
+            if (groupsChanged || offlineChanged || controllerChanged)
+            {
+                try { TopologyChanged?.Invoke(); }
+                catch (Exception ex) { AppLog.Warn("TopologyChanged subscriber failed", ex); }
+            }
         }
         catch (Exception ex)
         {
@@ -607,6 +648,9 @@ public sealed class SonosManager
             AppLog.Warn("Topology event parse failed", ex);
         }
     }
+
+    private string GroupsSignature() =>
+        string.Join("|", Groups.Select(g => $"{g.CoordinatorUuid}:{g.MemberCount}:{g.CoordinatorRoom}"));
 
     /// <summary>
     /// Pulls full topology (incl. Sub / bonded) and logs a diff — only when monitor is enabled.
@@ -1608,21 +1652,44 @@ public sealed class SonosManager
             .ToList();
     }
 
-    private void RebuildController()
+    private void RebuildController(bool onlyIfCoordinatorChanged = false)
     {
         var group =
             Groups.FirstOrDefault(g => string.Equals(g.CoordinatorRoom, ActiveRoom, StringComparison.OrdinalIgnoreCase))
             ?? Groups.FirstOrDefault(g => ContainsRoom(g, ActiveRoom));
 
+        string? nextIp = null;
+        string? nextUuid = null;
         if (group is not null)
         {
-            _controller = new SonosController(group.CoordinatorIp, group.CoordinatorUuid, _soap);
-            SubscribeToActiveCoordinator();
+            nextIp = group.CoordinatorIp;
+            nextUuid = group.CoordinatorUuid;
+        }
+        else
+        {
+            var zone = _zones.FirstOrDefault(z => string.Equals(z.RoomName, ActiveRoom, StringComparison.OrdinalIgnoreCase));
+            if (zone is not null)
+            {
+                nextIp = zone.CoordinatorIpAddress;
+                nextUuid = zone.CoordinatorUuid;
+            }
+        }
+
+        if (onlyIfCoordinatorChanged
+            && _controller is not null
+            && string.Equals(_controller.CoordinatorIp, nextIp, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(_controller.CoordinatorUuid, nextUuid, StringComparison.OrdinalIgnoreCase))
+        {
             return;
         }
 
-        var zone = _zones.FirstOrDefault(z => string.Equals(z.RoomName, ActiveRoom, StringComparison.OrdinalIgnoreCase));
-        _controller = zone is null ? null : SonosController.ForZone(zone, _soap);
+        if (nextIp is null || nextUuid is null)
+        {
+            _controller = null;
+            return;
+        }
+
+        _controller = new SonosController(nextIp, nextUuid, _soap);
         SubscribeToActiveCoordinator();
     }
 
