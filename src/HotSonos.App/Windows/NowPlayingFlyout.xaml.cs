@@ -42,6 +42,9 @@ public partial class NowPlayingFlyout : Window
         _current = nowPlaying;
         TitleText.Text = nowPlaying.IsEmpty ? "Nothing playing" : nowPlaying.Title;
         ArtistText.Text = nowPlaying.Artist ?? "";
+        var src = nowPlaying.SourceLabel;
+        SourceText.Text = string.IsNullOrEmpty(src) ? "" : src;
+        SourceText.ToolTip = string.IsNullOrWhiteSpace(nowPlaying.TrackUri) ? src : nowPlaying.TrackUri;
         StatusText.Text = StateLabel(nowPlaying.State);
         SetArt(nowPlaying.AlbumArtUri);
         Reveal();
@@ -54,6 +57,9 @@ public partial class NowPlayingFlyout : Window
         {
             TitleText.Text = _current.IsEmpty ? "Nothing playing" : _current.Title;
             ArtistText.Text = _current.Artist ?? "";
+            var src = _current.SourceLabel;
+            SourceText.Text = string.IsNullOrEmpty(src) ? "" : src;
+            SourceText.ToolTip = string.IsNullOrWhiteSpace(_current.TrackUri) ? src : _current.TrackUri;
             SetArt(_current.AlbumArtUri);
         }
         StatusText.Text = message;

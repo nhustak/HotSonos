@@ -106,6 +106,136 @@ public sealed class HotSonosDebugTools
             }, JsonOptions);
         });
 
+    [McpServerTool(Name = "list_house_coordinator_candidates")]
+    [Description(
+        "Rooms that can be the preferred whole-house group coordinator. " +
+        "Shows PreferredHouseCoordinatorRoom and who is leading now.")]
+    public string ListHouseCoordinatorCandidates() =>
+        McpActivityLog.Run("list_house_coordinator_candidates", null, () =>
+        {
+            var s = _state.Settings().EnsureShape();
+            var candidates = _state.Sonos.GetCoordinatorCandidates();
+            return JsonSerializer.Serialize(new
+            {
+                preferred = s.PreferredHouseCoordinatorRoom,
+                activeRoom = _state.Sonos.ActiveRoom,
+                candidates = candidates.Select(c => new
+                {
+                    room = c.Room,
+                    ip = c.Ip,
+                    uuid = c.Uuid,
+                    isLeading = c.IsLeading,
+                }),
+            }, JsonOptions);
+        });
+
+    [McpServerTool(Name = "set_house_coordinator")]
+    [Description(
+        "Set preferred whole-house coordinator: BecomeCoordinator on that room, join every other player, " +
+        "refresh topology, and VERIFY the room is actually leading. Fails if verification fails. " +
+        "Persists PreferredHouseCoordinatorRoom. Shuffle/Fresh Start keep using it.")]
+    public Task<string> SetHouseCoordinator(
+        [Description("Room name exactly as list_zones / list_house_coordinator_candidates")] string room,
+        CancellationToken ct) =>
+        McpActivityLog.RunAsync("set_house_coordinator", new { room }, async () =>
+        {
+            try
+            {
+                var msg = await _state.Sonos.SetHouseCoordinatorAsync(room, ct).ConfigureAwait(false);
+                var s = _state.Settings().EnsureShape();
+                s.PreferredHouseCoordinatorRoom = room.Trim();
+                s.ActiveRoom = room.Trim();
+                _state.SetActiveRoom?.Invoke(room.Trim());
+                _state.PersistSettings?.Invoke();
+                var zones = _state.Sonos.GetCoordinatorCandidates();
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    message = msg,
+                    preferred = s.PreferredHouseCoordinatorRoom,
+                    groups = _state.Sonos.Groups.Select(g => new
+                    {
+                        g.DisplayName,
+                        g.CoordinatorRoom,
+                        g.CoordinatorIp,
+                        g.MemberCount,
+                    }),
+                    candidates = zones.Select(c => new { c.Room, c.Ip, c.IsLeading }),
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    error = ex.Message,
+                    preferred = _state.Settings().EnsureShape().PreferredHouseCoordinatorRoom,
+                    groups = _state.Sonos.Groups.Select(g => new
+                    {
+                        g.DisplayName,
+                        g.CoordinatorRoom,
+                        g.MemberCount,
+                    }),
+                }, JsonOptions);
+            }
+        }, category: "control");
+
+    [McpServerTool(Name = "regroup_house")]
+    [Description(
+        "Regroup all speakers under PreferredHouseCoordinatorRoom (or active room if unset). " +
+        "Verifies topology afterward; returns ok=false if the house did not stick as one group.")]
+    public Task<string> RegroupHouse(CancellationToken ct) =>
+        McpActivityLog.RunAsync("regroup_house", null, async () =>
+        {
+            var s = _state.Settings().EnsureShape();
+            var room = s.PreferredHouseCoordinatorRoom ?? _state.Sonos.ActiveRoom ?? s.ActiveRoom;
+            if (string.IsNullOrWhiteSpace(room))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    error = "No preferred or active room. Call set_house_coordinator first.",
+                }, JsonOptions);
+            }
+
+            try
+            {
+                var msg = await _state.Sonos.SetHouseCoordinatorAsync(room, ct).ConfigureAwait(false);
+                s.PreferredHouseCoordinatorRoom = room;
+                s.ActiveRoom = room;
+                _state.SetActiveRoom?.Invoke(room);
+                _state.PersistSettings?.Invoke();
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    message = msg,
+                    preferred = room,
+                    groups = _state.Sonos.Groups.Select(g => new
+                    {
+                        g.DisplayName,
+                        g.CoordinatorRoom,
+                        g.CoordinatorIp,
+                        g.MemberCount,
+                    }),
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    error = ex.Message,
+                    preferred = room,
+                    groups = _state.Sonos.Groups.Select(g => new
+                    {
+                        g.DisplayName,
+                        g.CoordinatorRoom,
+                        g.MemberCount,
+                    }),
+                }, JsonOptions);
+            }
+        }, category: "control");
+
     [McpServerTool(Name = "list_zones")]
     [Description("List individual visible zones/players (room, ip, uuid, coordinator). Use when the Settings device list looks empty or stale.")]
     public string ListZones() =>
@@ -224,6 +354,7 @@ public sealed class HotSonosDebugTools
             return JsonSerializer.Serialize(new
             {
                 s.ActiveRoom,
+                preferredHouseCoordinatorRoom = s.PreferredHouseCoordinatorRoom,
                 s.VolumeStep,
                 s.LevelVolumePercent,
                 roomVolumeOffsets = s.RoomVolumeOffsets
@@ -691,6 +822,32 @@ public sealed class HotSonosDebugTools
     [Description("Absolute path to the HotSonos log directory on this machine.")]
     public string GetLogDirectory() =>
         McpActivityLog.Run("get_log_directory", null, () => AppLog.DirectoryPath);
+
+    [McpServerTool(Name = "run_failure_diagnostic")]
+    [Description(
+        "Hard failure diagnostic: ping gateway/NAS/public DNS, probe library SMB roots, refresh Sonos topology, " +
+        "ICMP+TCP:1400 every known zone, live now-playing, library cache, log tail. " +
+        "Writes %LocalAppData%\\HotSonos\\diagnostics\\failure-*.txt. Run when audio cuts or network feels broken.")]
+    public Task<string> RunFailureDiagnostic(CancellationToken ct) =>
+        McpActivityLog.RunAsync("run_failure_diagnostic", null, async () =>
+        {
+            var diag = new FailureDiagnosticService(
+                _state.Sonos,
+                _state.Settings,
+                _state.GetLastNowPlaying,
+                _state.Library,
+                () => _state.IsRunning,
+                () => _state.Endpoint);
+            var result = await diag.RunAsync(ct).ConfigureAwait(false);
+            return JsonSerializer.Serialize(new
+            {
+                ok = result.IssueCount == 0,
+                issueCount = result.IssueCount,
+                elapsedMs = result.ElapsedMs,
+                reportPath = result.ReportPath,
+                report = result.ReportText,
+            }, JsonOptions);
+        }, category: "debug");
 
     [McpServerTool(Name = "get_play_events")]
     [Description("Recent play lifecycle events (started, skipped, paused, resumed, previous, stopped). Also on disk at %LocalAppData%\\HotSonos\\play-events.jsonl and in app logs as 'Play started:' / 'Play skipped:' etc.")]
@@ -1160,8 +1317,12 @@ public sealed class HotSonosDebugTools
             np.Album,
             state = np.State.ToString(),
             np.AlbumArtUri,
+            np.TrackUri,
             np.IsEmpty,
             np.DisplayLine,
+            sourceKind = np.SourceKind.ToString(),
+            source = np.SourceLabel,
+            sourceDetail = np.SourceDetail,
         };
     }
 }

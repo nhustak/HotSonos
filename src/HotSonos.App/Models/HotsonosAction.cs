@@ -16,6 +16,8 @@ public enum HotsonosAction
     QuickTag,
     /// <summary>Open the quick-play overlay (1 = library shuffle, 2–9 = tags &amp; Sonos playlists).</summary>
     QuickPlay,
+    /// <summary>Run hard failure diagnostic (ping LAN/NAS/speakers, topology, now-playing) and save report.</summary>
+    FailureDiagnostic,
     Favorite1,
     Favorite2,
     Favorite3,

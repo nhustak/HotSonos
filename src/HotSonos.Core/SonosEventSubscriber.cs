@@ -17,9 +17,11 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 {
     private const int SubscriptionSeconds = 300;
     private const string AvTransportEventPath = "/MediaRenderer/AVTransport/Event";
+    private const string RenderingControlEventPath = "/MediaRenderer/RenderingControl/Event";
     private const string TopologyEventPath = "/ZoneGroupTopology/Event";
 
-    private static readonly string[] EventPaths = [AvTransportEventPath, TopologyEventPath];
+    private static readonly string[] EventPaths =
+        [AvTransportEventPath, RenderingControlEventPath, TopologyEventPath];
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(8) };
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -38,6 +40,13 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
     /// <summary>Raised (background thread) when the coordinator pushes a track/state change.</summary>
     public event Action<NowPlaying>? NowPlayingChanged;
+
+    /// <summary>
+    /// Raised (background thread) when RenderingControl reports volume/mute on the
+    /// subscribed player (usually the group coordinator). Does not include per-follower
+    /// volumes — app should re-read all speakers on this signal.
+    /// </summary>
+    public event Action? VolumeChanged;
 
     /// <summary>Raised (background thread) with the decoded ZoneGroupState XML on a topology change.</summary>
     public event Action<string>? TopologyChanged;
@@ -149,12 +158,20 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
                     await _callbackHandlerGate.WaitAsync(ct).ConfigureAwait(false);
                     try
                     {
-                        // Route by body content: AVTransport carries <LastChange>, topology <ZoneGroupState>.
+                        // Route by body content: AVTransport / RenderingControl both use
+                        // <LastChange>; topology uses <ZoneGroupState>.
                         if (request.Contains("<LastChange>", StringComparison.Ordinal))
                         {
-                            var nowPlaying = ParseNotify(request, _coordinatorIp);
-                            if (nowPlaying is not null)
-                                NowPlayingChanged?.Invoke(nowPlaying);
+                            if (IsRenderingControlLastChange(request))
+                            {
+                                VolumeChanged?.Invoke();
+                            }
+                            else
+                            {
+                                var nowPlaying = ParseNotify(request, _coordinatorIp);
+                                if (nowPlaying is not null)
+                                    NowPlayingChanged?.Invoke(nowPlaying);
+                            }
                         }
                         else if (request.Contains("<ZoneGroupState>", StringComparison.Ordinal))
                         {
@@ -211,6 +228,27 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         }
 
         return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+    }
+
+    /// <summary>
+    /// True when LastChange is volume/mute (RenderingControl), not AVTransport.
+    /// Avoids treating volume NOTIFYs as empty now-playing updates.
+    /// </summary>
+    internal static bool IsRenderingControlLastChange(string request)
+    {
+        var lastChangeMatch = LastChangeRegex().Match(request);
+        if (!lastChangeMatch.Success)
+            return false;
+        var lastChange = WebUtility.HtmlDecode(lastChangeMatch.Groups[1].Value);
+        if (lastChange.Contains("TransportState", StringComparison.OrdinalIgnoreCase)
+            || lastChange.Contains("CurrentTrackURI", StringComparison.OrdinalIgnoreCase)
+            || lastChange.Contains("AVTransportURI", StringComparison.OrdinalIgnoreCase)
+            || lastChange.Contains("CurrentTrackMetaData", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return lastChange.Contains("<Volume", StringComparison.OrdinalIgnoreCase)
+               || lastChange.Contains("Volume val=", StringComparison.OrdinalIgnoreCase)
+               || lastChange.Contains("<Mute", StringComparison.OrdinalIgnoreCase)
+               || lastChange.Contains("Mute val=", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Extracts now-playing state from an AVTransport NOTIFY body.</summary>

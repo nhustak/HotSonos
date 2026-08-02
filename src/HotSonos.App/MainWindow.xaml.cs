@@ -54,6 +54,7 @@ public partial class MainWindow : Window
     private readonly HotkeyConfig _mute;
     private readonly HotkeyConfig _quickTag;
     private readonly HotkeyConfig _quickPlay;
+    private readonly HotkeyConfig _failureDiagnostic;
     private readonly HotkeyConfig[] _favHotkeys;
 
     private readonly Dictionary<TextBox, HotkeyConfig> _boxToConfig = [];
@@ -98,6 +99,7 @@ public partial class MainWindow : Window
         _mute = Clone(_settings.Mute);
         _quickTag = Clone(_settings.QuickTag);
         _quickPlay = Clone(_settings.QuickPlay);
+        _failureDiagnostic = Clone(_settings.FailureDiagnostic);
         _favHotkeys = _settings.FavoriteSlots.Select(s => Clone(s.Hotkey)).ToArray();
 
         InitializeComponent();
@@ -209,6 +211,7 @@ public partial class MainWindow : Window
         _boxToConfig[MuteHotkeyBox] = _mute;
         _boxToConfig[QuickTagHotkeyBox] = _quickTag;
         _boxToConfig[QuickPlayHotkeyBox] = _quickPlay;
+        _boxToConfig[FailureDiagnosticHotkeyBox] = _failureDiagnostic;
         _boxToConfig[Fav1HotkeyBox] = _favHotkeys[0];
         _boxToConfig[Fav2HotkeyBox] = _favHotkeys[1];
         _boxToConfig[Fav3HotkeyBox] = _favHotkeys[2];
@@ -227,6 +230,7 @@ public partial class MainWindow : Window
         _byTag["Mute"] = (MuteHotkeyBox, _mute);
         _byTag["QuickTag"] = (QuickTagHotkeyBox, _quickTag);
         _byTag["QuickPlay"] = (QuickPlayHotkeyBox, _quickPlay);
+        _byTag["FailureDiagnostic"] = (FailureDiagnosticHotkeyBox, _failureDiagnostic);
         _byTag["Fav1"] = (Fav1HotkeyBox, _favHotkeys[0]);
         _byTag["Fav2"] = (Fav2HotkeyBox, _favHotkeys[1]);
         _byTag["Fav3"] = (Fav3HotkeyBox, _favHotkeys[2]);
@@ -272,6 +276,7 @@ public partial class MainWindow : Window
         StartLibraryStatusTimer();
         HookMcpActivityUi();
         HookTopologyUi();
+        HookVolumesUi();
         RefreshMcpEndpointUi();
         RefreshMcpActivityList(scrollToEnd: true);
         RefreshTopologyUi(scrollToEnd: true);
@@ -281,7 +286,9 @@ public partial class MainWindow : Window
         _ = LoadSpeakerVolumesAsync();
         RefreshControlShuffleSourceCombo();
         RefreshControlPlayList();
-        ApplyControlNowPlaying(null);
+        // Seed from live cache (poll/GENA already running). Null only if truly unknown.
+        ApplyControlNowPlaying(_sonos.LastNowPlaying);
+        _ = RefreshControlNowPlayingAsync();
         _loaded = true;
 
         // Only re-discover if groups are still empty. Startup already ran RefreshAsync once;
@@ -309,6 +316,11 @@ public partial class MainWindow : Window
             _topologyUiThrottle = null;
             _topologyUiHooked = false;
         }
+        if (_volumesUiHooked)
+        {
+            _sonos.VolumesChanged -= OnSonosVolumesChanged;
+            _volumesUiHooked = false;
+        }
         _libraryStatusTimer?.Stop();
     }
 
@@ -318,6 +330,32 @@ public partial class MainWindow : Window
 
     private void OnControlNowPlayingChanged(HotSonos.Core.Models.NowPlaying np) =>
         Dispatcher.InvokeAsync(() => ApplyControlNowPlaying(np));
+
+    /// <summary>
+    /// Control UI only updates on <see cref="SonosManager.NowPlayingChanged"/>. That event
+    /// is coalesced by signature — opening Settings mid-track never re-fires. Seed from cache
+    /// and one-shot SOAP so the panel is never stuck on "Nothing playing" while music plays.
+    /// </summary>
+    private async Task RefreshControlNowPlayingAsync()
+    {
+        try
+        {
+            // Immediate: whatever poll/GENA last saw
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (_sonos.LastNowPlaying is { } cached && !cached.IsEmpty)
+                    ApplyControlNowPlaying(cached);
+            });
+
+            var live = await _sonos.FetchNowPlayingAsync().ConfigureAwait(true);
+            if (live is not null)
+                ApplyControlNowPlaying(live);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Control now-playing refresh failed", ex);
+        }
+    }
 
     private void ApplyControlNowPlaying(HotSonos.Core.Models.NowPlaying? np)
     {
@@ -330,6 +368,11 @@ public partial class MainWindow : Window
             ControlNowPlayingTitle.Text = "Nothing playing";
             ControlNowPlayingArtist.Text = "";
             ControlNowPlayingState.Text = "";
+            if (ControlNowPlayingSource is not null)
+            {
+                ControlNowPlayingSource.Text = "";
+                ControlNowPlayingSource.ToolTip = null;
+            }
             if (ControlTransportPlayPauseButton is not null)
                 ControlTransportPlayPauseButton.Content = "▶";
             SetControlNowPlayingArt(null);
@@ -341,6 +384,14 @@ public partial class MainWindow : Window
             ? (np.Album ?? "")
             : (string.IsNullOrWhiteSpace(np.Album) ? np.Artist! : $"{np.Artist} — {np.Album}");
         ControlNowPlayingState.Text = np.State.ToString();
+        if (ControlNowPlayingSource is not null)
+        {
+            var src = np.SourceLabel;
+            ControlNowPlayingSource.Text = string.IsNullOrEmpty(src) ? "" : $"Source: {src}";
+            ControlNowPlayingSource.ToolTip = string.IsNullOrWhiteSpace(np.TrackUri)
+                ? src
+                : np.TrackUri;
+        }
         if (ControlTransportPlayPauseButton is not null)
         {
             ControlTransportPlayPauseButton.Content =
@@ -514,6 +565,46 @@ public partial class MainWindow : Window
     private DispatcherTimer? _topologyUiThrottle;
     private bool _topologyUiDirty;
     private bool _topologyUiScrollToEnd;
+    private bool _volumesUiHooked;
+    private int _volumesReloadInFlight;
+    private int _volumesReloadDirty;
+
+    private void HookVolumesUi()
+    {
+        if (_volumesUiHooked) return;
+        _sonos.VolumesChanged += OnSonosVolumesChanged;
+        _volumesUiHooked = true;
+    }
+
+    private void OnSonosVolumesChanged()
+    {
+        // GENA + our writes raise this off the UI thread; coalesce concurrent reloads.
+        Volatile.Write(ref _volumesReloadDirty, 1);
+        if (Interlocked.Exchange(ref _volumesReloadInFlight, 1) == 1)
+            return;
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            try
+            {
+                while (Interlocked.Exchange(ref _volumesReloadDirty, 0) == 1)
+                {
+                    if (!_loaded) break;
+                    await LoadSpeakerVolumesAsync().ConfigureAwait(true);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Live speaker volume refresh failed", ex);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _volumesReloadInFlight, 0);
+                // A notify landed after we cleared the gate — schedule another pass.
+                if (Volatile.Read(ref _volumesReloadDirty) == 1)
+                    OnSonosVolumesChanged();
+            }
+        });
+    }
 
     private void HookTopologyUi()
     {
@@ -765,6 +856,7 @@ public partial class MainWindow : Window
             : $"{coordName} + {visibleCount - 1}";
         if (isActive)
             title = "▶ " + title;
+        title += "  ·  COORD: " + coordName;
 
         stack.Children.Add(new Border
         {
@@ -778,6 +870,7 @@ public partial class MainWindow : Window
                 FontSize = 13,
                 Foreground = new System.Windows.Media.SolidColorBrush(headerFg),
                 TextWrapping = TextWrapping.Wrap,
+                ToolTip = $"Group coordinator: {coordName}",
             },
         });
 
@@ -795,6 +888,7 @@ public partial class MainWindow : Window
                     && (string.Equals(m.ChannelRole, "SW", StringComparison.OrdinalIgnoreCase)
                         || m.RoomName.Contains("Sub", StringComparison.OrdinalIgnoreCase));
         var isPort = !m.Invisible
+                     && !m.IsCoordinator
                      && (m.RoomName.Contains("Theater", StringComparison.OrdinalIgnoreCase)
                          || m.RoomName.Contains("Port", StringComparison.OrdinalIgnoreCase)
                          || m.RoomName.Contains("Media", StringComparison.OrdinalIgnoreCase));
@@ -802,7 +896,17 @@ public partial class MainWindow : Window
 
         System.Windows.Media.Color bg, fg, edge;
         string prefix;
-        if (isSub)
+        var thick = 1.0;
+        // Coordinator always wins over Port/purple styling so Theater-as-boss is visible.
+        if (m.IsCoordinator && !m.Invisible)
+        {
+            bg = System.Windows.Media.Color.FromRgb(0xD5, 0xF5, 0xE3);
+            fg = System.Windows.Media.Color.FromRgb(0x0E, 0x66, 0x3A);
+            edge = System.Windows.Media.Color.FromRgb(0x27, 0xAE, 0x60);
+            prefix = "★ COORD · ";
+            thick = 2;
+        }
+        else if (isSub)
         {
             bg = System.Windows.Media.Color.FromRgb(0xE8, 0xEE, 0xF8);
             fg = System.Windows.Media.Color.FromRgb(0x3D, 0x5A, 0x80);
@@ -823,13 +927,6 @@ public partial class MainWindow : Window
             edge = System.Windows.Media.Color.FromRgb(0x5B, 0x7C, 0x99);
             prefix = "⛓ ";
         }
-        else if (m.IsCoordinator)
-        {
-            bg = System.Windows.Media.Color.FromRgb(0xF4, 0xF7, 0xFA);
-            fg = System.Windows.Media.Color.FromRgb(0x1C, 0x25, 0x36);
-            edge = System.Windows.Media.Color.FromRgb(0xC5, 0xD0, 0xDC);
-            prefix = "★ ";
-        }
         else
         {
             bg = System.Windows.Media.Color.FromRgb(0xF8, 0xFA, 0xFC);
@@ -842,7 +939,7 @@ public partial class MainWindow : Window
         {
             Background = new System.Windows.Media.SolidColorBrush(bg),
             BorderBrush = new System.Windows.Media.SolidColorBrush(edge),
-            BorderThickness = new Thickness(1),
+            BorderThickness = new Thickness(thick),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(6, 3, 6, 3),
             Margin = new Thickness(0, 0, 0, 4),
@@ -850,11 +947,14 @@ public partial class MainWindow : Window
             {
                 Text = prefix + m.DisplayLabel,
                 FontSize = 11,
+                FontWeight = m.IsCoordinator && !m.Invisible ? FontWeights.Bold : FontWeights.Normal,
                 Foreground = new System.Windows.Media.SolidColorBrush(fg),
                 TextWrapping = TextWrapping.Wrap,
                 ToolTip = $"{m.DisplayLabel}\n{m.IpAddress}\nUUID {m.Uuid}"
                           + (m.Invisible ? "\n(bonded/invisible)" : "")
-                          + (m.IsCoordinator ? "\n(group coordinator)" : ""),
+                          + (m.IsCoordinator
+                              ? "\n★ GROUP COORDINATOR (pulls library / leads group)"
+                              : "\n(follower)"),
             },
         };
     }
@@ -930,21 +1030,55 @@ public partial class MainWindow : Window
         try
         {
             TopologyRegroupButton.IsEnabled = false;
-            SetStatus("Regrouping all speakers into active group…", warn: false);
-            AppLog.Info("Topology UI: regroup all");
-            await _sonos.GroupAllSpeakersAsync().ConfigureAwait(true);
+            var preferred = _settings.PreferredHouseCoordinatorRoom
+                            ?? _sonos.ActiveRoom
+                            ?? _settings.ActiveRoom;
+            SetStatus(
+                string.IsNullOrWhiteSpace(preferred)
+                    ? "Regrouping…"
+                    : $"Regrouping under preferred coordinator: {preferred}…",
+                warn: false);
+            AppLog.Info($"Topology UI: regroup all (preferred={preferred ?? "(none)"})");
+
+            string? detail;
+            if (!string.IsNullOrWhiteSpace(preferred))
+            {
+                detail = await _sonos.SetHouseCoordinatorAsync(preferred).ConfigureAwait(true);
+                _settings.PreferredHouseCoordinatorRoom = preferred;
+                _settings.ActiveRoom = preferred;
+                _store.Save(_settings);
+            }
+            else
+            {
+                await _sonos.GroupAllSpeakersAsync().ConfigureAwait(true);
+                detail = null;
+            }
+
             await _sonos.RefreshAsync(_settings.ActiveRoom).ConfigureAwait(true);
+            PopulateRooms();
             RefreshTopologyUi(scrollToEnd: true);
-            var n = _sonos.Groups.FirstOrDefault()?.MemberCount ?? 0;
+            var n = _sonos.Groups.OrderByDescending(x => x.MemberCount).FirstOrDefault()?.MemberCount ?? 0;
             var g = _sonos.Groups.Count;
-            SetStatus(g <= 1
-                ? $"Regrouped → {_sonos.ActiveGroupLabel ?? "one group"} ({n} rooms)."
-                : $"Regroup done but still {g} group(s) — check amber cards / offline.", warn: g > 1);
+            var leader = _sonos.Groups.OrderByDescending(x => x.MemberCount).FirstOrDefault()?.CoordinatorRoom;
+            SetStatus(
+                detail
+                ?? (g <= 1
+                    ? $"Regrouped → {_sonos.ActiveGroupLabel ?? "one group"} ({n} rooms)."
+                    : $"Regroup finished with {g} group(s); largest leader={leader} ({n} rooms)."),
+                warn: g > 2 || (leader is not null
+                    && !string.IsNullOrWhiteSpace(preferred)
+                    && !string.Equals(leader, preferred, StringComparison.OrdinalIgnoreCase)));
         }
         catch (Exception ex)
         {
             AppLog.Warn("Topology regroup failed", ex);
-            SetStatus($"Regroup failed: {ex.Message}", warn: true);
+            SetStatus($"Regroup failed (topology not verified): {ex.Message}", warn: true);
+            try
+            {
+                await _sonos.RefreshAsync(_settings.ActiveRoom).ConfigureAwait(true);
+                RefreshTopologyUi(scrollToEnd: true);
+            }
+            catch { /* ignore */ }
         }
         finally
         {
@@ -2238,7 +2372,13 @@ public partial class MainWindow : Window
     {
         // Re-discover whenever Settings becomes visible from the tray (not only volumes).
         if (_loaded && e.NewValue is true)
+        {
+            // Seed now-playing immediately (events may have been coalesced while hidden).
+            if (_sonos.LastNowPlaying is { } cached)
+                ApplyControlNowPlaying(cached);
+            _ = RefreshControlNowPlayingAsync();
             RefreshDevicesInBackground();
+        }
     }
 
     private void LoadWakeUiFromSettings()
@@ -2412,7 +2552,7 @@ public partial class MainWindow : Window
             Orientation = System.Windows.Controls.Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(10, 0, 0, 0),
-            ToolTip = "Added to Level-all / Wake house levels for this room (e.g. +60 so level 20 → 80%). Not applied to the slider or ± volume hotkeys.",
+            ToolTip = "Added to house logical level on write (Level all, Wake, volume ±). Example: logical 20 + offset 60 → Port 80%. Slider still shows raw Sonos %. Port is never the primary for ± toasts.",
         };
         offsetPanel.Children.Add(new TextBlock
         {
@@ -2501,6 +2641,16 @@ public partial class MainWindow : Window
         }
     }
 
+    private sealed class HouseCoordinatorPick
+    {
+        public required string Room { get; init; }
+        public required string Ip { get; init; }
+        public required string Uuid { get; init; }
+        public bool IsLeading { get; init; }
+        public override string ToString() =>
+            IsLeading ? $"{Room}  ({Ip})  · leading now" : $"{Room}  ({Ip})";
+    }
+
     private void PopulateRooms()
     {
         _suppressRoomChange = true;
@@ -2528,7 +2678,114 @@ public partial class MainWindow : Window
         else if (WakeRoomComboBox.Items.Count > 0)
             WakeRoomComboBox.SelectedIndex = 0;
 
+        PopulateHouseCoordinatorCombo();
+        UpdateHouseCoordinatorStatus();
+
         _suppressRoomChange = false;
+    }
+
+    private void PopulateHouseCoordinatorCombo()
+    {
+        if (HouseCoordinatorComboBox is null)
+            return;
+
+        var preferred = _settings.PreferredHouseCoordinatorRoom;
+        var items = _sonos.GetCoordinatorCandidates()
+            .Select(c => new HouseCoordinatorPick
+            {
+                Room = c.Room,
+                Ip = c.Ip,
+                Uuid = c.Uuid,
+                IsLeading = c.IsLeading,
+            })
+            .ToList();
+
+        HouseCoordinatorComboBox.Items.Clear();
+        foreach (var item in items)
+            HouseCoordinatorComboBox.Items.Add(item);
+
+        HouseCoordinatorPick? sel = null;
+        if (!string.IsNullOrWhiteSpace(preferred))
+        {
+            sel = items.FirstOrDefault(i =>
+                string.Equals(i.Room, preferred, StringComparison.OrdinalIgnoreCase));
+        }
+
+        sel ??= items.FirstOrDefault(i => i.IsLeading)
+                ?? items.FirstOrDefault(i =>
+                    string.Equals(i.Room, _sonos.ActiveRoom, StringComparison.OrdinalIgnoreCase))
+                ?? items.FirstOrDefault();
+
+        if (sel is not null)
+            HouseCoordinatorComboBox.SelectedItem = sel;
+    }
+
+    private void UpdateHouseCoordinatorStatus()
+    {
+        if (HouseCoordinatorStatusText is null)
+            return;
+
+        var leading = _sonos.GetCoordinatorCandidates().FirstOrDefault(c => c.IsLeading);
+        var preferred = _settings.PreferredHouseCoordinatorRoom;
+        if (!string.IsNullOrWhiteSpace(preferred) && leading.Room is not null)
+        {
+            var match = string.Equals(preferred, leading.Room, StringComparison.OrdinalIgnoreCase);
+            HouseCoordinatorStatusText.Text = match
+                ? $"Now: {leading.Room} ({leading.Ip}) — preferred coordinator"
+                : $"Now leading: {leading.Room} ({leading.Ip}) · preferred: {preferred} (Apply to switch)";
+        }
+        else if (leading.Room is not null)
+        {
+            HouseCoordinatorStatusText.Text =
+                $"Now leading: {leading.Room} ({leading.Ip}) — pick preferred + Apply";
+        }
+        else
+        {
+            HouseCoordinatorStatusText.Text = "No rooms — Refresh devices.";
+        }
+    }
+
+    private async void ApplyHouseCoordinator_Click(object sender, RoutedEventArgs e)
+    {
+        if (HouseCoordinatorComboBox?.SelectedItem is not HouseCoordinatorPick pick)
+        {
+            MessageBox.Show("Pick a room as preferred coordinator.", "HotSonos",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        ApplyHouseCoordinatorButton.IsEnabled = false;
+        try
+        {
+            HouseCoordinatorStatusText.Text = $"Setting preferred coordinator → {pick.Room}…";
+            var msg = await _sonos.SetHouseCoordinatorAsync(pick.Room).ConfigureAwait(true);
+            _settings.PreferredHouseCoordinatorRoom = pick.Room;
+            _settings.ActiveRoom = pick.Room;
+            _store.Save(_settings);
+            _onRoomChanged(pick.Room);
+            PopulateRooms();
+            HouseCoordinatorStatusText.Text = msg;
+            AppLog.Info(msg);
+            if (TopologyMapPanel is not null)
+                RefreshTopologyUi(scrollToEnd: false);
+            MessageBox.Show(
+                msg + "\n\nCheck Topology: that room must show ★ COORD with others under it. " +
+                "If not, regroup failed — try again or check logs.",
+                "Preferred coordinator",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Set preferred coordinator failed", ex);
+            HouseCoordinatorStatusText.Text = $"Failed: {ex.Message}";
+            try { RefreshTopologyUi(scrollToEnd: false); } catch { /* ignore */ }
+            MessageBox.Show(ex.Message, "Preferred coordinator", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            ApplyHouseCoordinatorButton.IsEnabled = true;
+        }
     }
 
     private async Task LoadFavoritesAsync()
@@ -3081,6 +3338,7 @@ public partial class MainWindow : Window
         _settings.Mute = _mute;
         _settings.QuickTag = _quickTag;
         _settings.QuickPlay = _quickPlay;
+        _settings.FailureDiagnostic = _failureDiagnostic;
         if (int.TryParse(VolumeStepBox.Text, out var step) && step is >= 1 and <= 50)
             _settings.VolumeStep = step;
         if (int.TryParse(LevelPercentBox.Text, out var level) && level is >= 0 and <= 100)

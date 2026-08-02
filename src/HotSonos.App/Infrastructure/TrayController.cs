@@ -29,6 +29,7 @@ public sealed class TrayController : IDisposable
         Action<string> SetRoom,
         Action OpenLogFolder,
         Action CopyDiagnostics,
+        Action FailureDiagnostic,
         Action StopWake,
         Action CopyMcpEndpoint,
         Action DoubleClick,
@@ -88,7 +89,8 @@ public sealed class TrayController : IDisposable
         _mcpItem = new ToolStripMenuItem("MCP: (not running)", null, (_, _) => _callbacks.CopyMcpEndpoint());
         _menu.Items.Add(_mcpItem);
         _menu.Items.Add("Open log folder", null, (_, _) => _callbacks.OpenLogFolder());
-        _menu.Items.Add("Copy diagnostics", null, (_, _) => _callbacks.CopyDiagnostics());
+        _menu.Items.Add("Copy recent log", null, (_, _) => _callbacks.CopyDiagnostics());
+        _menu.Items.Add("⚡ Failure diagnostic (now)", null, (_, _) => _callbacks.FailureDiagnostic());
         _menu.Items.Add("Exit", null, (_, _) => _callbacks.Exit());
 
         _trayIcon = TrayIconFactory.Create();

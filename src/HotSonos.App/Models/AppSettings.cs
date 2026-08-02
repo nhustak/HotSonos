@@ -75,6 +75,12 @@ public sealed class AppSettings
     /// <summary>Room/group the hotkeys target. Null until first discovery resolves one.</summary>
     public string? ActiveRoom { get; set; }
 
+    /// <summary>
+    /// Preferred whole-house group coordinator (room name). When set, shuffle / fresh start /
+    /// regroup joins every speaker to this room so it leads the group. Null = current active group.
+    /// </summary>
+    public string? PreferredHouseCoordinatorRoom { get; set; }
+
     /// <summary>Pop the Now-Playing flyout on every track change.</summary>
     public bool ShowFlyoutOnTrackChange { get; set; } = true;
 
@@ -124,8 +130,10 @@ public sealed class AppSettings
     public int LevelVolumePercent { get; set; } = 20;
 
     /// <summary>
-    /// Per-room offsets for absolute volume (Level all / wake). Example: Media Room +60 so
-    /// level 20% becomes 80% on that Sonos port (amp/Port calibration).
+    /// Per-room offsets applied when writing house logical levels (Level all, Wake,
+    /// volume ±). Example: Theater +60 so logical 20% → Port raw 80% (amp calibration).
+    /// Rooms with a non-zero offset are excluded from the house primary % used for ±
+    /// toasts (median of offset-0 rooms).
     /// </summary>
     public List<RoomVolumeOffset> RoomVolumeOffsets { get; set; } = [];
 
@@ -365,6 +373,9 @@ public sealed class AppSettings
     /// <summary>Global hotkey that opens the quick-play overlay (shuffle + tags + Sonos playlists).</summary>
     public HotkeyConfig QuickPlay { get; set; } = new();
 
+    /// <summary>Global hotkey that runs a hard failure diagnostic (LAN / NAS / Sonos) and saves a report.</summary>
+    public HotkeyConfig FailureDiagnostic { get; set; } = new();
+
     /// <summary>When true, tag writes also dual-write to master when linked.</summary>
     public bool TagUpdateMasterDefault { get; set; } = true;
 
@@ -462,6 +473,7 @@ public sealed class AppSettings
             HotsonosAction.FreshStart => FreshStart,
             HotsonosAction.QuickTag => QuickTag,
             HotsonosAction.QuickPlay => QuickPlay,
+            HotsonosAction.FailureDiagnostic => FailureDiagnostic,
             _ => new HotkeyConfig(),
         };
     }
@@ -480,11 +492,14 @@ public sealed class AppSettings
         FreshStart ??= new HotkeyConfig();
         QuickTag ??= new HotkeyConfig();
         QuickPlay ??= new HotkeyConfig();
+        FailureDiagnostic ??= new HotkeyConfig();
         // First-time seed so existing installs get usable overlay hotkeys.
         if (!QuickTag.IsSet)
             QuickTag = new HotkeyConfig { Control = true, Alt = true, Key = "T" };
         if (!QuickPlay.IsSet)
             QuickPlay = new HotkeyConfig { Control = true, Alt = true, Key = "P" };
+        if (!FailureDiagnostic.IsSet)
+            FailureDiagnostic = new HotkeyConfig { Control = true, Alt = true, Key = "D" };
         if (VolumeStep < 1) VolumeStep = 5;
         if (LevelVolumePercent is < 0 or > 100) LevelVolumePercent = 20;
         RoomVolumeOffsets ??= [];
@@ -845,5 +860,6 @@ public sealed class AppSettings
         Mute = new HotkeyConfig { Control = true, Alt = true, Key = "M" },
         QuickTag = new HotkeyConfig { Control = true, Alt = true, Key = "T" },
         QuickPlay = new HotkeyConfig { Control = true, Alt = true, Key = "P" },
+        FailureDiagnostic = new HotkeyConfig { Control = true, Alt = true, Key = "D" },
     }.EnsureShape();
 }

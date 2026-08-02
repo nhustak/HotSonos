@@ -164,6 +164,12 @@
                                                        Text=""
                                                        FontSize="11" Margin="0,4,0,0"
                                                        Foreground="#FF1C8E54" />
+                                            <TextBlock x:Name="ControlNowPlayingSource"
+                                                       Text=""
+                                                       FontSize="11" FontWeight="SemiBold" Margin="0,4,0,0"
+                                                       TextWrapping="Wrap"
+                                                       Foreground="#FF0B6E99"
+                                                       ToolTip="Where the audio bytes come from (NAS vs PC library vs Spotify/Radio)" />
                                         </StackPanel>
                                     </DockPanel>
                                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0" HorizontalAlignment="Left">
@@ -196,13 +202,29 @@
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
-                            <TextBlock Text="Target room / group" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
+                            <TextBlock Text="Preferred coordinator" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
+                            <TextBlock Text="Room that leads the whole-house group (pulls library, others follow). Used by Shuffle / Fresh Start."
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
+                            <ComboBox x:Name="HouseCoordinatorComboBox" Height="28"
+                                      VerticalContentAlignment="Center"
+                                      ToolTip="Preferred group coordinator room" />
+                            <Button x:Name="ApplyHouseCoordinatorButton"
+                                    Content="Set preferred coordinator"
+                                    Height="28" Margin="0,8,0,0" Padding="10,0"
+                                    Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                    Click="ApplyHouseCoordinator_Click"
+                                    ToolTip="Group every speaker under this room and save as preferred coordinator" />
+                            <TextBlock x:Name="HouseCoordinatorStatusText"
+                                       Foreground="#FF0B6E99" FontSize="11" FontWeight="SemiBold"
+                                       Margin="0,6,0,0" TextWrapping="Wrap" Text="" />
+
+                            <TextBlock Text="Target room / group" Style="{StaticResource SectionHeader}" Margin="0,12,0,6" />
                             <ComboBox x:Name="RoomComboBox" Height="28"
                                       VerticalContentAlignment="Center"
                                       SelectionChanged="RoomComboBox_SelectionChanged" />
                             <Button x:Name="RefreshButton" Content="Refresh devices" Height="28" Margin="0,8,0,0"
                                     Padding="10,0" Click="RefreshButton_Click" />
-                            <TextBlock Text="Hotkeys control this room. Grouped rooms follow their coordinator."
+                            <TextBlock Text="Hotkeys control this group. Followers sync to the preferred coordinator above."
                                        Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                     </Grid>
@@ -220,7 +242,7 @@
                                 <TextBlock Text="Speakers" FontSize="15" FontWeight="SemiBold"
                                            VerticalAlignment="Center" />
                             </DockPanel>
-                            <TextBlock Text="Sliders = raw Sonos %. Offset is added only on Level all and Wake absolute levels."
+                            <TextBlock Text="Sliders = raw Sonos %. Volume ± / Level all / Wake use house logical % (median of offset-0 rooms); offset rooms (e.g. Port +60) get logical+offset on write — Port is never the primary number."
                                        Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
                             <StackPanel x:Name="SpeakersPanel" />
                         </StackPanel>
@@ -370,6 +392,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Volume up" VerticalAlignment="Center" Margin="0,4" />
                             <TextBox Grid.Row="0" Grid.Column="1" x:Name="VolumeUpHotkeyBox" Style="{StaticResource HotkeyBox}"
@@ -409,7 +432,14 @@
                                      ToolTip="Opens play picker: 1=library shuffle, 2–9=tags, genres &amp; Sonos playlists (default Ctrl+Alt+P)" />
                             <Button Grid.Row="5" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="QuickPlay"
                                     Click="ClearHotkey_Click" />
-                            <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
+                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Failure diagnostic" VerticalAlignment="Center" Margin="0,4" />
+                            <TextBox Grid.Row="6" Grid.Column="1" x:Name="FailureDiagnosticHotkeyBox" Style="{StaticResource HotkeyBox}"
+                                     Width="Auto" HorizontalAlignment="Left" Margin="0,4"
+                                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotFocus="HotkeyBox_GotFocus"
+                                     ToolTip="When audio/network fails: ping gateway/NAS/speakers, TCP 1400, SMB roots, topology — saves report (default Ctrl+Alt+D)" />
+                            <Button Grid.Row="6" Grid.Column="2" Content="Clear" Margin="8,4" Padding="8,0" Tag="FailureDiagnostic"
+                                    Click="ClearHotkey_Click" />
+                            <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
                                 <TextBlock Text="Step per press (%)" VerticalAlignment="Center" Width="140" />
                                 <TextBox x:Name="VolumeStepBox" Width="50" Padding="6,4" VerticalContentAlignment="Center" />
                             </StackPanel>
@@ -977,7 +1007,10 @@
                                        FontWeight="SemiBold" />
                             <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                 <Border Background="#FFE8F8EF" BorderBrush="#FF2ECC71" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
-                                    <TextBlock Text="Green = main/playing group" FontSize="10" Foreground="#FF1C8E54" />
+                                    <TextBlock Text="Green card = main group" FontSize="10" Foreground="#FF1C8E54" />
+                                </Border>
+                                <Border Background="#FFD5F5E3" BorderBrush="#FF27AE60" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
+                                    <TextBlock Text="★ COORD = group coordinator" FontSize="10" FontWeight="Bold" Foreground="#FF0E663A" />
                                 </Border>
                                 <Border Background="#FFFFF4E5" BorderBrush="#FFE6A23C" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
                                     <TextBlock Text="Amber = solo / not in house" FontSize="10" Foreground="#FFB8821A" />
@@ -986,10 +1019,10 @@
                                     <TextBlock Text="Red = offline / vanished" FontSize="10" Foreground="#FFC0392B" />
                                 </Border>
                                 <Border Background="#FFE8EEF8" BorderBrush="#FF5B7C99" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
-                                    <TextBlock Text="Blue chip = Sub / bonded" FontSize="10" Foreground="#FF3D5A80" />
+                                    <TextBlock Text="Blue = Sub / bonded" FontSize="10" Foreground="#FF3D5A80" />
                                 </Border>
                                 <Border Background="#FFF3E8FA" BorderBrush="#FF9B59B6" BorderThickness="1" CornerRadius="3" Padding="6,2">
-                                    <TextBlock Text="Purple chip = Port / Theater" FontSize="10" Foreground="#FF7D3C98" />
+                                    <TextBlock Text="Purple = Port/Theater (if not COORD)" FontSize="10" Foreground="#FF7D3C98" />
                                 </Border>
                             </StackPanel>
                         </StackPanel>

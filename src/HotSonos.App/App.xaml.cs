@@ -37,6 +37,8 @@ public partial class App : System.Windows.Application
     private HotSonosMcpHost? _mcpHost;
     private HotSonosMcpState? _mcpState;
     private LibraryService? _library;
+    private FailureDiagnosticService? _failureDiagnostic;
+    private int _failureDiagnosticRunning; // 0/1
     private System.Threading.Timer? _pendingTagTimer;
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private readonly Stopwatch _uptime = Stopwatch.StartNew();
@@ -172,36 +174,33 @@ public partial class App : System.Windows.Application
         {
         _store = new ConfigStore();
         _settings = _store.Load().EnsureShape();
-        // Crash dumps: System.StackOverflowException in PresentationFramework under topology thrash.
-        // Monitor is debug-only; never leave it ON across restarts (GENA + UI map + GroupAll cascade).
-        if (_settings.TopologyMonitorEnabled)
+        // One-time undo of crash-isolation flags that were WRITTEN into settings.json.
+        // Do not force-disable features at startup again — match pre-isolation product behavior.
+        var restoredIsolation = false;
+        if (!_settings.ShowFlyoutOnTrackChange)
         {
-            _settings.TopologyMonitorEnabled = false;
-            AppLog.Warn("Topology monitor was ON — forced OFF at startup for stability (re-enable on Topology tab if debugging)");
+            _settings.ShowFlyoutOnTrackChange = true;
+            restoredIsolation = true;
         }
-        // Hard isolation while process is dying ~4min after start with no managed exception:
-        // ASP.NET MCP host in-process has been on every crashing run; keep tray stable first.
-        if (_settings.McpEnabled)
+        if (!_settings.AutoRecoverPlayback)
         {
-            _settings.McpEnabled = false;
-            AppLog.Warn("MCP forced OFF at startup (stability isolation) — re-enable on MCP Debug tab when stable");
+            _settings.AutoRecoverPlayback = true;
+            restoredIsolation = true;
         }
-        if (_settings.AutoRecoverPlayback)
+        if (!_settings.McpEnabled)
         {
-            _settings.AutoRecoverPlayback = false;
-            AppLog.Warn("AutoRecoverPlayback forced OFF at startup (stability isolation)");
+            _settings.McpEnabled = true;
+            restoredIsolation = true;
         }
-        if (_settings.ShowFlyoutOnTrackChange)
-        {
-            _settings.ShowFlyoutOnTrackChange = false;
-            AppLog.Warn("ShowFlyoutOnTrackChange forced OFF at startup (stability isolation)");
-        }
-        // Persist freshly seeded tag catalog (or other EnsureShape defaults) once.
+        if (restoredIsolation)
+            AppLog.Info("Restored settings that isolation had forced off (flyout / auto-recover / MCP)");
+
         try { _store.Save(_settings); }
         catch (Exception ex) { AppLog.Warn("Settings save after load/normalize failed", ex); }
 
-        // Isolation: no GENA, no poll — only discovery + tray + hotkeys (SOAP on demand).
-        SonosManager.UseGenaSubscriptions = false;
+        // Pre-isolation transport: GENA push (as last week) + SOAP poll as backup.
+        // Do not gut features to "fix" crashes — restarter covers process death.
+        SonosManager.UseGenaSubscriptions = true;
         SonosManager.UseNowPlayingPoll = true;
         _sonos = new SonosManager(() => _settings);
         _sonos.NowPlayingChanged += OnNowPlayingChanged;
@@ -234,8 +233,15 @@ public partial class App : System.Windows.Application
         // Must NOT re-run every launch — was dual-writing 100+ FLACs to NAS and thrashing TagLib.
         ScheduleLegacyTagMigrationOnce();
         // Retry tag writes that were deferred while Sonos had the file open.
-        // No pending-tag Threading.Timer (isolation). Heartbeat on UI DispatcherTimer only.
-        _pendingTagTimer = null;
+        _pendingTagTimer = new System.Threading.Timer(
+            _ =>
+            {
+                try { ProcessPendingTagWritesSafe(); }
+                catch (Exception ex) { AppLog.Warn("Pending tag timer failed", ex); }
+            },
+            null,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(30));
         _heartbeatUiTimer = new System.Windows.Threading.DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(15),
@@ -253,7 +259,10 @@ public partial class App : System.Windows.Application
                             ? "special/folder"
                             : "none";
                 var np = _lastNowPlaying?.DisplayLine ?? "(none)";
-                if (np.Length > 60) np = np[..57] + "...";
+                var src = _lastNowPlaying?.SourceLabel;
+                if (!string.IsNullOrEmpty(src))
+                    np = $"{np} | src={src}";
+                if (np.Length > 90) np = np[..87] + "...";
                 AppLog.Lifecycle(
                     $"Heartbeat uptime={_uptime.Elapsed:hh\\:mm\\:ss} ws={wsMb:F0}MB " +
                     $"groups={_sonos?.Groups.Count ?? 0} mode={mode} mcp={_mcpHost?.IsRunning == true} np={np}");
@@ -287,6 +296,13 @@ public partial class App : System.Windows.Application
             PlayLibraryFolderAsync = McpPlayLibraryFolderAsync,
         };
         _mcpHost = new HotSonosMcpHost();
+        _failureDiagnostic = new FailureDiagnosticService(
+            _sonos,
+            () => _settings,
+            () => _lastNowPlaying,
+            _library,
+            () => _mcpHost?.IsRunning == true,
+            () => _mcpHost?.IsRunning == true ? _mcpHost.Endpoint : null);
 
         _tray = new TrayController(
             AppVersion.DisplayName,
@@ -309,6 +325,7 @@ public partial class App : System.Windows.Application
                 SetRoom: OnTraySetRoom,
                 OpenLogFolder: () => AppLog.OpenLogFolder(),
                 CopyDiagnostics: OnCopyDiagnostics,
+                FailureDiagnostic: () => _ = RunFailureDiagnosticAsync(),
                 StopWake: () => _wake?.Cancel(),
                 CopyMcpEndpoint: OnCopyMcpEndpoint,
                 DoubleClick: OnTrayDoubleClick,
@@ -607,7 +624,9 @@ public partial class App : System.Windows.Application
                 });
             }
 
-            AppLog.Info("Startup sequence complete (GENA off, MCP off, tray-only)");
+            AppLog.Info(
+                $"Startup sequence complete (GENA={SonosManager.UseGenaSubscriptions}, " +
+                $"poll={SonosManager.UseNowPlayingPoll}, mcp={_settings.McpEnabled})");
         }
         catch (Exception ex)
         {
@@ -702,7 +721,7 @@ public partial class App : System.Windows.Application
 
         if (action == HotsonosAction.QuickTag)
         {
-            ShowQuickTagOverlay();
+            _ = ShowQuickTagOverlayAsync();
             return;
         }
 
@@ -712,11 +731,88 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        if (action == HotsonosAction.FailureDiagnostic)
+        {
+            _ = RunFailureDiagnosticAsync();
+            return;
+        }
+
         await ExecuteActionAsync(action);
     }
 
+    /// <summary>
+    /// Hard failure snapshot: ping gateway/NAS/speakers, TCP 1400, SMB roots, topology, now-playing.
+    /// Writes %LocalAppData%\HotSonos\diagnostics\failure-*.txt and copies report to clipboard.
+    /// </summary>
+    private async Task RunFailureDiagnosticAsync()
+    {
+        if (_failureDiagnostic is null)
+            return;
+        if (System.Threading.Interlocked.CompareExchange(ref _failureDiagnosticRunning, 1, 0) != 0)
+        {
+            try { _tray?.ShowBalloon("HotSonos", "Failure diagnostic already running…"); } catch { /* ignore */ }
+            return;
+        }
+
+        try
+        {
+            try { _tray?.ShowBalloon("HotSonos", "Running failure diagnostic…"); } catch { /* ignore */ }
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+            {
+                try { EnsureFlyout().ShowAction("Failure diagnostic running…"); }
+                catch { /* ignore */ }
+            }
+
+            var result = await Task.Run(() => _failureDiagnostic.RunAsync()).ConfigureAwait(true);
+
+            try
+            {
+                System.Windows.Clipboard.SetText(result.ReportText);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Could not copy failure diagnostic to clipboard", ex);
+            }
+
+            var summary = result.IssueCount == 0
+                ? $"Diagnostic OK ({result.ElapsedMs}ms) — report copied"
+                : $"Diagnostic: {result.IssueCount} issue(s) ({result.ElapsedMs}ms) — report copied";
+            try { _tray?.ShowBalloon("HotSonos", summary); } catch { /* ignore */ }
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+            {
+                try { EnsureFlyout().ShowAction(summary); }
+                catch { /* ignore */ }
+            }
+
+            if (!string.IsNullOrEmpty(result.ReportPath))
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = result.ReportPath,
+                        UseShellExecute = true,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Could not open failure diagnostic report", ex);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Failure diagnostic crashed", ex);
+            try { _tray?.ShowBalloon("HotSonos", "Failure diagnostic failed — see log"); } catch { /* ignore */ }
+        }
+        finally
+        {
+            System.Threading.Interlocked.Exchange(ref _failureDiagnosticRunning, 0);
+        }
+    }
+
     /// <summary>HotLaunch-style overlay: digit keys apply tag presets to the playing library track.</summary>
-    private void ShowQuickTagOverlay()
+    private async Task ShowQuickTagOverlayAsync()
     {
         if (_library is null)
         {
@@ -724,7 +820,22 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        // Prefer cache; if empty (or stale), one-shot SOAP so tagging works immediately.
         var np = _lastNowPlaying;
+        if (np is null || np.IsEmpty)
+        {
+            try
+            {
+                np = await _sonos.FetchNowPlayingAsync().ConfigureAwait(true);
+                if (np is not null && !np.IsEmpty)
+                    _lastNowPlaying = np;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Quick Tag: live now-playing fetch failed", ex);
+            }
+        }
+
         string? path = null;
         string? resolveMsg = null;
         string line = np is null || np.IsEmpty ? "(nothing playing)" : np.DisplayLine;
@@ -1065,7 +1176,19 @@ public partial class App : System.Windows.Application
                 return;
 
             _lastNowPlaying = nowPlaying;
-            try { _tray.UpdateNowPlaying(nowPlaying.IsEmpty ? null : nowPlaying.DisplayLine); }
+            try
+            {
+                if (nowPlaying.IsEmpty)
+                    _tray.UpdateNowPlaying(null);
+                else
+                {
+                    var tip = nowPlaying.DisplayLine;
+                    var src = nowPlaying.SourceLabel;
+                    if (!string.IsNullOrEmpty(src))
+                        tip = $"{tip} [{src}]";
+                    _tray.UpdateNowPlaying(tip);
+                }
+            }
             catch (Exception ex) { AppLog.Warn("Tray now-playing update failed", ex); }
 
             // Flyout only on real track/state changes (already filtered). Art load is still expensive.

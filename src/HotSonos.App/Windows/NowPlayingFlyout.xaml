@@ -29,8 +29,11 @@
                            FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Text="Nothing playing" />
                 <TextBlock x:Name="ArtistText" Foreground="#FFAEC0D2" FontFamily="Segoe UI" FontSize="13"
                            TextTrimming="CharacterEllipsis" Margin="0,2,0,0" Text="" />
+                <TextBlock x:Name="SourceText" Foreground="#FF7EC8E3" FontFamily="Segoe UI" FontSize="11"
+                           FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" Text=""
+                           ToolTip="Where the audio is coming from" />
                 <TextBlock x:Name="StatusText" Foreground="#FF2ECC71" FontFamily="Segoe UI" FontSize="12"
-                           Margin="0,6,0,0" Text="" />
+                           Margin="0,4,0,0" Text="" />
             </StackPanel>
 
             <ToggleButton x:Name="PinButton" Grid.Column="2" VerticalAlignment="Top" HorizontalAlignment="Right"

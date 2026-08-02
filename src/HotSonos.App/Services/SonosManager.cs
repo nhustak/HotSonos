@@ -54,16 +54,14 @@ public sealed class SonosManager
     private DateTime _lastRecoverUtc = DateTime.MinValue;
 
     /// <summary>
-    /// When false (default), do not use Sonos GENA TCP callbacks — they hard-killed the process
-    /// around subscription renew (~2.5–5 min). Poll GetPositionInfo instead until GENA is rewritten.
+    /// Sonos GENA TCP event subscriptions (AVTransport / topology). Default on — product path since Phase 2/3.
     /// </summary>
-    public static bool UseGenaSubscriptions { get; set; }
+    public static bool UseGenaSubscriptions { get; set; } = true;
 
     /// <summary>
-    /// When false, do not poll now-playing either (hotkeys/SOAP control only). Used to isolate
-    /// whether transport polling is involved in the ~5 min hard death.
+    /// SOAP poll of now-playing as backup/coalesce with GENA. Default on so UI stays live if GENA flaps.
     /// </summary>
-    public static bool UseNowPlayingPoll { get; set; } = true; // set false only for ultra-minimal isolation
+    public static bool UseNowPlayingPoll { get; set; } = true;
     private int _recoverAttemptsInWindow;
     private DateTime _recoverWindowStartUtc = DateTime.MinValue;
 
@@ -118,6 +116,12 @@ public sealed class SonosManager
     /// <summary>Raised when the speaker topology changes (regroup / drop / return).</summary>
     public event Action? TopologyChanged;
 
+    /// <summary>
+    /// Raised after house/per-speaker volume or mute writes, and when RenderingControl
+    /// GENA reports a volume/mute change on the coordinator (UI should re-read sliders).
+    /// </summary>
+    public event Action? VolumesChanged;
+
     /// <summary>Raised when a speaker drops off (false) or comes back (true): (roomName, isOnline).</summary>
     public event Action<string, bool>? SpeakerAvailabilityChanged;
 
@@ -126,6 +130,14 @@ public sealed class SonosManager
 
     /// <summary>Number of visible zones in the last topology snapshot.</summary>
     public int GetZoneCount() => _zones.Count;
+
+    /// <summary>Room + IP for every known zone (for failure diagnostics).</summary>
+    public IReadOnlyList<(string Room, string Ip)> GetZoneEndpoints() =>
+        _zones
+            .Where(z => !string.IsNullOrWhiteSpace(z.IpAddress))
+            .Select(z => (z.RoomName, z.IpAddress))
+            .DistinctBy(z => z.IpAddress, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     /// <summary>Diagnostic snapshot of cached topology (for MCP / Settings debug).</summary>
     public object GetTopologySnapshot() => new
@@ -168,18 +180,28 @@ public sealed class SonosManager
         _discovery = new SonosDiscovery(_soap);
         _events.NowPlayingChanged += HandleNowPlayingSnapshot;
         _events.TopologyChanged += OnTopologyEvent;
+        _events.VolumeChanged += OnGenaVolumeChanged;
 
-        if (!UseGenaSubscriptions && UseNowPlayingPoll)
+        if (UseGenaSubscriptions)
+            AppLog.Info("GENA subscriptions ON (pre-isolation product path)");
+        if (UseNowPlayingPoll)
             EnsureNowPlayingPoller();
-        else if (!UseGenaSubscriptions)
-            AppLog.Info("GENA OFF and now-playing poll OFF — control-only stability mode");
+        if (!UseGenaSubscriptions && !UseNowPlayingPoll)
+            AppLog.Warn("GENA and now-playing poll both OFF — control-only (not recommended)");
     }
+
+    /// <summary>Latest now-playing snapshot (GENA or poll). Used to seed UI that opened mid-track.</summary>
+    public NowPlaying? LastNowPlaying { get; private set; }
 
     /// <summary>Shared path for GENA or poll-based now-playing.</summary>
     private void HandleNowPlayingSnapshot(NowPlaying np)
     {
         try
         {
+            // Always cache for Control/flyout seed even when signature is unchanged
+            // (window can open mid-track and otherwise show "Nothing playing").
+            LastNowPlaying = np;
+
             var sig = GenaNowPlayingSignature(np);
             if (string.Equals(sig, _lastGenaNpSignature, StringComparison.Ordinal))
                 return;
@@ -237,7 +259,7 @@ public sealed class SonosManager
         if (_nowPlayingPollTimer is not null)
             return;
 
-        AppLog.Info("GENA subscriptions OFF — polling now-playing every 5s (crash isolation)");
+        AppLog.Info("Now-playing SOAP poll every 5s (backup / coalesce with GENA)");
         _nowPlayingPollTimer = new System.Threading.Timer(
             _ => _ = PollNowPlayingOnceAsync(),
             null,
@@ -265,6 +287,26 @@ public sealed class SonosManager
         finally
         {
             Interlocked.Exchange(ref _nowPlayingPollInFlight, 0);
+        }
+    }
+
+    /// <summary>
+    /// One-shot SOAP now-playing (Quick Tag / MCP). Also feeds the poll/handler path so cache stays warm.
+    /// </summary>
+    public async Task<NowPlaying?> FetchNowPlayingAsync(CancellationToken ct = default)
+    {
+        if (_controller is null)
+            return null;
+        try
+        {
+            var np = await _controller.GetNowPlayingSnapshotAsync(ct).ConfigureAwait(false);
+            HandleNowPlayingSnapshot(np);
+            return np;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("FetchNowPlaying failed", ex);
+            return null;
         }
     }
 
@@ -862,93 +904,250 @@ public sealed class SonosManager
         }
     }
 
-    // ---- Volume (group-wide) ----------------------------------------------
-    // Group-volume WRITE actions (SetGroupVolume/SetGroupMute) return 803 on
-    // systems with a fixed-volume member, so we nudge each player via
-    // per-player RenderingControl.
+    // ---- Volume (house logical + per-room offsets) ------------------------
+    // Group SetGroupVolume returns 803 with fixed-volume / Port members, so we
+    // write per-player RenderingControl.
     //
-    // Snappy hotkeys: await ONLY the coordinator (what you hear at Office). Fan
-    // out to other rooms in the background with a short timeout. Waiting on all
-    // members made volume feel multi-second when Kitchen/etc. were flaky (TCP
-    // hang ignores CancelAfter until connect fails ~2–3s each batch).
+    // Primary (toast / ± step base) = cached house logical, or a quick sample of
+    // offset-0 rooms — never Port/Theater when it has a big offset.
+    //
+    // Snappy ± (old product feel): do NOT read all 10 speakers or await every
+    // write before the toast. Cache logical, write all with short per-IP timeouts,
+    // await only a reference room, fan the rest in the background.
+    //
+    // On write: raw = clamp(logical + roomOffset) so Port stays usable.
+
+    private int _volumesChangedNotifyGate; // 0 = idle, 1 = flush scheduled
+    private int _volumesChangedDirty;
+
+    /// <summary>Last house logical % we set (Level all / ±). Avoids a full volume poll on every hotkey.</summary>
+    private int? _houseLogicalVolume;
 
     /// <summary>
-    /// Adjusts volume by <paramref name="delta"/>. Returns coordinator Master % for toast.
-    /// Other group members are updated in the background (best-effort).
+    /// Adjusts house <b>logical</b> volume by <paramref name="delta"/> and writes
+    /// each speaker as logical + room offset. Returns the new logical % for toast
+    /// as soon as a reference room accepts the write (others finish in background).
     /// </summary>
     private async Task<int> ChangeVolumeAsync(int delta, CancellationToken ct)
     {
-        var members = ActiveGroupMemberIps();
-        var coordIp = _controller?.CoordinatorIp;
+        var s = _settings().EnsureShape();
+        var zones = ZonesForVolumeControl();
+        if (zones.Count == 0)
+            return 0;
 
-        // Background: everyone except coordinator — do not await.
-        foreach (var ip in members)
+        var primary = _houseLogicalVolume
+                      ?? await SampleHouseLogicalFastAsync(zones, s, ct).ConfigureAwait(false);
+        var newLogical = Math.Clamp(primary + delta, 0, 100);
+        _houseLogicalVolume = newLogical;
+
+        // Prefer a normal (offset-0) room for the awaited "I heard you" write.
+        var reference = zones.FirstOrDefault(z => s.GetVolumeOffset(z.RoomName) == 0)
+                        ?? zones[0];
+
+        // Background: everyone else (short timeout each — never block toast on Kitchen/etc.).
+        foreach (var z in zones)
         {
-            if (coordIp is not null
-                && string.Equals(ip, coordIp, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(z.IpAddress, reference.IpAddress, StringComparison.OrdinalIgnoreCase))
                 continue;
-
-            var target = ip;
+            var ip = z.IpAddress;
+            var raw = s.ApplyVolumeOffset(z.RoomName, newLogical);
             _ = Task.Run(async () =>
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
-                await AdjustMemberVolumeAsync(target, delta, cts.Token).ConfigureAwait(false);
+                using var bCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(450));
+                await SetMemberVolumeOnlyAsync(ip, raw, bCts.Token).ConfigureAwait(false);
             });
         }
 
-        // Foreground: coordinator only (fast path).
-        if (coordIp is not null)
+        // Foreground: one fast write so the user feels the change immediately.
+        using (var fCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromMilliseconds(500));
-            await AdjustMemberVolumeAsync(coordIp, delta, cts.Token).ConfigureAwait(false);
+            fCts.CancelAfter(TimeSpan.FromMilliseconds(450));
+            var refRaw = s.ApplyVolumeOffset(reference.RoomName, newLogical);
+            await SetMemberVolumeOnlyAsync(reference.IpAddress, refRaw, fCts.Token).ConfigureAwait(false);
         }
 
-        return await GetCoordinatorMasterVolumeAsync(ct).ConfigureAwait(false);
+        // Debounced Speakers-list refresh — after toast path returns.
+        NotifyVolumesChanged();
+        return newLogical;
+    }
+
+    /// <summary>
+    /// Quick sample of offset-0 rooms only (≤350ms). Used once until Level all / ±
+    /// establish <see cref="_houseLogicalVolume"/>.
+    /// </summary>
+    private async Task<int> SampleHouseLogicalFastAsync(
+        IReadOnlyList<SonosZone> zones,
+        AppSettings s,
+        CancellationToken ct)
+    {
+        var candidates = zones
+            .Where(z => s.GetVolumeOffset(z.RoomName) == 0)
+            .Take(4)
+            .ToList();
+        if (candidates.Count == 0)
+            candidates = zones.Take(3).ToList();
+
+        using var sampleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        sampleCts.CancelAfter(TimeSpan.FromMilliseconds(350));
+
+        var tasks = candidates
+            .Select(z => GetVolumeOnlyAsync(z.IpAddress, sampleCts.Token)
+                .ContinueWith(
+                    t => (ok: t.Status == TaskStatus.RanToCompletion && t.Result is >= 0,
+                        vol: t.Status == TaskStatus.RanToCompletion ? t.Result : -1,
+                        room: z.RoomName),
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default))
+            .ToArray();
+
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Individual failures handled below.
+        }
+
+        var vols = new List<int>();
+        foreach (var t in tasks)
+        {
+            if (!t.IsCompletedSuccessfully) continue;
+            var r = t.Result;
+            if (r.ok && r.vol is >= 0 and <= 100)
+            {
+                var off = s.GetVolumeOffset(r.room);
+                vols.Add(Math.Clamp(r.vol - off, 0, 100));
+            }
+        }
+
+        if (vols.Count > 0)
+            return MedianInt(vols);
+        return 20; // safe default if nothing answered (matches typical Level all)
+    }
+
+    /// <summary>GetVolume only (no mute) — volume ± sampling.</summary>
+    private async Task<int> GetVolumeOnlyAsync(string ip, CancellationToken ct)
+    {
+        try
+        {
+            var r = await _soap.InvokeAsync(
+                ip, SonosService.RenderingControl, "GetVolume",
+                [new("InstanceID", "0"), new("Channel", "Master")], ct).ConfigureAwait(false);
+            return int.TryParse(SonosSoapClient.ReadValue(r, "CurrentVolume"), out var v) ? v : -1;
+        }
+        catch
+        {
+            return -1;
+        }
     }
 
     /// <summary>
     /// Public volume step for coalesced hotkeys. Prefer one call with a combined delta
     /// over many stacked VolumeUp actions (which walked volume to 100% during lag).
+    /// Returns house logical % (not Port/coordinator raw).
     /// </summary>
     public Task<int> AdjustVolumeByAsync(int delta, CancellationToken ct = default) =>
         ChangeVolumeAsync(delta, ct);
 
-    private async Task AdjustMemberVolumeAsync(string ip, int delta, CancellationToken ct)
+    /// <summary>Visible zones in the active group (else all rooms), one per IP.</summary>
+    private List<SonosZone> ZonesForVolumeControl()
     {
-        try
+        IEnumerable<SonosZone> q = _zones.Where(z => !string.IsNullOrWhiteSpace(z.IpAddress));
+        if (_controller is not null)
         {
-            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetRelativeVolume",
-                [
-                    new("InstanceID", "0"),
-                    new("Channel", "Master"),
-                    new("Adjustment", delta.ToString()),
-                ], ct).ConfigureAwait(false);
+            var uuid = _controller.CoordinatorUuid;
+            var inGroup = q.Where(z =>
+                string.Equals(z.CoordinatorUuid, uuid, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (inGroup.Count > 0)
+                q = inGroup;
         }
-        catch
-        {
-            // Fixed-volume members, offline, or timed out — ignore.
-        }
+
+        return q
+            .GroupBy(z => z.IpAddress, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
     }
 
-    /// <summary>Coordinator Master volume for toast (short timeout).</summary>
-    private async Task<int> GetCoordinatorMasterVolumeAsync(CancellationToken ct)
+    /// <summary>
+    /// House logical level: median raw % of rooms with offset 0. If every room has
+    /// an offset, median of (raw − offset) estimates logical.
+    /// </summary>
+    internal static int ComputeHouseLogicalVolume(IReadOnlyList<SpeakerVolume> volumes, AppSettings settings)
     {
-        if (_controller is null)
+        if (volumes is null || volumes.Count == 0)
             return 0;
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(TimeSpan.FromMilliseconds(300));
-        try
+
+        var zeroOffset = new List<int>();
+        var stripped = new List<int>();
+        foreach (var v in volumes)
         {
-            var r = await _soap.InvokeAsync(
-                _controller.CoordinatorIp, SonosService.RenderingControl, "GetVolume",
-                [new("InstanceID", "0"), new("Channel", "Master")], cts.Token).ConfigureAwait(false);
-            return int.TryParse(SonosSoapClient.ReadValue(r, "CurrentVolume"), out var v) ? v : 0;
+            if (!v.Reachable)
+                continue;
+            var off = settings.GetVolumeOffset(v.RoomName);
+            stripped.Add(Math.Clamp(v.Volume - off, 0, 100));
+            if (off == 0)
+                zeroOffset.Add(v.Volume);
         }
-        catch
-        {
+
+        if (zeroOffset.Count > 0)
+            return MedianInt(zeroOffset);
+        if (stripped.Count > 0)
+            return MedianInt(stripped);
+        return 0;
+    }
+
+    private static int MedianInt(List<int> values)
+    {
+        values.Sort();
+        var n = values.Count;
+        if (n == 0)
             return 0;
-        }
+        var mid = n / 2;
+        return n % 2 == 1
+            ? values[mid]
+            : (values[mid - 1] + values[mid]) / 2;
+    }
+
+    private void OnGenaVolumeChanged() => NotifyVolumesChanged();
+
+    private void NotifyVolumesChanged()
+    {
+        // Coalesce GENA/write bursts so the UI does one refresh, never drop the last one.
+        Volatile.Write(ref _volumesChangedDirty, 1);
+        if (Interlocked.CompareExchange(ref _volumesChangedNotifyGate, 1, 0) != 0)
+            return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    await Task.Delay(150).ConfigureAwait(false);
+                    if (Interlocked.Exchange(ref _volumesChangedDirty, 0) == 0)
+                        break;
+                    try
+                    {
+                        VolumesChanged?.Invoke();
+                    }
+                    catch
+                    {
+                        // UI subscribers must not tear down volume path.
+                    }
+                }
+            }
+            catch
+            {
+                // ignore delay cancel
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _volumesChangedNotifyGate, 0);
+                if (Volatile.Read(ref _volumesChangedDirty) == 1)
+                    NotifyVolumesChanged();
+            }
+        });
     }
 
     /// <summary>
@@ -959,6 +1158,7 @@ public sealed class SonosManager
     public async Task<int> LevelAllVolumesAsync(int percent, CancellationToken ct = default)
     {
         percent = Math.Clamp(percent, 0, 100);
+        _houseLogicalVolume = percent;
         var s = _settings().EnsureShape();
         var byIp = _zones
             .GroupBy(z => z.IpAddress, StringComparer.OrdinalIgnoreCase)
@@ -969,6 +1169,7 @@ public sealed class SonosManager
             var actual = s.ApplyVolumeOffset(z.RoomName, percent);
             return SetMemberVolumeAsync(z.IpAddress, actual, ct);
         })).ConfigureAwait(false);
+        NotifyVolumesChanged();
         return results.Count(ok => ok);
     }
 
@@ -977,8 +1178,7 @@ public sealed class SonosManager
     {
         try
         {
-            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetVolume",
-                [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredVolume", percent.ToString())], ct).ConfigureAwait(false);
+            await SetMemberVolumeOnlyAsync(ip, percent, ct).ConfigureAwait(false);
             await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetMute",
                 [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredMute", "0")], ct).ConfigureAwait(false);
             return true;
@@ -987,6 +1187,22 @@ public sealed class SonosManager
         {
             // Fixed-volume members (Sub/Port/Amp line-out) reject volume changes; ignore them.
             return false;
+        }
+    }
+
+    /// <summary>SetVolume only — hotkey ± must stay one SOAP call per speaker (no unmute).</summary>
+    private async Task SetMemberVolumeOnlyAsync(string ip, int percent, CancellationToken ct)
+    {
+        percent = Math.Clamp(percent, 0, 100);
+        try
+        {
+            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetVolume",
+                [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredVolume", percent.ToString())],
+                ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Offline / fixed-volume / timeout — ignore for snappy ±.
         }
     }
 
@@ -1024,6 +1240,7 @@ public sealed class SonosManager
         {
             await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetVolume",
                 [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredVolume", percent.ToString())], ct).ConfigureAwait(false);
+            NotifyVolumesChanged();
         }
         catch
         {
@@ -1038,6 +1255,7 @@ public sealed class SonosManager
         {
             await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetMute",
                 [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredMute", mute ? "1" : "0")], ct).ConfigureAwait(false);
+            NotifyVolumesChanged();
         }
         catch
         {
@@ -1051,6 +1269,7 @@ public sealed class SonosManager
         var desired = !await GetGroupMuteAsync(ct).ConfigureAwait(false);
         var members = ActiveGroupMemberIps();
         await Task.WhenAll(members.Select(ip => SetMemberMuteAsync(ip, desired, ct))).ConfigureAwait(false);
+        NotifyVolumesChanged();
         return desired;
     }
 
@@ -1150,6 +1369,7 @@ public sealed class SonosManager
     public async Task SetVolumesAbsoluteAsync(IReadOnlyList<string> ips, int percent, CancellationToken ct = default)
     {
         percent = Math.Clamp(percent, 0, 100);
+        _houseLogicalVolume = percent;
         var s = _settings().EnsureShape();
         await Task.WhenAll(ips.Select(ip =>
         {
@@ -1158,46 +1378,243 @@ public sealed class SonosManager
             var actual = s.ApplyVolumeOffset(room, percent);
             return SetMemberVolumeAsync(ip, actual, ct);
         })).ConfigureAwait(false);
+        NotifyVolumesChanged();
     }
 
     /// <summary>
-    /// Pulls every visible player into the active group's coordinator so that
-    /// subsequent playback covers all speakers. Idempotent; tolerates individual
-    /// join failures. The coordinator's IP/UUID are unchanged, so the cached
-    /// controller stays valid.
+    /// Visible rooms that can lead a house group (one entry per room name).
+    /// <paramref name="IsLeading"/> = currently coordinator of at least one group.
     /// </summary>
-    public Task GroupAllSpeakersAsync(CancellationToken ct = default) =>
-        _controller is null
-            ? Task.CompletedTask
-            : GroupAllSpeakersToAsync(_controller.CoordinatorUuid, ct);
-
-    /// <summary>Joins every visible player to the given coordinator UUID (whole-house).</summary>
-    public async Task GroupAllSpeakersToAsync(string coordinatorUuid, CancellationToken ct = default)
+    public IReadOnlyList<(string Room, string Ip, string Uuid, bool IsLeading)> GetCoordinatorCandidates()
     {
-        if (_zones.Count == 0 || string.IsNullOrWhiteSpace(coordinatorUuid))
-            return;
+        return _zones
+            .Where(z => !string.IsNullOrWhiteSpace(z.RoomName) && !string.IsNullOrWhiteSpace(z.Uuid))
+            .GroupBy(z => z.RoomName, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                // Prefer a zone entry that is already a coordinator if the room has multiple.
+                var z = g.FirstOrDefault(x => x.IsCoordinator) ?? g.First();
+                return (z.RoomName, z.IpAddress, z.Uuid, z.IsCoordinator);
+            })
+            .OrderBy(c => c.RoomName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
 
-        foreach (var zone in _zones)
+    /// <summary>
+    /// Pulls every visible player under one coordinator so playback covers all speakers.
+    /// Uses <see cref="AppSettings.PreferredHouseCoordinatorRoom"/> when that room is online;
+    /// otherwise the active group's coordinator. Always re-discovers and verifies topology.
+    /// </summary>
+    public async Task GroupAllSpeakersAsync(CancellationToken ct = default)
+    {
+        var preferred = _settings().EnsureShape().PreferredHouseCoordinatorRoom;
+        if (!string.IsNullOrWhiteSpace(preferred))
         {
-            if (string.Equals(zone.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
-                continue;
-
             try
             {
-                await _soap.InvokeAsync(
-                    zone.IpAddress, SonosService.AvTransport, "SetAVTransportURI",
-                    [
-                        new("InstanceID", "0"),
-                        new("CurrentURI", $"x-rincon:{coordinatorUuid}"),
-                        new("CurrentURIMetaData", ""),
-                    ], ct).ConfigureAwait(false);
+                await SetHouseCoordinatorAsync(preferred, ct).ConfigureAwait(false);
+                return;
             }
-            catch
+            catch (Exception ex)
             {
-                // One speaker failing to join shouldn't abort the whole-house grouping.
+                AppLog.Warn(
+                    $"GroupAll via preferred '{preferred}' failed — falling back to active coordinator",
+                    ex);
             }
         }
+
+        if (_zones.Count == 0)
+            await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
+        if (_controller is null)
+            return;
+
+        var uuid = _controller.CoordinatorUuid;
+        var room = ActiveRoom ?? _controller.CoordinatorIp;
+        await RegroupAllToUuidAsync(uuid, room, ct).ConfigureAwait(false);
+        await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
+        LogGroupingVerification(uuid, room);
     }
+
+    /// <summary>
+    /// Make <paramref name="roomName"/> the whole-house group coordinator, join every other
+    /// room to it, re-discover, and <b>verify</b> topology. Throws if verification fails.
+    /// </summary>
+    public async Task<string> SetHouseCoordinatorAsync(string roomName, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(roomName))
+            throw new ArgumentException("Room name required.", nameof(roomName));
+
+        await RefreshAsync(null, ct).ConfigureAwait(false);
+
+        var zone = _zones.FirstOrDefault(z =>
+            string.Equals(z.RoomName, roomName.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (zone is null)
+            throw new InvalidOperationException(
+                $"Room '{roomName}' not found. Refresh devices and pick a room from the list.");
+
+        AppLog.Info(
+            $"SetHouseCoordinator start → {zone.RoomName} @ {zone.IpAddress} uuid={zone.Uuid} " +
+            $"(wasCoordinator={zone.IsCoordinator})");
+
+        // If Theater (etc.) is currently a slave of Office, it must become standalone first
+        // or other rooms cannot join it as coordinator.
+        await BecomeStandaloneCoordinatorAsync(zone, ct).ConfigureAwait(false);
+        await Task.Delay(400, ct).ConfigureAwait(false);
+
+        var join = await RegroupAllToUuidAsync(zone.Uuid, zone.RoomName, ct).ConfigureAwait(false);
+
+        ActiveRoom = zone.RoomName;
+        _controller = new SonosController(zone.IpAddress, zone.Uuid, _soap);
+        SubscribeToActiveCoordinator();
+
+        await Task.Delay(500, ct).ConfigureAwait(false);
+        await RefreshAsync(zone.RoomName, ct).ConfigureAwait(false);
+
+        var verify = VerifyHouseGrouping(zone.Uuid, zone.RoomName);
+        LogGroupingVerification(zone.Uuid, zone.RoomName);
+
+        var msg =
+            $"Preferred coordinator → {zone.RoomName} ({zone.IpAddress}) · " +
+            $"group={ActiveGroupLabel ?? zone.RoomName} · " +
+            $"joined={join.Joined} fail={join.Failed.Count} · " +
+            $"verify groups={verify.GroupCount} membersUnderCoord={verify.MembersUnderCoordinator} " +
+            $"coordIsLeader={verify.CoordinatorIsLeader} ok={verify.Ok}";
+
+        if (join.Failed.Count > 0)
+            msg += " · joinFails=[" + string.Join("; ", join.Failed) + "]";
+
+        if (!verify.Ok)
+        {
+            AppLog.Warn("SetHouseCoordinator verification FAILED: " + msg);
+            throw new InvalidOperationException(
+                "Regroup did not stick. " + msg +
+                " Check Topology map — preferred room must show as COORDINATOR with others under it.");
+        }
+
+        AppLog.Info("SetHouseCoordinator OK: " + msg);
+        return msg;
+    }
+
+    /// <summary>Live check: is <paramref name="coordinatorUuid"/> leading one house-sized group?</summary>
+    public (bool Ok, int GroupCount, int MembersUnderCoordinator, bool CoordinatorIsLeader, string? LeaderRoom)
+        VerifyHouseGrouping(string coordinatorUuid, string? expectedRoom = null)
+    {
+        var visible = _zones.Where(z => !string.IsNullOrWhiteSpace(z.RoomName)).ToList();
+        // Prefer topology snapshot when monitor has full members (incl bonded)
+        var members = LastTopology?.Members
+            .Where(m => !m.Invisible)
+            .ToList();
+        if (members is { Count: > 0 })
+        {
+            var under = members.Count(m =>
+                string.Equals(m.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase));
+            var leader = members.FirstOrDefault(m =>
+                string.Equals(m.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase));
+            var isLeader = leader is not null && leader.IsCoordinator;
+            var groupCount = members.Select(m => m.GroupId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            // Success: one primary group with almost all visible rooms under this uuid
+            var visibleRooms = members.Select(m => m.RoomName).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var ok = isLeader && under >= Math.Max(2, visibleRooms - 1) && groupCount <= 2;
+            // Allow 2 groups if one is tiny leftover (e.g. Workshop left out once)
+            if (!ok && isLeader && under >= visibleRooms - 2 && groupCount <= 3)
+                ok = under >= 3;
+            return (ok, groupCount, under, isLeader, leader?.RoomName);
+        }
+
+        var underZ = visible.Count(z =>
+            string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase));
+        var leadZ = visible.FirstOrDefault(z =>
+            string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase));
+        var isLead = leadZ?.IsCoordinator == true;
+        var gc = Groups.Count;
+        var okZ = isLead && underZ >= Math.Max(2, visible.Count - 1);
+        return (okZ, gc, underZ, isLead, leadZ?.RoomName);
+    }
+
+    private void LogGroupingVerification(string coordinatorUuid, string room)
+    {
+        var v = VerifyHouseGrouping(coordinatorUuid, room);
+        var level = v.Ok ? "OK" : "FAIL";
+        AppLog.Info(
+            $"GroupVerify [{level}] preferred/target={room} uuid={coordinatorUuid} " +
+            $"leader={v.LeaderRoom} isLeader={v.CoordinatorIsLeader} " +
+            $"membersUnder={v.MembersUnderCoordinator} groups={v.GroupCount}");
+    }
+
+    private async Task BecomeStandaloneCoordinatorAsync(SonosZone zone, CancellationToken ct)
+    {
+        try
+        {
+            await _soap.InvokeAsync(
+                zone.IpAddress, SonosService.AvTransport, "BecomeCoordinatorOfStandaloneGroup",
+                [new("InstanceID", "0")], ct).ConfigureAwait(false);
+            AppLog.Info($"BecomeCoordinatorOfStandaloneGroup OK: {zone.RoomName} @ {zone.IpAddress}");
+        }
+        catch (Exception ex)
+        {
+            // Already coordinator → often faults; not always fatal.
+            AppLog.Warn(
+                $"BecomeCoordinatorOfStandaloneGroup ({zone.RoomName}): {ex.Message}");
+        }
+    }
+
+    private async Task<(int Joined, List<string> Failed)> RegroupAllToUuidAsync(
+        string coordinatorUuid, string coordinatorRoom, CancellationToken ct)
+    {
+        var failed = new List<string>();
+        var joined = 0;
+        // Distinct players by UUID (not room — stereo pairs).
+        var targets = _zones
+            .Where(z => !string.IsNullOrWhiteSpace(z.Uuid) && !string.IsNullOrWhiteSpace(z.IpAddress))
+            .GroupBy(z => z.Uuid, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .Where(z => !string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        AppLog.Info(
+            $"RegroupAllTo {coordinatorRoom} ({coordinatorUuid}): joining {targets.Count} player(s)");
+
+        foreach (var zone in targets)
+        {
+            var ok = false;
+            Exception? last = null;
+            for (var attempt = 1; attempt <= 3 && !ok; attempt++)
+            {
+                try
+                {
+                    await _soap.InvokeAsync(
+                        zone.IpAddress, SonosService.AvTransport, "SetAVTransportURI",
+                        [
+                            new("InstanceID", "0"),
+                            new("CurrentURI", $"x-rincon:{coordinatorUuid}"),
+                            new("CurrentURIMetaData", ""),
+                        ], ct).ConfigureAwait(false);
+                    ok = true;
+                    joined++;
+                    if (attempt > 1)
+                        AppLog.Info($"Join OK attempt {attempt}: {zone.RoomName} → {coordinatorRoom}");
+                }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    await Task.Delay(200 * attempt, ct).ConfigureAwait(false);
+                }
+            }
+
+            if (!ok)
+            {
+                var err = $"{zone.RoomName}@{zone.IpAddress}: {last?.Message ?? "unknown"}";
+                failed.Add(err);
+                AppLog.Warn($"Join FAILED {coordinatorRoom}: {err}");
+            }
+        }
+
+        return (joined, failed);
+    }
+
+    /// <summary>Joins every visible player to the given coordinator UUID (whole-house).</summary>
+    public async Task GroupAllSpeakersToAsync(string coordinatorUuid, CancellationToken ct = default) =>
+        await RegroupAllToUuidAsync(coordinatorUuid, coordinatorUuid, ct).ConfigureAwait(false);
 
     /// <summary>
     /// Nightly maintenance: re-discover, and if NOTHING is playing anywhere,
@@ -1723,12 +2140,11 @@ public sealed class SonosManager
         if (_controller is null)
             return;
 
+        if (UseNowPlayingPoll)
+            EnsureNowPlayingPoller();
+
         if (!UseGenaSubscriptions)
-        {
-            if (UseNowPlayingPoll)
-                EnsureNowPlayingPoller();
             return;
-        }
 
         _ = _events.SubscribeAsync(_controller.CoordinatorIp);
     }
