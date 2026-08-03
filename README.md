@@ -4,7 +4,7 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.29** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
+**Version 1.0.0.55** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
@@ -68,8 +68,10 @@ Re-discovers speakers, force-regroups them, and starts a new history-aware shuff
 ### ⏯️ Transport & volume hotkeys
 Play/pause, next, previous, volume up/down, mute, and level-all — from any app. Re-bindable under **Hotkeys**.
 
+**Volume ±** uses **house logical** level (normal rooms with offset 0) for the toast and step base — not the group coordinator’s raw %, so a Port/Theater with a big amp offset never becomes “the volume.” Each room is written as `logical + room offset` (Port stays loud enough; Eras stay at house level). Steps stay snappy: one fast write for feedback, other rooms fan out in the background.
+
 ### 🔉 Level all speakers
-One click (or hotkey) sets every speaker to the same absolute volume (default 20%) and unmutes them.
+One click (or hotkey) sets every speaker from a **house logical** percent (default 20%) and unmutes them. **Per-room offsets** (Speakers panel) add calibration for amp-fed Ports (e.g. logical 20 + Theater +60 → Port raw 80%). Same offsets apply on **Wake** absolute ramps.
 
 ### 🏷️ Tags as dynamic playlists
 Flat tag catalog: each tag has an **opaque key** (stored in files) and a **renamable label** (UI only).
@@ -93,7 +95,8 @@ Flat tag catalog: each tag has an **opaque key** (stored in files) and a **renam
 Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **library genre**, with its own hotkey. Same playback path as Control Play / `play_favorite_slot`.
 
 ### 🎮 Control page
-- **From** dropdown (All / tag / genre) + **Start shuffle now** / Restart fresh, level-all, target room, **full-width speakers**.
+- **From** dropdown (All / tag / genre) + **Start shuffle now** / Restart fresh, level-all, target room/group, **full-width speakers**.
+- **Preferred house coordinator** — who should lead when you regroup the house (e.g. Office or Theater/Port); verified after join (★ COORD on Topology map).
 - **Play tags, genres & Sonos playlists** — one-click play; list shares vertical space with speakers.
 - Hide genres for other users under **Shuffle → Show genres in shuffle / play lists**.
 - Layout keeps **labels + fields + buttons grouped left** (no stretch-to-far-right action buttons).
@@ -222,7 +225,8 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 - **Control shuffle From** — `ControlShuffleSource` = `all` | `tag:{key}` | `genre:{name}`; genres gated by `ShowGenresInPlaySources`.  
 - **Library** — filesystem scan under discovered UNC roots; optional master match for dual-write.  
 - **MCP** — Kestrel loopback host inside the tray process.  
-- **GENA** — local listener for now-playing and topology.
+- **GENA** — local listener for now-playing, topology, and RenderingControl volume/mute (coordinator).  
+- **Volume** — house logical % for ±; per-room offsets on absolute write (Level all / Wake / ±); Speakers sliders show raw Sonos %.
 
 ---
 
@@ -238,6 +242,17 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 ---
 
 ## Changelog
+
+### 1.0.0.55
+- **House-logical volume ±:** toast and step base from offset‑0 rooms (never Port/coordinator raw %); each room written as `logical + offset` so amp-fed Theater stays usable without driving the house number  
+- **Snappy volume path:** cache logical level, await one reference write, fan out others; SetVolume-only on ± (no extra unmute SOAP per step)  
+- **Preferred house coordinator** with become-standalone + regroup verify; Topology **★ COORD** labeling  
+- **Live Speakers list** refresh on volume/mute writes + RenderingControl GENA  
+- **Failure diagnostics** (tray/hotkey/MCP dump), keep-alive restarter hardening, now-playing **source** labels (library host / stream)  
+- GENA + poll product path restored after isolation experiments; tray process keep-alive window  
+
+### 1.0.0.30 – 1.0.0.54
+- Stability work: startup races, GENA renew, restarter, isolation experiments, then product features restored (see git history on `master`)  
 
 ### 1.0.0.29
 - **Control shuffle / fresh start:** busy UI feedback, disable double-click while queue builds  
