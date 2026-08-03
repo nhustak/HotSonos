@@ -709,11 +709,18 @@ public sealed class SonosManager
         string.Join("|", Groups.Select(g => $"{g.CoordinatorUuid}:{g.MemberCount}:{g.CoordinatorRoom}"));
 
     /// <summary>
-    /// Pulls full topology (incl. Sub / bonded) and logs a diff — only when monitor is enabled.
+    /// Pulls full topology (incl. Sub / bonded). Snapshot always updates on explicit
+    /// refresh so Topology map works with Monitor OFF. Event-trail JSONL only when
+    /// monitor is enabled (continuous GENA path already gates the same way).
     /// </summary>
     public async Task ObserveTopologyAsync(string source = "refresh", CancellationToken ct = default)
     {
-        if (!_settings().EnsureShape().TopologyMonitorEnabled)
+        var monitor = _settings().EnsureShape().TopologyMonitorEnabled;
+        // Explicit pull always allowed; passive sources stay light when monitor off.
+        var explicitPull = string.Equals(source, "refresh", StringComparison.OrdinalIgnoreCase)
+                           || string.Equals(source, "ui", StringComparison.OrdinalIgnoreCase)
+                           || string.Equals(source, "manual", StringComparison.OrdinalIgnoreCase);
+        if (!monitor && !explicitPull)
             return;
 
         var ip = _zones.FirstOrDefault()?.IpAddress
@@ -727,7 +734,8 @@ public sealed class SonosManager
             if (snap.Members.Count == 0)
                 return;
             _lastTopology = snap;
-            _topologyEvents.Observe(snap, source);
+            if (monitor)
+                _topologyEvents.Observe(snap, source);
         }
         catch (Exception ex)
         {

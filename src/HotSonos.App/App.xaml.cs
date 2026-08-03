@@ -311,6 +311,7 @@ public partial class App : System.Windows.Application
                 OpenMcpDebug: () => ShowMainWindowTab("mcp"),
                 OpenLibrary: () => ShowMainWindowTab("library"),
                 OpenTopology: () => ShowMainWindowTab("topology"),
+                OpenLogs: () => ShowMainWindowTab("logs"),
                 Refresh: OnTrayRefresh,
                 FreshStart: () => _ = ExecuteActionAsync(HotsonosAction.FreshStart),
                 ShuffleLibrary: () => _ = ExecuteActionAsync(HotsonosAction.ShuffleLibrary),

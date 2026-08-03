@@ -994,7 +994,7 @@
                                           VerticalAlignment="Center" Margin="12,0,0,0" />
                                 <Button Content="Refresh now" Height="28" Padding="12,0" Margin="12,0,0,0"
                                         Click="TopologyRefresh_Click"
-                                        ToolTip="Pull topology from Sonos and redraw map (requires Monitor ON for full map)" />
+                                        ToolTip="Pull topology from Sonos and redraw the map (works with Monitor OFF). Event trail only fills when Monitor is ON." />
                                 <Button x:Name="TopologyRegroupButton" Content="Regroup all" Height="28" Padding="12,0" Margin="8,0,0,0"
                                         Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
                                         Click="TopologyRegroup_Click"
@@ -1057,6 +1057,47 @@
                                  FontFamily="Consolas" FontSize="11" BorderThickness="0"
                                  Background="Transparent" />
                     </GroupBox>
+                </Grid>
+            </TabItem>
+
+            <!-- ========== App Logs (diagnostics) ========== -->
+            <TabItem x:Name="LogsTab" Header="Logs">
+                <Grid Margin="16,12,16,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="#FFEEF2F7" CornerRadius="6" Padding="12" Margin="0,0,0,10"
+                            BorderBrush="#FFC5D0DC" BorderThickness="1">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="App log" FontSize="15" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <CheckBox x:Name="LogsAutoRefreshCheck" Content="Auto-refresh" IsChecked="True"
+                                          VerticalAlignment="Center" Margin="16,0,0,0"
+                                          ToolTip="Reload the ring when you switch to this tab" />
+                                <Button Content="Refresh" Height="28" Padding="12,0" Margin="12,0,0,0"
+                                        Click="LogsRefresh_Click"
+                                        ToolTip="Reload from the in-memory ring (and tail of today's file if needed)" />
+                                <Button Content="Copy" Height="28" Padding="12,0" Margin="8,0,0,0"
+                                        Click="LogsCopy_Click" ToolTip="Copy visible log text to clipboard" />
+                                <Button Content="Open log folder" Height="28" Padding="12,0" Margin="8,0,0,0"
+                                        Click="LogsOpenFolder_Click"
+                                        ToolTip="Explorer: %LocalAppData%\HotSonos\logs" />
+                            </StackPanel>
+                            <TextBlock x:Name="LogsPathText" Text=""
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <TextBox x:Name="LogsTextBox" Grid.Row="1"
+                             IsReadOnly="True" TextWrapping="NoWrap"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                             FontFamily="Consolas" FontSize="11"
+                             BorderBrush="#FFD8DEE4" BorderThickness="1" Background="White"
+                             Padding="8" AcceptsReturn="True" />
                 </Grid>
             </TabItem>
 

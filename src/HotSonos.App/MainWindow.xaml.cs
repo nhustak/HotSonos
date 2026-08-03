@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -111,7 +112,7 @@ public partial class MainWindow : Window
         _sonos.NowPlayingChanged += OnControlNowPlayingChanged;
     }
 
-    /// <summary>Select Settings, Library, Tags, Topology, or MCP Debug tab by name.</summary>
+    /// <summary>Select Settings, Library, Tags, Topology, Logs, or MCP Debug tab by name.</summary>
     public void SelectTab(string tab)
     {
         if (string.Equals(tab, "library", StringComparison.OrdinalIgnoreCase))
@@ -126,6 +127,9 @@ public partial class MainWindow : Window
                  || string.Equals(tab, "topo", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "speakers", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = TopologyTab;
+        else if (string.Equals(tab, "logs", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "log", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedItem = LogsTab;
         else if (string.Equals(tab, "mcp", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "mcp debug", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = McpTab;
@@ -656,10 +660,10 @@ public partial class MainWindow : Window
         }
         else
         {
-            TopologyMapPanel.Children.Clear();
+            // Stop continuous event trail; keep last map if we have one (Refresh still works).
             TopologyEventList.ItemsSource = null;
-            TopologySummaryText.Text = "Monitor OFF — not logging topology events (system stays light).";
-            SetStatus("Topology monitor OFF.", warn: false);
+            RefreshTopologyUi(scrollToEnd: false);
+            SetStatus("Topology monitor OFF — Refresh now still updates the map.", warn: false);
         }
     }
 
@@ -696,14 +700,15 @@ public partial class MainWindow : Window
     private void RefreshTopologyUi(bool scrollToEnd)
     {
         RefreshTopologySummaryOnly();
+        // Map always rebuilds when we have a snapshot (Monitor OFF still allows Refresh now).
+        RebuildTopologyMap();
+
         if (!_settings.TopologyMonitorEnabled)
         {
-            TopologyMapPanel.Children.Clear();
             TopologyEventList.ItemsSource = null;
             return;
         }
 
-        RebuildTopologyMap();
         var snap = _sonos.TopologyEvents.GetRecent(200);
         var selected = TopologyEventList.SelectedItem as TopologyEventLog.TopologyEvent;
         TopologyEventList.ItemsSource = snap;
@@ -724,17 +729,13 @@ public partial class MainWindow : Window
 
     private void RefreshTopologySummaryOnly()
     {
-        if (!_settings.TopologyMonitorEnabled)
-        {
-            TopologySummaryText.Text =
-                $"Monitor OFF · {_sonos.Groups.Count} group(s) from light discovery · enable Monitor to log Sub/group flaps.";
-            return;
-        }
-
+        var mon = _settings.TopologyMonitorEnabled ? "Monitor ON" : "Monitor OFF";
         var t = _sonos.LastTopology;
         if (t is null)
         {
-            TopologySummaryText.Text = "Monitor ON — waiting for topology (Refresh now)…";
+            TopologySummaryText.Text =
+                $"{mon} · {_sonos.Groups.Count} group(s) · click Refresh now for full room/Sub map" +
+                ( _settings.TopologyMonitorEnabled ? " + event trail." : " (event trail only when Monitor ON).");
             return;
         }
 
@@ -745,7 +746,7 @@ public partial class MainWindow : Window
             ? "none offline"
             : "offline: " + string.Join(", ", t.VanishedRooms);
         TopologySummaryText.Text =
-            $"Monitor ON · {t.VisibleCount} room(s), {t.InvisibleCount} bonded · {t.GroupCount} group(s): {string.Join(" · ", groups)}  |  {subLine}  |  {van}";
+            $"{mon} · {t.VisibleCount} room(s), {t.InvisibleCount} bonded · {t.GroupCount} group(s): {string.Join(" · ", groups)}  |  {subLine}  |  {van}";
     }
 
     /// <summary>
@@ -1007,16 +1008,13 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (!_settings.TopologyMonitorEnabled)
-            {
-                SetStatus("Turn Monitor ON to load the full map / event trail.", warn: true);
-                return;
-            }
-
             SetStatus("Refreshing topology…", warn: false);
             await _sonos.RefreshAsync(_settings.ActiveRoom);
-            RefreshTopologyUi(scrollToEnd: true);
-            SetStatus($"Topology: {_sonos.Groups.Count} group(s), bonded={_sonos.LastTopology?.InvisibleCount ?? 0}.", warn: false);
+            RefreshTopologyUi(scrollToEnd: _settings.TopologyMonitorEnabled);
+            var mon = _settings.TopologyMonitorEnabled ? "" : " (monitor off — map only, no event trail)";
+            SetStatus(
+                $"Topology: {_sonos.Groups.Count} group(s), bonded={_sonos.LastTopology?.InvisibleCount ?? 0}{mon}.",
+                warn: false);
         }
         catch (Exception ex)
         {
@@ -1214,6 +1212,11 @@ public partial class MainWindow : Window
             RefreshMcpEndpointUi();
             RefreshMcpActivityList(scrollToEnd: false);
         }
+        else if (MainTabs.SelectedItem == LogsTab)
+        {
+            if (LogsAutoRefreshCheck?.IsChecked != false)
+                RefreshLogsUi(scrollToEnd: true);
+        }
         else if (MainTabs.SelectedItem == TopologyTab)
             RefreshTopologyUi(scrollToEnd: false);
         else if (MainTabs.SelectedItem == LibraryTab)
@@ -1225,6 +1228,94 @@ public partial class MainWindow : Window
             RefreshControlShuffleSourceCombo();
             RefreshControlPlayList();
         }
+    }
+
+    private void LogsRefresh_Click(object sender, RoutedEventArgs e) =>
+        RefreshLogsUi(scrollToEnd: true);
+
+    private void LogsCopy_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var text = LogsTextBox?.Text;
+            if (string.IsNullOrWhiteSpace(text))
+                text = AppLog.GetRecentText(500);
+            System.Windows.Clipboard.SetText(text);
+            SetStatus("Log copied to clipboard.", warn: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Copy logs failed", ex);
+            SetStatus(ex.Message, warn: true);
+        }
+    }
+
+    private void LogsOpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        AppLog.OpenLogFolder();
+        SetStatus($"Opened log folder: {AppLog.DirectoryPath}", warn: false);
+    }
+
+    private void RefreshLogsUi(bool scrollToEnd)
+    {
+        if (LogsTextBox is null)
+            return;
+
+        try
+        {
+            var ring = AppLog.GetRecentText(500);
+            var today = Path.Combine(AppLog.DirectoryPath, $"hotsonos-{DateTime.Now:yyyyMMdd}.log");
+            if (LogsPathText is not null)
+            {
+                LogsPathText.Text = File.Exists(today)
+                    ? $"In-memory ring (last 500) · today’s file: {today}"
+                    : $"In-memory ring (last 500) · folder: {AppLog.DirectoryPath}";
+            }
+
+            // Prefer file tail when it is longer (covers lines before process start).
+            string body = ring;
+            if (File.Exists(today))
+            {
+                try
+                {
+                    var fileText = ReadFileTail(today, maxChars: 120_000);
+                    if (fileText.Length > ring.Length)
+                        body = fileText;
+                }
+                catch
+                {
+                    // Ring is fine.
+                }
+            }
+
+            LogsTextBox.Text = body;
+            if (scrollToEnd && body.Length > 0)
+                LogsTextBox.ScrollToEnd();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Refresh logs UI failed", ex);
+            if (LogsTextBox is not null)
+                LogsTextBox.Text = $"(failed to load logs: {ex.Message})";
+        }
+    }
+
+    private static string ReadFileTail(string path, int maxChars)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        if (fs.Length <= maxChars)
+        {
+            using var sr = new StreamReader(fs, Encoding.UTF8);
+            return sr.ReadToEnd();
+        }
+
+        fs.Seek(-maxChars, SeekOrigin.End);
+        using var reader = new StreamReader(fs, Encoding.UTF8);
+        var text = reader.ReadToEnd();
+        var nl = text.IndexOf('\n');
+        return nl >= 0 && nl + 1 < text.Length
+            ? "… (earlier lines truncated)\r\n" + text[(nl + 1)..]
+            : text;
     }
 
     private void RefreshMcpEndpointUi()
@@ -2768,19 +2859,13 @@ public partial class MainWindow : Window
             AppLog.Info(msg);
             if (TopologyMapPanel is not null)
                 RefreshTopologyUi(scrollToEnd: false);
-            MessageBox.Show(
-                msg + "\n\nCheck Topology: that room must show ★ COORD with others under it. " +
-                "If not, regroup failed — try again or check logs.",
-                "Preferred coordinator",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            // Result stays on the Control status line + logs — no modal popup.
         }
         catch (Exception ex)
         {
             AppLog.Warn("Set preferred coordinator failed", ex);
             HouseCoordinatorStatusText.Text = $"Failed: {ex.Message}";
             try { RefreshTopologyUi(scrollToEnd: false); } catch { /* ignore */ }
-            MessageBox.Show(ex.Message, "Preferred coordinator", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {
