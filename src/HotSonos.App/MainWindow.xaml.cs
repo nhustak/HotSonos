@@ -17,6 +17,7 @@ using HotSonos.App.Services;
 using TextBox = System.Windows.Controls.TextBox;
 using ComboBox = System.Windows.Controls.ComboBox;
 using MenuItem = System.Windows.Controls.MenuItem;
+using ContextMenu = System.Windows.Controls.ContextMenu;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MessageBox = System.Windows.MessageBox;
 
@@ -281,6 +282,8 @@ public partial class MainWindow : Window
         HookMcpActivityUi();
         HookTopologyUi();
         HookVolumesUi();
+        BuildTopologyIconLegend();
+        ApplyControlTransportIcons();
         RefreshMcpEndpointUi();
         RefreshMcpActivityList(scrollToEnd: true);
         RefreshTopologyUi(scrollToEnd: true);
@@ -809,7 +812,7 @@ public partial class MainWindow : Window
             TopologyMapPanel.Children.Add(BuildTopologyOfflineCard(t.VanishedRooms));
     }
 
-    private static UIElement BuildTopologyGroupCard(
+    private UIElement BuildTopologyGroupCard(
         string coordName,
         int visibleCount,
         IReadOnlyList<HotSonos.Core.Models.SonosTopologyMember> members,
@@ -883,20 +886,16 @@ public partial class MainWindow : Window
         return card;
     }
 
-    private static UIElement BuildTopologyMemberChip(HotSonos.Core.Models.SonosTopologyMember m)
+    private UIElement BuildTopologyMemberChip(HotSonos.Core.Models.SonosTopologyMember m)
     {
-        var isSub = m.Invisible
-                    && (string.Equals(m.ChannelRole, "SW", StringComparison.OrdinalIgnoreCase)
-                        || m.RoomName.Contains("Sub", StringComparison.OrdinalIgnoreCase));
-        var isPort = !m.Invisible
-                     && !m.IsCoordinator
-                     && (m.RoomName.Contains("Theater", StringComparison.OrdinalIgnoreCase)
-                         || m.RoomName.Contains("Port", StringComparison.OrdinalIgnoreCase)
-                         || m.RoomName.Contains("Media", StringComparison.OrdinalIgnoreCase));
-        var isBonded = m.Invisible && !isSub;
+        var kind = m.ProductKind;
+        var isSub = kind == "Sub";
+        var isPort = kind is "Port" or "Amp";
+        // Link badge for any bond member (primary + RF mate + Sub), not only the invisible mate.
+        var showBondLink = m.IsBonded;
+        var isBondedMate = m.IsBondedMate;
 
         System.Windows.Media.Color bg, fg, edge;
-        string prefix;
         var thick = 1.0;
         // Coordinator always wins over Port/purple styling so Theater-as-boss is visible.
         if (m.IsCoordinator && !m.Invisible)
@@ -904,7 +903,6 @@ public partial class MainWindow : Window
             bg = System.Windows.Media.Color.FromRgb(0xD5, 0xF5, 0xE3);
             fg = System.Windows.Media.Color.FromRgb(0x0E, 0x66, 0x3A);
             edge = System.Windows.Media.Color.FromRgb(0x27, 0xAE, 0x60);
-            prefix = "★ COORD · ";
             thick = 2;
         }
         else if (isSub)
@@ -912,31 +910,55 @@ public partial class MainWindow : Window
             bg = System.Windows.Media.Color.FromRgb(0xE8, 0xEE, 0xF8);
             fg = System.Windows.Media.Color.FromRgb(0x3D, 0x5A, 0x80);
             edge = System.Windows.Media.Color.FromRgb(0x5B, 0x7C, 0x99);
-            prefix = "🔊 ";
         }
         else if (isPort)
         {
             bg = System.Windows.Media.Color.FromRgb(0xF3, 0xE8, 0xFA);
             fg = System.Windows.Media.Color.FromRgb(0x7D, 0x3C, 0x98);
             edge = System.Windows.Media.Color.FromRgb(0x9B, 0x59, 0xB6);
-            prefix = "🔌 ";
         }
-        else if (isBonded)
+        else if (isBondedMate)
         {
+            // Stereo/bonded Era etc. — speaker styling, link badge at end.
             bg = System.Windows.Media.Color.FromRgb(0xE8, 0xEE, 0xF8);
             fg = System.Windows.Media.Color.FromRgb(0x3D, 0x5A, 0x80);
             edge = System.Windows.Media.Color.FromRgb(0x5B, 0x7C, 0x99);
-            prefix = "⛓ ";
         }
         else
         {
             bg = System.Windows.Media.Color.FromRgb(0xF8, 0xFA, 0xFC);
             fg = System.Windows.Media.Color.FromRgb(0x2E, 0x3A, 0x48);
             edge = System.Windows.Media.Color.FromRgb(0xD8, 0xDE, 0xE4);
-            prefix = "";
         }
 
-        return new Border
+        var productTip = string.IsNullOrWhiteSpace(m.ProductName) ? m.ProductKind : m.ProductName;
+        // Icon order: product → connection → bonded → coordinator
+        // Bonded Era: speaker → ethernet/wifi → link
+        var iconKeys = new List<string>();
+        if (isBondedMate)
+            iconKeys.Add(AppIcons.Speaker); // always speaker icon for bonded pair mate
+        else
+            iconKeys.Add(m.ProductIconKey);
+        if (m.ConnectionIconKey is { } ck)
+            iconKeys.Add(ck);
+        if (showBondLink)
+            iconKeys.Add(AppIcons.Link);
+        if (m.IsCoordinator && !m.Invisible)
+            iconKeys.Add(AppIcons.Star);
+
+        // Text without trailing " · ETH" emoji baggage — connection shown as icon only.
+        var labelText = m.DisplayLabel;
+        if (m.ConnectionLabel is not null && labelText.EndsWith(" · " + m.ConnectionLabel, StringComparison.Ordinal))
+            labelText = labelText[..^(m.ConnectionLabel.Length + 3)];
+
+        var child = AppIcons.Row(
+            labelText,
+            fontSize: 11,
+            foreground: new System.Windows.Media.SolidColorBrush(fg),
+            weight: m.IsCoordinator && !m.Invisible ? FontWeights.Bold : FontWeights.Normal,
+            iconNames: iconKeys.ToArray());
+
+        var border = new Border
         {
             Background = new System.Windows.Media.SolidColorBrush(bg),
             BorderBrush = new System.Windows.Media.SolidColorBrush(edge),
@@ -944,20 +966,364 @@ public partial class MainWindow : Window
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(6, 3, 6, 3),
             Margin = new Thickness(0, 0, 0, 4),
-            Child = new TextBlock
-            {
-                Text = prefix + m.DisplayLabel,
-                FontSize = 11,
-                FontWeight = m.IsCoordinator && !m.Invisible ? FontWeights.Bold : FontWeights.Normal,
-                Foreground = new System.Windows.Media.SolidColorBrush(fg),
-                TextWrapping = TextWrapping.Wrap,
-                ToolTip = $"{m.DisplayLabel}\n{m.IpAddress}\nUUID {m.Uuid}"
-                          + (m.Invisible ? "\n(bonded/invisible)" : "")
-                          + (m.IsCoordinator
-                              ? "\n★ GROUP COORDINATOR (pulls library / leads group)"
-                              : "\n(follower)"),
-            },
+            Child = child,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            ToolTip = $"{m.DisplayLabel}\n{productTip} · {m.ConnectionDetail}\n{m.IpAddress}\nUUID {m.Uuid}"
+                      + (m.Invisible ? "\n(bonded/invisible)" : "")
+                      + (m.IsCoordinator
+                          ? "\n★ GROUP COORDINATOR (pulls library / leads group)"
+                          : "\n(follower)")
+                      + "\nRight-click: Rename / Restart",
         };
+
+        border.ContextMenu = BuildTopologyMemberContextMenu(m);
+        return border;
+    }
+
+    private ContextMenu BuildTopologyMemberContextMenu(HotSonos.Core.Models.SonosTopologyMember m) =>
+        BuildSpeakerContextMenu(m.RoomName, m.IpAddress);
+
+    /// <summary>
+    /// Shared right-click menu for Topology chips and Control speaker rows:
+    /// Rename, Restart (with confirm), Copy IP.
+    /// </summary>
+    private ContextMenu BuildSpeakerContextMenu(string roomName, string ip)
+    {
+        var menu = new ContextMenu();
+        var display = string.IsNullOrWhiteSpace(roomName) ? ip : roomName;
+
+        var rename = new MenuItem
+        {
+            Header = $"Rename “{display}”…",
+            ToolTip = "Local UPnP SetZoneAttributes (same as Sonos app room rename)",
+            IsEnabled = !string.IsNullOrWhiteSpace(ip),
+        };
+        rename.Click += async (_, _) => await RenameSpeakerAsync(roomName, ip).ConfigureAwait(true);
+        menu.Items.Add(rename);
+
+        var restart = new MenuItem
+        {
+            Header = $"Restart “{display}”…",
+            ToolTip = "GET http://{ip}:1400/reboot — speaker drops briefly then rejoins",
+            IsEnabled = !string.IsNullOrWhiteSpace(ip),
+        };
+        restart.Click += async (_, _) => await RestartSpeakerAsync(roomName, ip).ConfigureAwait(true);
+        menu.Items.Add(restart);
+
+        menu.Items.Add(new Separator());
+
+        var copyIp = new MenuItem
+        {
+            Header = string.IsNullOrWhiteSpace(ip) ? "Copy IP" : $"Copy IP {ip}",
+            IsEnabled = !string.IsNullOrWhiteSpace(ip),
+        };
+        copyIp.Click += (_, _) =>
+        {
+            try
+            {
+                System.Windows.Clipboard.SetText(ip);
+                SetStatus($"Copied {ip}", warn: false);
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Clipboard failed: {ex.Message}", warn: true);
+            }
+        };
+        menu.Items.Add(copyIp);
+
+        return menu;
+    }
+
+    private async Task TopologyRenameMemberAsync(HotSonos.Core.Models.SonosTopologyMember m) =>
+        await RenameSpeakerAsync(m.RoomName, m.IpAddress).ConfigureAwait(true);
+
+    private async Task TopologyRestartMemberAsync(HotSonos.Core.Models.SonosTopologyMember m) =>
+        await RestartSpeakerAsync(m.RoomName, m.IpAddress).ConfigureAwait(true);
+
+    private async Task RenameSpeakerAsync(string roomName, string ip)
+    {
+        if (string.IsNullOrWhiteSpace(ip))
+        {
+            SetStatus("No IP for this player — refresh topology first.", warn: true);
+            return;
+        }
+
+        var newName = PromptText(
+            title: "Rename speaker",
+            prompt: $"New room name for {roomName} ({ip}):",
+            initial: roomName);
+        if (newName is null)
+            return;
+        newName = newName.Trim();
+        if (newName.Length == 0)
+        {
+            SetStatus("Name cannot be empty.", warn: true);
+            return;
+        }
+        if (string.Equals(newName, roomName, StringComparison.Ordinal))
+        {
+            SetStatus("Name unchanged.", warn: false);
+            return;
+        }
+
+        try
+        {
+            SetStatus($"Renaming “{roomName}” → “{newName}”…", warn: false);
+            await _sonos.RenameZoneAsync(ip, newName).ConfigureAwait(true);
+
+            // Keep settings in sync if this room was the active / preferred coordinator.
+            var old = roomName;
+            var changed = false;
+            if (string.Equals(_settings.ActiveRoom, old, StringComparison.OrdinalIgnoreCase))
+            {
+                _settings.ActiveRoom = newName;
+                changed = true;
+            }
+            if (string.Equals(_settings.PreferredHouseCoordinatorRoom, old, StringComparison.OrdinalIgnoreCase))
+            {
+                _settings.PreferredHouseCoordinatorRoom = newName;
+                changed = true;
+            }
+            // Room volume offset key is by room name.
+            var off = _settings.GetVolumeOffset(old);
+            if (off != 0 && _settings.GetVolumeOffset(newName) == 0)
+            {
+                _settings.SetVolumeOffset(newName, off);
+                _settings.SetVolumeOffset(old, 0);
+                changed = true;
+            }
+            if (changed)
+            {
+                try { _store.Save(_settings); }
+                catch (Exception ex) { AppLog.Warn("Save after rename failed", ex); }
+            }
+
+            await Task.Delay(400).ConfigureAwait(true);
+            await _sonos.RefreshAsync(_settings.ActiveRoom).ConfigureAwait(true);
+            PopulateRooms();
+            RefreshTopologyUi(scrollToEnd: false);
+            try { await LoadSpeakerVolumesAsync().ConfigureAwait(true); }
+            catch { /* ignore */ }
+            SetStatus($"Renamed “{old}” → “{newName}”.", warn: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Rename failed for {roomName} @ {ip}", ex);
+            SetStatus($"Rename failed: {ex.Message}", warn: true);
+        }
+    }
+
+    private async Task RestartSpeakerAsync(string roomName, string ip)
+    {
+        if (string.IsNullOrWhiteSpace(ip))
+        {
+            SetStatus("No IP for this player — refresh topology first.", warn: true);
+            return;
+        }
+
+        // Always confirm — reboot drops the player (and may stop the whole group if it is coordinator).
+        var confirm = MessageBox.Show(
+            this,
+            $"Are you sure you want to restart “{roomName}”?\n\n"
+            + $"IP: {ip}\n\n"
+            + "The speaker will drop offline for ~30–60s, then rejoin the group.\n"
+            + "Music on that player (or the whole group if it is the coordinator) will stop.",
+            "Confirm restart",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirm != MessageBoxResult.Yes)
+            return;
+
+        try
+        {
+            SetStatus($"Restarting “{roomName}” @ {ip}…", warn: false);
+            var status = await _sonos.RebootPlayerAsync(ip).ConfigureAwait(true);
+            SetStatus(status, warn: false);
+            // Soft refresh shortly after — device may still be down.
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(8000).ConfigureAwait(false);
+                try
+                {
+                    await _sonos.RefreshAsync(_settings.ActiveRoom).ConfigureAwait(false);
+                    await Dispatcher.InvokeAsync(async () =>
+                    {
+                        PopulateRooms();
+                        RefreshTopologyUi(scrollToEnd: false);
+                        try { await LoadSpeakerVolumesAsync().ConfigureAwait(true); }
+                        catch { /* ignore */ }
+                        SetStatus($"Topology refreshed after restart of “{roomName}”.", warn: false);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Post-reboot refresh failed", ex);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Restart failed for {roomName} @ {ip}", ex);
+            SetStatus($"Restart failed: {ex.Message}", warn: true);
+        }
+    }
+
+    /// <summary>Tiny modal text prompt (WPF). Returns null if cancelled.</summary>
+    private string? PromptText(string title, string prompt, string initial)
+    {
+        var win = new Window
+        {
+            Title = title,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            Width = 420,
+            Height = 160,
+            ShowInTaskbar = false,
+            Background = System.Windows.Media.Brushes.White,
+        };
+
+        var root = new DockPanel { Margin = new Thickness(14) };
+        var label = new TextBlock
+        {
+            Text = prompt,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        DockPanel.SetDock(label, Dock.Top);
+        root.Children.Add(label);
+
+        var buttons = new StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+            Margin = new Thickness(0, 10, 0, 0),
+        };
+        DockPanel.SetDock(buttons, Dock.Bottom);
+
+        var tb = new TextBox
+        {
+            Text = initial ?? "",
+            Height = 28,
+            Padding = new Thickness(4, 2, 4, 2),
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+
+        string? result = null;
+        var ok = new System.Windows.Controls.Button
+        {
+            Content = "OK",
+            Width = 80,
+            Height = 28,
+            Margin = new Thickness(0, 0, 8, 0),
+            IsDefault = true,
+        };
+        ok.Click += (_, _) =>
+        {
+            result = tb.Text;
+            win.DialogResult = true;
+            win.Close();
+        };
+        var cancel = new System.Windows.Controls.Button
+        {
+            Content = "Cancel",
+            Width = 80,
+            Height = 28,
+            IsCancel = true,
+        };
+        cancel.Click += (_, _) =>
+        {
+            result = null;
+            win.DialogResult = false;
+            win.Close();
+        };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        root.Children.Add(buttons);
+        root.Children.Add(tb);
+        win.Content = root;
+        win.Loaded += (_, _) =>
+        {
+            tb.Focus();
+            tb.SelectAll();
+        };
+
+        return win.ShowDialog() == true ? result : null;
+    }
+
+    private void BuildTopologyIconLegend()
+    {
+        if (TopologyIconLegendPanel is null)
+            return;
+        TopologyIconLegendPanel.Children.Clear();
+        var ink = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1C, 0x25, 0x36));
+        void Chip(string label, params string[] icons)
+        {
+            var border = new Border
+            {
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF0, 0xF4, 0xF8)),
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x60, 0x70, 0x7F)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(6, 2, 6, 2),
+                Margin = new Thickness(0, 0, 8, 0),
+                Child = AppIcons.Row(label, fontSize: 10, foreground: ink, weight: FontWeights.SemiBold, iconNames: icons),
+            };
+            TopologyIconLegendPanel.Children.Add(border);
+        }
+
+        Chip("Ethernet", AppIcons.Ethernet);
+        Chip("Wi‑Fi", AppIcons.Wifi);
+        Chip("Sub", AppIcons.Sub);
+        Chip("Port", AppIcons.Port);
+        Chip("Speaker", AppIcons.Speaker);
+        Chip("Amp", AppIcons.Amp);
+        Chip("Bonded", AppIcons.Link);
+        Chip("Coordinator", AppIcons.Star);
+    }
+
+    private void ApplyControlTransportIcons()
+    {
+        void IconOnly(System.Windows.Controls.Button? btn, string icon, double size = 16)
+        {
+            if (btn is null) return;
+            var img = AppIcons.CreateImage(icon, size);
+            img.Margin = new Thickness(0);
+            btn.Content = img;
+        }
+
+        void IconText(System.Windows.Controls.Button? btn, string icon, string text, double size = 14)
+        {
+            if (btn is null) return;
+            var sp = new StackPanel
+            {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var img = AppIcons.CreateImage(icon, size);
+            img.Margin = new Thickness(0, 0, 4, 0);
+            sp.Children.Add(img);
+            sp.Children.Add(new TextBlock
+            {
+                Text = text,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            btn.Content = sp;
+        }
+
+        IconOnly(ControlTransportPreviousButton, AppIcons.History, 15);
+        IconOnly(ControlTransportPlayPauseButton, AppIcons.Speaker, 18);
+        IconOnly(ControlTransportNextButton, AppIcons.Refresh, 15);
+        IconOnly(ControlDeleteNowPlayingButton, AppIcons.Trash, 15);
+        IconOnly(ControlTransportVolDownButton, AppIcons.ArrowDown, 15);
+        IconOnly(ControlTransportVolUpButton, AppIcons.ArrowUp, 15);
+        IconText(ControlTransportMuteButton, AppIcons.NoWifi, "Mute", 14);
+
+        if (RefreshVolumesButton is not null)
+            IconText(RefreshVolumesButton, AppIcons.Refresh, "Refresh volumes", 14);
+        if (RefreshButton is not null)
+            IconText(RefreshButton, AppIcons.Discovery, "Refresh devices", 14);
     }
 
     private static UIElement BuildTopologyOfflineCard(IReadOnlyList<string> vanished)
@@ -2553,6 +2919,17 @@ public partial class MainWindow : Window
     {
         SpeakersPanel.Children.Clear();
 
+        // Topology supplies product / ETH-Wi‑Fi / bond / coordinator icons for the name column.
+        try
+        {
+            if (_sonos.LastTopology is null || _sonos.LastTopology.Members.Count == 0)
+                await _sonos.ObserveTopologyAsync("ui").ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Topology probe for speaker icons failed", ex);
+        }
+
         IReadOnlyList<SpeakerVolume> volumes;
         try
         {
@@ -2590,26 +2967,55 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Shared name-column width so every volume slider starts on the same vertical line
+    /// (icons + longest room name). Tuned for ~3 icons + “Master Bath” / “Sun Room”.
+    /// </summary>
+    private const double SpeakerNameColumnWidth = 168;
+
     private UIElement BuildSpeakerRow(SpeakerVolume speaker)
     {
-        // Name | slider | % | Offset | Mute
+        // Name (fixed width, left-aligned) | slider (*) | % | Offset | Mute
         var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star), MinWidth = 90 });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star), MinWidth = 100 });
+        row.ColumnDefinitions.Add(new ColumnDefinition
+        {
+            Width = new GridLength(SpeakerNameColumnWidth),
+            MinWidth = SpeakerNameColumnWidth,
+        });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 120 });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var name = new TextBlock
-        {
-            Text = speaker.Reachable ? speaker.RoomName : $"{speaker.RoomName} (offline)",
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Margin = new Thickness(0, 0, 10, 0),
-            Foreground = speaker.Reachable
-                ? System.Windows.Media.Brushes.Black
-                : System.Windows.Media.Brushes.Gray,
-        };
+        var member = FindTopologyMember(speaker.IpAddress, speaker.RoomName);
+        var iconKeys = member is not null
+            ? TopologyMemberIconKeys(member)
+            : FallbackSpeakerIconKeys(speaker);
+
+        var label = speaker.Reachable ? speaker.RoomName : $"{speaker.RoomName} (offline)";
+        var fg = speaker.Reachable
+            ? System.Windows.Media.Brushes.Black
+            : System.Windows.Media.Brushes.Gray;
+        var weight = member is { IsCoordinator: true, Invisible: false }
+            ? FontWeights.SemiBold
+            : FontWeights.Normal;
+
+        // Same icon order as Topology chips: product → connection → bond → star
+        var name = AppIcons.Row(
+            label,
+            fontSize: 12,
+            foreground: fg,
+            weight: weight,
+            iconNames: iconKeys.ToArray());
+        name.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 6, 0));
+        name.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        name.SetValue(FrameworkElement.HorizontalAlignmentProperty, System.Windows.HorizontalAlignment.Left);
+        name.SetValue(FrameworkElement.ToolTipProperty,
+            member is null
+                ? $"{speaker.RoomName}\n{speaker.IpAddress}"
+                : $"{member.DisplayLabel}\n{(string.IsNullOrWhiteSpace(member.ProductName) ? member.ProductKind : member.ProductName)}"
+                  + $" · {member.ConnectionDetail}\n{member.IpAddress}"
+                  + (member.IsCoordinator && !member.Invisible ? "\n★ GROUP COORDINATOR" : ""));
         Grid.SetColumn(name, 0);
 
         var valueLabel = new TextBlock
@@ -2691,6 +3097,14 @@ public partial class MainWindow : Window
         row.Children.Add(valueLabel);
         row.Children.Add(offsetPanel);
         row.Children.Add(muteCheck);
+
+        // Same right-click as Topology: Rename / Restart (confirm) / Copy IP.
+        var menu = BuildSpeakerContextMenu(speaker.RoomName, speaker.IpAddress);
+        row.ContextMenu = menu;
+        // Hand cursor + tip on the name so it's discoverable.
+        name.SetValue(FrameworkElement.CursorProperty, System.Windows.Input.Cursors.Hand);
+        var tip = name.GetValue(FrameworkElement.ToolTipProperty) as string ?? speaker.RoomName;
+        name.SetValue(FrameworkElement.ToolTipProperty, tip + "\nRight-click row: Rename / Restart");
         return row;
     }
 
@@ -2717,6 +3131,60 @@ public partial class MainWindow : Window
         {
             AppLog.Warn($"Could not save volume offset for '{roomName}'", ex);
         }
+    }
+
+    /// <summary>Match Control speaker row to topology for product/connection/bond icons.</summary>
+    private HotSonos.Core.Models.SonosTopologyMember? FindTopologyMember(string ip, string roomName)
+    {
+        var members = _sonos.LastTopology?.Members;
+        if (members is null || members.Count == 0)
+            return null;
+
+        // Prefer visible member by IP, then room name (skip pure bonded invisibles for volume rows).
+        HotSonos.Core.Models.SonosTopologyMember? byIp = null;
+        HotSonos.Core.Models.SonosTopologyMember? byRoom = null;
+        foreach (var m in members)
+        {
+            if (!string.IsNullOrWhiteSpace(ip)
+                && string.Equals(m.IpAddress, ip, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!m.Invisible)
+                    return m;
+                byIp ??= m;
+            }
+            if (string.Equals(m.RoomName, roomName, StringComparison.OrdinalIgnoreCase) && !m.Invisible)
+                byRoom ??= m;
+        }
+
+        return byIp ?? byRoom;
+    }
+
+    /// <summary>Icon keys matching Topology chips: product → connection → bond → coordinator.</summary>
+    private static List<string> TopologyMemberIconKeys(HotSonos.Core.Models.SonosTopologyMember m)
+    {
+        var keys = new List<string>();
+        if (m.IsBondedMate)
+            keys.Add(AppIcons.Speaker);
+        else
+            keys.Add(m.ProductIconKey);
+        if (m.ConnectionIconKey is { } ck)
+            keys.Add(ck);
+        if (m.IsBonded)
+            keys.Add(AppIcons.Link);
+        if (m.IsCoordinator && !m.Invisible)
+            keys.Add(AppIcons.Star);
+        return keys;
+    }
+
+    private List<string> FallbackSpeakerIconKeys(SpeakerVolume speaker)
+    {
+        var keys = new List<string> { AppIcons.Speaker };
+        // Still show star when this room is a known group coordinator even without full topology.
+        if (_sonos.Groups.Any(g =>
+                string.Equals(g.CoordinatorRoom, speaker.RoomName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(g.CoordinatorIp, speaker.IpAddress, StringComparison.OrdinalIgnoreCase)))
+            keys.Add(AppIcons.Star);
+        return keys;
     }
 
     private async Task CommitSpeakerVolumeAsync(string ip, int percent)

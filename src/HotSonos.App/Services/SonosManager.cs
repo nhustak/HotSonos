@@ -44,6 +44,9 @@ public sealed class SonosManager
     private SonosController? _controller;
     private SonosTopologySnapshot? _lastTopology;
 
+    /// <summary>Cached product short names by player UUID (device_description).</summary>
+    private readonly Dictionary<string, string> _productNameByUuid = new(StringComparer.OrdinalIgnoreCase);
+
     private IReadOnlyList<string> _offline = [];
     private bool _topologySeen;
     private int _topUpInFlight; // 0/1
@@ -733,14 +736,68 @@ public sealed class SonosManager
             var snap = await _discovery.GetTopologySnapshotFromAsync(ip, ct).ConfigureAwait(false);
             if (snap.Members.Count == 0)
                 return;
-            _lastTopology = snap;
+            _lastTopology = await EnrichTopologyProductNamesAsync(snap, ct).ConfigureAwait(false);
             if (monitor)
-                _topologyEvents.Observe(snap, source);
+                _topologyEvents.Observe(_lastTopology, source);
         }
         catch (Exception ex)
         {
             AppLog.Warn($"Topology observe failed ({source})", ex);
         }
+    }
+
+    /// <summary>
+    /// Fills <see cref="SonosTopologyMember.ProductName"/> from device description
+    /// (cached by UUID). Used for topology type icons (Port / Era / One / Sub).
+    /// </summary>
+    private async Task<SonosTopologySnapshot> EnrichTopologyProductNamesAsync(
+        SonosTopologySnapshot snap,
+        CancellationToken ct)
+    {
+        var missing = snap.Members
+            .Where(m => !string.IsNullOrWhiteSpace(m.IpAddress)
+                        && !_productNameByUuid.ContainsKey(m.Uuid))
+            .GroupBy(m => m.IpAddress, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
+        if (missing.Count > 0)
+        {
+            var probes = missing.Select(async m =>
+            {
+                var name = await SonosDeviceInfo.GetProductNameAsync(m.IpAddress, ct).ConfigureAwait(false);
+                return (m.Uuid, name);
+            });
+            try
+            {
+                var results = await Task.WhenAll(probes).ConfigureAwait(false);
+                foreach (var (uuid, name) in results)
+                {
+                    if (!string.IsNullOrWhiteSpace(name))
+                        _productNameByUuid[uuid] = name!;
+                }
+            }
+            catch
+            {
+                // Individual probes already swallow errors.
+            }
+        }
+
+        if (_productNameByUuid.Count == 0)
+            return snap;
+
+        var enriched = snap.Members
+            .Select(m =>
+                _productNameByUuid.TryGetValue(m.Uuid, out var product)
+                    ? m with { ProductName = product }
+                    : m)
+            .ToList();
+
+        return new SonosTopologySnapshot
+        {
+            Members = enriched,
+            VanishedRooms = snap.VanishedRooms,
+        };
     }
 
     public ValueTask DisposeEventsAsync() => _events.DisposeAsync();
@@ -1623,6 +1680,100 @@ public sealed class SonosManager
     /// <summary>Joins every visible player to the given coordinator UUID (whole-house).</summary>
     public async Task GroupAllSpeakersToAsync(string coordinatorUuid, CancellationToken ct = default) =>
         await RegroupAllToUuidAsync(coordinatorUuid, coordinatorUuid, ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// Renames a player room via DeviceProperties <c>SetZoneAttributes</c>
+    /// (same API the Sonos app uses). Preserves icon / configuration when known.
+    /// </summary>
+    public async Task RenameZoneAsync(string ip, string newName, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(ip))
+            throw new ArgumentException("IP is required.", nameof(ip));
+        var name = (newName ?? "").Trim();
+        if (name.Length == 0)
+            throw new ArgumentException("New name is required.", nameof(newName));
+        if (name.Length > 64)
+            throw new ArgumentException("Name is too long (max 64).", nameof(newName));
+
+        string icon = "";
+        string config = "";
+        try
+        {
+            var get = await _soap.InvokeAsync(
+                ip, SonosService.DeviceProperties, "GetZoneAttributes",
+                [], ct).ConfigureAwait(false);
+            icon = SonosSoapClient.ReadValue(get, "CurrentIcon") ?? "";
+            config = SonosSoapClient.ReadValue(get, "CurrentConfiguration") ?? "";
+        }
+        catch (Exception ex)
+        {
+            // Still try rename with empty icon/config — some firmware only needs the name.
+            AppLog.Warn($"GetZoneAttributes @ {ip}: {ex.Message}");
+        }
+
+        await _soap.InvokeAsync(
+            ip, SonosService.DeviceProperties, "SetZoneAttributes",
+            [
+                new("DesiredZoneName", name),
+                new("DesiredIcon", icon),
+                new("DesiredConfiguration", config),
+            ],
+            ct).ConfigureAwait(false);
+
+        AppLog.Info($"RenameZone OK @ {ip} → “{name}”");
+    }
+
+    /// <summary>
+    /// Requests a player reboot via the classic local endpoint
+    /// <c>http://{ip}:1400/reboot</c>. Many firmwares accept a simple GET;
+    /// connection drop / timeout after accept is treated as success (device is rebooting).
+    /// Returns a short status string for the UI.
+    /// </summary>
+    public async Task<string> RebootPlayerAsync(string ip, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(ip))
+            throw new ArgumentException("IP is required.", nameof(ip));
+
+        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(6) };
+        var url = $"http://{ip}:1400/reboot";
+        try
+        {
+            using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
+            var code = (int)resp.StatusCode;
+            // 200/302/403-with-body sometimes still reboots on older FW; 200 is ideal.
+            if (resp.IsSuccessStatusCode || code is 302 or 303)
+            {
+                AppLog.Info($"Reboot requested OK @ {ip} (HTTP {code})");
+                return $"Reboot requested @ {ip} (HTTP {code}). Speaker will drop briefly.";
+            }
+
+            // Some modern FW want POST. Try once.
+            using var post = await http.PostAsync(url, new System.Net.Http.StringContent(""), ct)
+                .ConfigureAwait(false);
+            var postCode = (int)post.StatusCode;
+            if (post.IsSuccessStatusCode || postCode is 302 or 303)
+            {
+                AppLog.Info($"Reboot requested OK (POST) @ {ip} (HTTP {postCode})");
+                return $"Reboot requested @ {ip} (POST HTTP {postCode}). Speaker will drop briefly.";
+            }
+
+            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            var snippet = body.Length > 120 ? body[..120] + "…" : body;
+            AppLog.Warn($"Reboot @ {ip} HTTP {code}/{postCode}: {snippet}");
+            return $"Reboot may be blocked on this firmware (HTTP {code}). Try power-cycle if needed.";
+        }
+        catch (System.Net.Http.HttpRequestException ex)
+        {
+            // Device often closes the TCP connection as it restarts — treat as accepted.
+            AppLog.Info($"Reboot @ {ip}: connection dropped ({ex.Message}) — likely rebooting");
+            return $"Reboot sent @ {ip} (connection dropped — speaker likely restarting).";
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            AppLog.Info($"Reboot @ {ip}: timeout — likely rebooting");
+            return $"Reboot sent @ {ip} (timeout — speaker likely restarting).";
+        }
+    }
 
     /// <summary>
     /// Nightly maintenance: re-discover, and if NOTHING is playing anywhere,

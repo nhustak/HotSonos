@@ -202,6 +202,9 @@ public sealed class SonosDiscovery
                     continue;
 
                 roleByUuid.TryGetValue(uuid, out var role);
+                // Anyone listed in ChannelMapSet / HTSatChanMapSet is bonded
+                // (primary + RF mate + Sub), not only the invisible partner.
+                var isBonded = roleByUuid.ContainsKey(uuid);
                 members.Add(new SonosTopologyMember
                 {
                     RoomName = zoneName,
@@ -212,6 +215,12 @@ public sealed class SonosDiscovery
                     GroupId = groupId,
                     Invisible = (string?)member.Attribute("Invisible") == "1",
                     ChannelRole = role,
+                    IsBonded = isBonded,
+                    EthLink = ParseBool01((string?)member.Attribute("EthLink")),
+                    WifiEnabled = ParseBool01((string?)member.Attribute("WifiEnabled")),
+                    ConnectionType = int.TryParse((string?)member.Attribute("ConnectionType"), out var ct)
+                        ? ct
+                        : null,
                 });
             }
         }
@@ -225,6 +234,15 @@ public sealed class SonosDiscovery
 
     private static string? HostFromLocation(string? location) =>
         Uri.TryCreate(location, UriKind.Absolute, out var uri) ? uri.Host : null;
+
+    /// <summary>Sonos topology uses "0"/"1" for EthLink / WifiEnabled.</summary>
+    private static bool? ParseBool01(string? raw) =>
+        raw switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null,
+        };
 
     /// <summary>
     /// Sends SSDP M-SEARCH from every usable local IPv4 interface and collects

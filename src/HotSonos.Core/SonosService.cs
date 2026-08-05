@@ -20,4 +20,7 @@ public sealed record SonosService(string Type, string ControlPath)
 
     public static readonly SonosService ZoneGroupTopology =
         new("urn:schemas-upnp-org:service:ZoneGroupTopology:1", "/ZoneGroupTopology/Control");
+
+    public static readonly SonosService DeviceProperties =
+        new("urn:schemas-upnp-org:service:DeviceProperties:1", "/DeviceProperties/Control");
 }
