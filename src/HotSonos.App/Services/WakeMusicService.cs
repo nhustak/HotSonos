@@ -144,7 +144,25 @@ public sealed class WakeMusicService : IDisposable
 
         if (await _sonos.IsAnythingPlayingAsync().ConfigureAwait(false))
         {
-            AppLog.Info("Wake to music: skipped — Sonos is already playing");
+            // Leftover NORMAL queue from yesterday still "playing" — rebuild if stale.
+            try
+            {
+                var refreshed = await _sonos
+                    .EnsureFreshLibraryShuffleIfStaleAsync("wake already playing", CancellationToken.None)
+                    .ConfigureAwait(false);
+                if (refreshed is not null)
+                {
+                    AppLog.Info($"Wake to music: {refreshed}");
+                    _status(refreshed);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Wake stale-queue refresh failed; treating as already playing", ex);
+            }
+
+            AppLog.Info("Wake to music: skipped — Sonos is already playing (queue not stale)");
             return;
         }
 
@@ -161,6 +179,23 @@ public sealed class WakeMusicService : IDisposable
             // Re-check after acquiring the gate in case something started just now.
             if (await _sonos.IsAnythingPlayingAsync(ct).ConfigureAwait(false))
             {
+                try
+                {
+                    var refreshed = await _sonos
+                        .EnsureFreshLibraryShuffleIfStaleAsync("wake race already playing", ct)
+                        .ConfigureAwait(false);
+                    if (refreshed is not null)
+                    {
+                        AppLog.Info($"Wake to music: {refreshed}");
+                        _status(refreshed);
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Wake stale-queue refresh failed", ex);
+                }
+
                 AppLog.Info("Wake to music: skipped — Sonos started playing before wake could begin");
                 return;
             }
@@ -170,7 +205,24 @@ public sealed class WakeMusicService : IDisposable
             {
                 if (await _sonos.IsAnythingPlayingAsync(ct).ConfigureAwait(false))
                 {
-                    AppLog.Info("Wake to music: skipped — Sonos is already playing");
+                    try
+                    {
+                        var refreshed = await _sonos
+                            .EnsureFreshLibraryShuffleIfStaleAsync("wake gate already playing", ct)
+                            .ConfigureAwait(false);
+                        if (refreshed is not null)
+                        {
+                            AppLog.Info($"Wake to music: {refreshed}");
+                            _status(refreshed);
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Warn("Wake stale-queue refresh failed", ex);
+                    }
+
+                    AppLog.Info("Wake to music: skipped — Sonos is already playing (queue not stale)");
                     return;
                 }
 

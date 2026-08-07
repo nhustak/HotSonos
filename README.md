@@ -4,7 +4,7 @@
 [![latest release](https://img.shields.io/github/v/release/nhustak/HotSonos)](https://github.com/nhustak/HotSonos/releases/latest)
 [![license](https://img.shields.io/github/license/nhustak/HotSonos)](LICENSE)
 
-**Version 1.0.0.55** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
+**Version 1.0.0.60** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
@@ -13,10 +13,27 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
 
 ### Product direction
-- **Today:** history-aware shuffle (**All**, **tag**, or **genre** from Control), transport/volume hotkeys, favorite slots (Sonos / tag / genre), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play, optional **hide genres** for simpler installs, loopback MCP for agents.
-- **Settings UI:** left vertical nav — **Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug**.
+- **Today:** history-aware shuffle (**All**, **tag**, or **genre** from Control) with **stale-queue detection**, transport/volume hotkeys, favorite slots (Sonos / tag / genre), wake-to-music, **Topology map** (ETH/Wi‑Fi icons, rename/restart), local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play, optional **hide genres**, loopback MCP, **Logs** tab.
+- **Settings UI:** **Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Logs · MCP Debug**.
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre, logs).
+
+---
+
+## Network: turn **SonosNet** off (read this)
+
+If you hear **stuttering**, dropouts, or “dead zones” while the house is on a normal Wi‑Fi mesh (Omada, UniFi, eero, etc.), the problem is often **not HotSonos** — it is **SonosNet** competing with your real network.
+
+### What went wrong in practice
+Hardwiring a **Port** (or any player) to Ethernet is good for that box — but Sonos may then treat it as a **SonosNet root** and build a **second wireless mesh** between speakers. That mesh uses the same 2.4 GHz airtime as your house APs. Result: RF fighting, speakers hopping paths, and multi-room audio that **stutters** even when “everything is green” in the Sonos app.
+
+### What to do
+1. In the **Sonos app** (S2): open system / network settings and **disable SonosNet** (wording varies by app version — look for SonosNet / wireless Sonos mesh / “use my Wi‑Fi only”).
+2. Prefer speakers on **your** Wi‑Fi (or Ethernet) **without** a parallel Sonos mesh.
+3. One wired root can still make sense for a Port/amp — just **do not** leave SonosNet building tunnels to the rest of the house.
+4. In HotSonos **Topology**, check **ETH vs Wi‑Fi** icons so you can see who is wired and who is radio.
+
+HotSonos cannot turn SonosNet off for you (Sonos does not expose a stable local API for that). You have to flip it in the **Sonos app**. If music was flaky until you killed SonosNet, you found the real bug.
 
 ---
 
@@ -51,7 +68,10 @@ A short mix starts faster and is more reliable on Sonos. Dumping thousands of so
 As songs play **or you skip them (Next)**, HotSonos remembers them. When it builds the next batch, it leaves those out (by default, roughly the last couple of weeks). Top-up also won’t re-add tracks already put on the queue in the current shuffle session.
 
 **Does it reshuffle what’s already lined up?**  
-No. Songs already in the queue stay put. New songs only get added at the end.
+No — not while that queue is still the “current” mix. Songs already on the Sonos queue stay in order. New songs only get **appended** at the end (top-up).
+
+**Why did I hear “yesterday’s” songs after a restart?**  
+Sonos keeps a fixed **NORMAL** queue on the coordinator. HotSonos history only applies when it **rebuilds or tops up**. After an app/speaker restart it used to **re-arm** on the leftover queue (same order as yesterday). **1.0.0.60+** detects a **stale** rebuild (default **> 8 hours**) or a **queue index reset** (e.g. track 72 → 1) and automatically runs a history-aware reshuffle. Wake “already playing” does the same if the queue is stale. State file: `%LocalAppData%\HotSonos\shuffle-queue-state.json`.
 
 **What happens when the queue is almost empty?**  
 HotSonos quietly adds another random batch of unheard-recently songs so music keeps going without you doing anything.
@@ -97,9 +117,21 @@ Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **libra
 ### 🎮 Control page
 - **From** dropdown (All / tag / genre) + **Start shuffle now** / Restart fresh, level-all, target room/group, **full-width speakers**.
 - **Preferred house coordinator** — who should lead when you regroup the house (e.g. Office or Theater/Port); verified after join (★ COORD on Topology map).
+- **Speakers list** — product / ETH·Wi‑Fi / bond / coordinator **icons** (same as Topology), aligned volume sliders, per-room **offsets**, mute.
+- **Right-click a speaker** — **Rename…**, **Restart…** (confirm), **Copy IP** (same menu as Topology chips).
 - **Play tags, genres & Sonos playlists** — one-click play; list shares vertical space with speakers.
 - Hide genres for other users under **Shuffle → Show genres in shuffle / play lists**.
 - Layout keeps **labels + fields + buttons grouped left** (no stretch-to-far-right action buttons).
+
+### 📡 Topology map
+- Group cards with **product** (speaker / Port / Sub / amp), **connection** (Ethernet / Wi‑Fi), **bond** (stereo/HT link), and **★ coordinator** icons.
+- **Refresh** updates the map without turning the heavy event monitor on.
+- Optional **Monitor ON** for join/leave event trail (default off — keeps the system light).
+- **Right-click** a chip: rename room (`SetZoneAttributes`), reboot player (`http://{ip}:1400/reboot` — firmware-dependent), copy IP.
+- Use this view to confirm **who is hardwired** after network changes (see [SonosNet](#network-turn-sonosnet-off-read-this) above).
+
+### 📋 Logs
+In-app **Logs** tab for the ring buffer (same lines as disk under `%LocalAppData%\HotSonos\logs`) without hunting files.
 
 ### 📚 Local library cache
 - **Discover from Sonos** (share roots from `x-file-cifs` URIs)  
@@ -117,11 +149,11 @@ Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **libra
 ### 🎴 Live Now-Playing flyout
 Album art, title, artist, state — GENA push updates. Draggable, pinnable; toggles under **Options**.
 
-### 📡 Live speaker monitoring
-Topology events: offline tray indicator, reconnect toasts, auto-rejoin active group, live room picker.
+### 🛰️ Live speaker monitoring
+Topology events: offline tray indicator, reconnect toasts, auto-rejoin active group, live room picker. Playback recovery prefers **Next / reshuffle** over blindly **Play**ing a stale queue from track 1.
 
 ### ☀️ Wake to music
-Scheduled start on a room, volume ramp, favorite or shuffle source, optional whole-house expand + shuffle. Skips if already playing. MCP `wake_now` / `wake_cancel`.
+Scheduled start on a room, volume ramp, favorite or shuffle source, optional whole-house expand + shuffle. If something is **already playing**, wake **skips** — unless the library shuffle is **stale** (> ~8h since last rebuild), in which case it **rebuilds** a history-aware mix instead of leaving yesterday’s queue. MCP `wake_now` / `wake_cancel`.
 
 ### 🖱️ Tray double-click
 Configurable under **Options**: start shuffle (default), open Control, or open Library. Right-click still opens the full tray menu.
@@ -135,11 +167,11 @@ While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery,
 
 ### Other
 - Single-instance tray app; second launch activates the running window  
-- Optional **Start with Windows**; nightly silent re-sync  
+- Optional **Start with Windows**; nightly silent re-sync (optional reshuffle)  
 - Config: `%LocalAppData%\HotSonos\settings.json`  
 - Play history (exclude set): `%LocalAppData%\HotSonos\play-history.json`  
+- Shuffle queue state (stale detection): `%LocalAppData%\HotSonos\shuffle-queue-state.json`  
 - Play lifecycle events (debug): `%LocalAppData%\HotSonos\play-events.jsonl` · MCP `get_play_events`  
-
 - Logs: `%LocalAppData%\HotSonos\logs`
 
 ---
@@ -220,28 +252,43 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 - **Discovery** — SSDP across interfaces; topology from any responding player.  
 - **Control** — SOAP on TCP **1400** to group coordinators.  
 - **Shuffle** — browse `A:TRACKS`, exclude recently **played** tracks, short queue (~80 default), auto **top-up** near end, play in `NORMAL` mode.  
+- **Stale / replay queue** — last rebuild time + size persisted; rearm after app restart, wake-while-playing, index reset (Play restarted batch), and recovery near track 1 on an old queue all force a history-aware **rebuild** instead of walking yesterday’s list.  
 - **Tags** — catalog in settings; keys written into audio files as `HOTSONOS_TAGS`; SQLite is a rebuildable cache only.  
 - **Tag / genre / one-shot play** — client builds a queue from the library cache; optional continue into full-library top-up (`ContinueLibraryShuffleAfterSpecialPlay`).  
 - **Control shuffle From** — `ControlShuffleSource` = `all` | `tag:{key}` | `genre:{name}`; genres gated by `ShowGenresInPlaySources`.  
 - **Library** — filesystem scan under discovered UNC roots; optional master match for dual-write.  
 - **MCP** — Kestrel loopback host inside the tray process.  
 - **GENA** — local listener for now-playing, topology, and RenderingControl volume/mute (coordinator).  
-- **Volume** — house logical % for ±; per-room offsets on absolute write (Level all / Wake / ±); Speakers sliders show raw Sonos %.
+- **Volume** — house logical % for ±; per-room offsets on absolute write (Level all / Wake / ±); Speakers sliders show raw Sonos %.  
+- **Rename / reboot** — DeviceProperties `SetZoneAttributes`; optional HTTP `GET/POST :1400/reboot` (may be blocked on some firmware).
 
 ---
 
 ## Notes & limitations
 
-- Speakers out of sync is usually Wi‑Fi; Restart fresh / nightly re-sync help.  
+- **SonosNet + house Wi‑Fi mesh = stutter risk.** Disable SonosNet in the **Sonos app** so players use *your* network only — see [Network: turn SonosNet off](#network-turn-sonosnet-off-read-this). Hardwiring a Port without turning SonosNet off can make things *worse*.  
+- Speakers out of sync is often RF / path flaps; Restart fresh / nightly re-sync help, but fix the radio topology first.  
 - Nightly re-sync and wake need the **PC awake** with HotSonos running.  
 - Sonos does not reliably report “can’t play this file”; unplayable flags are **format heuristics**.  
-- Shuffle history only reshapes the queue at **rebuild/top-up**, not mid-queue.  
+- Shuffle history only reshapes the queue at **rebuild/top-up**, not mid-queue — unless stale/replay detection forces a rebuild.  
 - Tag write needs **write** SMB access from this PC to the Sonos share (and master root if dual-write is on).  
+- Player **Restart** via `:1400/reboot` is best-effort; some firmware returns 403.  
 - GENA callback is for a **trusted home LAN**.
 
 ---
 
 ## Changelog
+
+### 1.0.0.60
+- **Stale / replay shuffle detection:** persist last rebuild; auto history-aware reshuffle on rearm of an old queue, queue index reset, recovery near track 1, and wake-while-playing when rebuild age is older than ~8 hours  
+- State file: `%LocalAppData%\HotSonos\shuffle-queue-state.json`  
+
+### 1.0.0.56 – 1.0.0.59
+- **Topology map icons:** product (speaker / Port / Sub / amp), Ethernet / Wi‑Fi, bond link, coordinator star  
+- **Right-click** Topology chips + Control Speakers: **Rename**, **Restart** (confirm), **Copy IP**  
+- Control Speakers list: same icons, **aligned** volume sliders, less wasted gap  
+- Topology refresh without monitor; **Logs** tab; DeviceProperties rename + reboot helpers  
+- Bond badge for primary + RF + Sub (not only the invisible mate)  
 
 ### 1.0.0.55
 - **House-logical volume ±:** toast and step base from offset‑0 rooms (never Port/coordinator raw %); each room written as `logical + offset` so amp-fed Theater stays usable without driving the house number  
