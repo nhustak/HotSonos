@@ -263,7 +263,8 @@ public partial class App : System.Windows.Application
                 if (!string.IsNullOrEmpty(src))
                     np = $"{np} | src={src}";
                 if (np.Length > 90) np = np[..87] + "...";
-                AppLog.Lifecycle(
+                // INFO only — Lifecycle overwrites last-exit.txt; heartbeats must not masquerade as exits.
+                AppLog.Info(
                     $"Heartbeat uptime={_uptime.Elapsed:hh\\:mm\\:ss} ws={wsMb:F0}MB " +
                     $"groups={_sonos?.Groups.Count ?? 0} mode={mode} mcp={_mcpHost?.IsRunning == true} np={np}");
             }

@@ -55,6 +55,13 @@ public sealed class SonosManager
     private readonly Dictionary<string, string> _productNameByUuid = new(StringComparer.OrdinalIgnoreCase);
 
     private IReadOnlyList<string> _offline = [];
+    /// <summary>
+    /// Rooms this PC cannot control (TCP:1400 / SOAP timeout) even if topology still lists them.
+    /// Merged into <see cref="OfflineSpeakers"/> so UI does not claim "online" for a dead control path.
+    /// </summary>
+    private readonly HashSet<string> _controlPlaneOffline = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _offlineGate = new();
+    private int _npPollFailStreak;
     private bool _topologySeen;
     private int _topUpInFlight; // 0/1
     private int _recoverInFlight; // 0/1
@@ -147,8 +154,26 @@ public sealed class SonosManager
     /// <summary>Raised when a speaker drops off (false) or comes back (true): (roomName, isOnline).</summary>
     public event Action<string, bool>? SpeakerAvailabilityChanged;
 
-    /// <summary>Rooms currently reported as vanished/offline by Sonos.</summary>
-    public IReadOnlyList<string> OfflineSpeakers => _offline;
+    /// <summary>
+    /// Rooms currently offline: Sonos vanished list <b>plus</b> rooms this PC cannot reach on
+    /// TCP:1400 / SOAP (control plane). A room can play audio and still appear offline here
+    /// when the PC cannot open the UPnP control port.
+    /// </summary>
+    public IReadOnlyList<string> OfflineSpeakers
+    {
+        get
+        {
+            lock (_offlineGate)
+            {
+                if (_controlPlaneOffline.Count == 0)
+                    return _offline;
+                var set = new HashSet<string>(_offline, StringComparer.OrdinalIgnoreCase);
+                foreach (var r in _controlPlaneOffline)
+                    set.Add(r);
+                return set.OrderBy(r => r, StringComparer.OrdinalIgnoreCase).ToList();
+            }
+        }
+    }
 
     /// <summary>Number of visible zones in the last topology snapshot.</summary>
     public int GetZoneCount() => _zones.Count;
@@ -312,11 +337,23 @@ public sealed class SonosManager
                 return;
 
             var np = await _controller.GetNowPlayingSnapshotAsync().ConfigureAwait(false);
+            _npPollFailStreak = 0;
+            // Control path recovered — drop control-plane offline flag for active room.
+            if (!string.IsNullOrWhiteSpace(ActiveRoom))
+                ClearControlPlaneOffline(ActiveRoom);
             HandleNowPlayingSnapshot(np);
         }
         catch (Exception ex)
         {
             AppLog.Warn("Now-playing poll failed", ex);
+            _npPollFailStreak++;
+            // Two consecutive 8s timeouts ≈ control plane dead for preferred coordinator.
+            if (_npPollFailStreak >= 2 && !string.IsNullOrWhiteSpace(ActiveRoom))
+            {
+                MarkControlPlaneOffline(
+                    ActiveRoom,
+                    $"now-playing SOAP failed {_npPollFailStreak}x: {ex.GetType().Name}");
+            }
         }
         finally
         {
@@ -1677,6 +1714,8 @@ public sealed class SonosManager
     /// <summary>
     /// Make <paramref name="roomName"/> the whole-house group coordinator, join every other
     /// room to it, re-discover, and <b>verify</b> topology. Throws if verification fails.
+    /// Fail-fast: if this PC cannot open TCP:1400 on the preferred room, does <b>not</b>
+    /// thrash multi-minute join loops against a dead control path.
     /// </summary>
     public async Task<string> SetHouseCoordinatorAsync(string roomName, CancellationToken ct = default)
     {
@@ -1695,10 +1734,23 @@ public sealed class SonosManager
             $"SetHouseCoordinator start → {zone.RoomName} @ {zone.IpAddress} uuid={zone.Uuid} " +
             $"(wasCoordinator={zone.IsCoordinator})");
 
-        // If Theater (etc.) is currently a slave of Office, it must become standalone first
-        // or other rooms cannot join it as coordinator.
-        await BecomeStandaloneCoordinatorAsync(zone, ct).ConfigureAwait(false);
-        await Task.Delay(400, ct).ConfigureAwait(false);
+        // Fail fast: topology may still list Theater while this PC cannot reach it.
+        await EnsureZoneControlReachableAsync(zone, ct).ConfigureAwait(false);
+
+        // Only promote to standalone when this room is NOT already leading.
+        // BecomeCoordinatorOfStandaloneGroup on an active house leader can *detach*
+        // every member — then a stale zone list skips re-joins (joined=0) and the house stays split.
+        if (!zone.IsCoordinator)
+        {
+            await BecomeStandaloneCoordinatorAsync(zone, ct).ConfigureAwait(false);
+            await Task.Delay(200, ct).ConfigureAwait(false);
+            // Topology changed — must re-read who is under whom before join filters.
+            await RefreshAsync(zone.RoomName, ct).ConfigureAwait(false);
+            zone = _zones.FirstOrDefault(z =>
+                string.Equals(z.RoomName, roomName.Trim(), StringComparison.OrdinalIgnoreCase))
+                ?? zone;
+            await EnsureZoneControlReachableAsync(zone, ct).ConfigureAwait(false);
+        }
 
         var join = await RegroupAllToUuidAsync(zone.Uuid, zone.RoomName, ct).ConfigureAwait(false);
 
@@ -1706,7 +1758,7 @@ public sealed class SonosManager
         _controller = new SonosController(zone.IpAddress, zone.Uuid, _soap);
         SubscribeToActiveCoordinator();
 
-        await Task.Delay(500, ct).ConfigureAwait(false);
+        await Task.Delay(300, ct).ConfigureAwait(false);
         await RefreshAsync(zone.RoomName, ct).ConfigureAwait(false);
 
         var verify = VerifyHouseGrouping(zone.Uuid, zone.RoomName);
@@ -1720,7 +1772,8 @@ public sealed class SonosManager
             $"coordIsLeader={verify.CoordinatorIsLeader} ok={verify.Ok}";
 
         if (join.Failed.Count > 0)
-            msg += " · joinFails=[" + string.Join("; ", join.Failed) + "]";
+            msg += " · joinFails=[" + string.Join("; ", join.Failed.Take(6)) +
+                   (join.Failed.Count > 6 ? $"; …+{join.Failed.Count - 6} more" : "") + "]";
 
         if (!verify.Ok)
         {
@@ -1730,6 +1783,7 @@ public sealed class SonosManager
                 " Check Topology map — preferred room must show as COORDINATOR with others under it.");
         }
 
+        ClearControlPlaneOffline(zone.RoomName);
         AppLog.Info("SetHouseCoordinator OK: " + msg);
         return msg;
     }
@@ -1789,6 +1843,15 @@ public sealed class SonosManager
                 [new("InstanceID", "0")], ct).ConfigureAwait(false);
             AppLog.Info($"BecomeCoordinatorOfStandaloneGroup OK: {zone.RoomName} @ {zone.IpAddress}");
         }
+        catch (Exception ex) when (IsHardControlFailure(ex))
+        {
+            // Timeout / unreachable is fatal for regroup — do not continue joining everyone.
+            MarkControlPlaneOffline(zone.RoomName, ex.Message);
+            throw new InvalidOperationException(
+                $"Cannot make {zone.RoomName} (@{zone.IpAddress}) group coordinator — " +
+                $"control path failed: {ex.Message}",
+                ex);
+        }
         catch (Exception ex)
         {
             // Already coordinator → often faults; not always fatal.
@@ -1802,22 +1865,46 @@ public sealed class SonosManager
     {
         var failed = new List<string>();
         var joined = 0;
+        var skipped = 0;
         // Distinct players by UUID (not room — stereo pairs).
-        var targets = _zones
+        // Skip only when zone cache says already under this coordinator (best-effort).
+        var allPlayers = _zones
             .Where(z => !string.IsNullOrWhiteSpace(z.Uuid) && !string.IsNullOrWhiteSpace(z.IpAddress))
             .GroupBy(z => z.Uuid, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .Where(z => !string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
             .ToList();
+        var already = allPlayers
+            .Where(z => string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var targets = allPlayers
+            .Where(z => !string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        // If cache claims everyone is already under the leader but topology has multiple groups,
+        // the cache is stale — re-join everyone.
+        if (targets.Count == 0 && Groups.Count > 1)
+        {
+            AppLog.Warn(
+                $"RegroupAllTo {coordinatorRoom}: zone cache says 0 to join but Groups.Count={Groups.Count} — " +
+                "forcing join of all non-leader players (stale coordinator map).");
+            targets = allPlayers;
+            already = [];
+        }
 
         AppLog.Info(
-            $"RegroupAllTo {coordinatorRoom} ({coordinatorUuid}): joining {targets.Count} player(s)");
+            $"RegroupAllTo {coordinatorRoom} ({coordinatorUuid}): joining {targets.Count} player(s)" +
+            (already.Count > 0 ? $", skip already-under={already.Count}" : ""));
 
+        var consecutiveHardFails = 0;
         foreach (var zone in targets)
         {
-            var ok = false;
+            ct.ThrowIfCancellationRequested();
+
+            // One attempt for hard UPnP faults (1001); single retry only for timeouts.
             Exception? last = null;
-            for (var attempt = 1; attempt <= 3 && !ok; attempt++)
+            var ok = false;
+            for (var attempt = 1; attempt <= 2 && !ok; attempt++)
             {
                 try
                 {
@@ -1830,25 +1917,157 @@ public sealed class SonosManager
                         ], ct).ConfigureAwait(false);
                     ok = true;
                     joined++;
+                    consecutiveHardFails = 0;
                     if (attempt > 1)
                         AppLog.Info($"Join OK attempt {attempt}: {zone.RoomName} → {coordinatorRoom}");
                 }
                 catch (Exception ex)
                 {
                     last = ex;
-                    await Task.Delay(200 * attempt, ct).ConfigureAwait(false);
+                    // UPnP 1001 / client fault will not heal on retry — stop immediately.
+                    if (IsHardUPnPJoinReject(ex) || attempt >= 2)
+                        break;
+                    if (!IsTimeoutFailure(ex))
+                        break;
+                    await Task.Delay(150, ct).ConfigureAwait(false);
                 }
             }
 
             if (!ok)
             {
-                var err = $"{zone.RoomName}@{zone.IpAddress}: {last?.Message ?? "unknown"}";
+                var err = $"{zone.RoomName}@{zone.IpAddress}: {ShortEx(last)}";
                 failed.Add(err);
                 AppLog.Warn($"Join FAILED {coordinatorRoom}: {err}");
+                if (IsHardUPnPJoinReject(last) || IsTimeoutFailure(last))
+                    consecutiveHardFails++;
+                // Abort: house is rejecting joins or coordinator is dead — do not burn minutes.
+                if (consecutiveHardFails >= 3 && joined == 0)
+                {
+                    var idx = targets.IndexOf(zone);
+                    var remaining = Math.Max(0, targets.Count - idx - 1);
+                    AppLog.Warn(
+                        $"RegroupAllTo {coordinatorRoom}: abort after {consecutiveHardFails} consecutive hard failures " +
+                        $"(joined=0). Skipping {remaining} remaining player(s).");
+                    for (var i = idx + 1; i < targets.Count; i++)
+                    {
+                        failed.Add($"{targets[i].RoomName}@{targets[i].IpAddress}: skipped (regroup aborted)");
+                        skipped++;
+                    }
+                    break;
+                }
             }
         }
 
         return (joined, failed);
+    }
+
+    /// <summary>TCP:1400 probe — fail fast before multi-room regroup thrash.</summary>
+    private async Task EnsureZoneControlReachableAsync(SonosZone zone, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(zone.IpAddress))
+            throw new InvalidOperationException($"Room '{zone.RoomName}' has no IP.");
+
+        var open = await TcpPortOpenAsync(zone.IpAddress, 1400, timeoutMs: 1500, ct).ConfigureAwait(false);
+        if (!open)
+        {
+            MarkControlPlaneOffline(zone.RoomName, $"TCP {zone.IpAddress}:1400 not open");
+            throw new InvalidOperationException(
+                $"Room '{zone.RoomName}' is not reachable for control from this PC " +
+                $"(TCP {zone.IpAddress}:1400 failed). " +
+                "It may still play music, but HotSonos cannot regroup through it until " +
+                "this machine can reach that IP on port 1400. Fix LAN/VPN routing or power-cycle the player.");
+        }
+    }
+
+    private void MarkControlPlaneOffline(string room, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(room))
+            return;
+        bool added;
+        lock (_offlineGate)
+            added = _controlPlaneOffline.Add(room.Trim());
+        if (added)
+        {
+            AppLog.Warn($"Control-plane OFFLINE: {room} — {reason}");
+            try { SpeakerAvailabilityChanged?.Invoke(room, false); }
+            catch (Exception ex) { AppLog.Warn($"SpeakerAvailabilityChanged(offline {room}) failed", ex); }
+            try { TopologyChanged?.Invoke(); }
+            catch (Exception ex) { AppLog.Warn("TopologyChanged after control-plane offline failed", ex); }
+        }
+    }
+
+    private void ClearControlPlaneOffline(string room)
+    {
+        if (string.IsNullOrWhiteSpace(room))
+            return;
+        bool removed;
+        lock (_offlineGate)
+            removed = _controlPlaneOffline.Remove(room.Trim());
+        if (removed)
+        {
+            AppLog.Info($"Control-plane ONLINE again: {room}");
+            try { SpeakerAvailabilityChanged?.Invoke(room, true); }
+            catch (Exception ex) { AppLog.Warn($"SpeakerAvailabilityChanged(online {room}) failed", ex); }
+            try { TopologyChanged?.Invoke(); }
+            catch (Exception ex) { AppLog.Warn("TopologyChanged after control-plane online failed", ex); }
+        }
+    }
+
+    private static async Task<bool> TcpPortOpenAsync(string ip, int port, int timeoutMs, CancellationToken ct)
+    {
+        try
+        {
+            using var client = new System.Net.Sockets.TcpClient();
+            using var reg = ct.Register(() => { try { client.Close(); } catch { /* ignore */ } });
+            var connect = client.ConnectAsync(ip, port);
+            var delay = Task.Delay(timeoutMs, ct);
+            var done = await Task.WhenAny(connect, delay).ConfigureAwait(false);
+            if (done != connect)
+                return false;
+            await connect.ConfigureAwait(false);
+            return client.Connected;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsHardControlFailure(Exception ex) =>
+        IsTimeoutFailure(ex) || IsHardUPnPJoinReject(ex)
+        || ex.Message.Contains("actively refused", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("No connection could be made", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTimeoutFailure(Exception? ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is TaskCanceledException or TimeoutException or OperationCanceledException)
+                return true;
+            if (e.Message.Contains("Timeout", StringComparison.OrdinalIgnoreCase)
+                || e.Message.Contains("canceled due to the configured HttpClient.Timeout", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsHardUPnPJoinReject(Exception? ex)
+    {
+        if (ex is null) return false;
+        var m = ex.Message ?? "";
+        // Sonos rejects group join — retries will not help.
+        return m.Contains("errorCode>1001", StringComparison.OrdinalIgnoreCase)
+               || m.Contains("<errorCode>1001</errorCode>", StringComparison.OrdinalIgnoreCase)
+               || m.Contains("errorCode>1001", StringComparison.Ordinal)
+               || (m.Contains("1001", StringComparison.Ordinal) && m.Contains("UPnPError", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ShortEx(Exception? ex)
+    {
+        if (ex is null) return "unknown";
+        var m = ex.Message ?? ex.GetType().Name;
+        if (m.Length > 180) m = m[..177] + "…";
+        return m;
     }
 
     /// <summary>Joins every visible player to the given coordinator UUID (whole-house).</summary>
