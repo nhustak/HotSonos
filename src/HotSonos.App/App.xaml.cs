@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using Microsoft.Win32;
 using HotSonos.App.Infrastructure;
 using HotSonos.App.Library;
 using HotSonos.App.Mcp;
@@ -54,6 +55,11 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Isolation #5: hard-death dumps (ModuleInitializer also runs earlier). Re-assert
+        // so a restarted process without cold-start still has env vars set.
+        CrashDumpBootstrap.Enable();
+        CrashDumpBootstrap.TouchAlive("OnStartup enter");
+
         base.OnStartup(e);
 
         _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var isNew);
@@ -128,9 +134,32 @@ public partial class App : System.Windows.Application
             Left = -32000,
             Top = -32000,
         };
+        // Isolation #6: if something closes the keep-alive window, WPF can tear
+        // down the process. Cancel close unless we are intentionally exiting.
+        _keepAliveWindow.Closing += (_, args) =>
+        {
+            if (_isExiting)
+            {
+                AppLog.Lifecycle("KeepAlive window Closing (expected, isExiting=true)");
+                return;
+            }
+
+            args.Cancel = true;
+            AppLog.Lifecycle(
+                "KeepAlive window Closing CANCELLED (unexpected — process would die). " +
+                "isExiting=false");
+        };
+        _keepAliveWindow.Closed += (_, _) =>
+        {
+            AppLog.Lifecycle($"KeepAlive window Closed isExiting={_isExiting}");
+        };
         _keepAliveWindow.Show();
 
+        // Isolation #4: lifecycle trail + last-action (before overwriting trail with Starting).
+        AppLog.NoteUncleanPriorExitIfAny();
         AppLog.Lifecycle($"Starting {AppVersion.DisplayName} pid={Environment.ProcessId} (args: {string.Join(' ', e.Args)})");
+        AppLog.Lifecycle(CrashDumpBootstrap.Describe());
+        CrashDumpBootstrap.TouchAlive($"Starting {AppVersion.Current}");
 
         // A tray utility must survive stray errors (e.g. flaky album-art loads or
         // event-callback hiccups) rather than vanish. Log + surface instead.
@@ -161,9 +190,14 @@ public partial class App : System.Windows.Application
                 $"ProcessExit uptime={_uptime.Elapsed:hh\\:mm\\:ss} isExiting={_isExiting} " +
                 $"exitCode={Environment.ExitCode}");
         };
+        // Isolation #6: logoff / reboot / user session end (not the same as tray Exit).
+        SystemEvents.SessionEnding += OnSessionEnding;
         Exit += (_, args) =>
         {
-            AppLog.Lifecycle($"WPF Exit Application.ExitCode={args.ApplicationExitCode} isExiting={_isExiting}");
+            try { SystemEvents.SessionEnding -= OnSessionEnding; } catch { /* ignore */ }
+            AppLog.Lifecycle(
+                $"WPF Exit Application.ExitCode={args.ApplicationExitCode} isExiting={_isExiting} " +
+                $"uptime={_uptime.Elapsed:hh\\:mm\\:ss}");
             _heartbeatTimer?.Dispose();
             _heartbeatTimer = null;
             try { _heartbeatUiTimer?.Stop(); } catch { /* ignore */ }
@@ -187,21 +221,29 @@ public partial class App : System.Windows.Application
             _settings.AutoRecoverPlayback = true;
             restoredIsolation = true;
         }
-        if (!_settings.McpEnabled)
-        {
-            _settings.McpEnabled = true;
-            restoredIsolation = true;
-        }
+        // Isolation #3: do NOT force McpEnabled back on — respect settings.json
+        // (in-process Kestrel was on every hard-death; forcing undoes intentional toggles).
         if (restoredIsolation)
-            AppLog.Info("Restored settings that isolation had forced off (flyout / auto-recover / MCP)");
+            AppLog.Info("Restored settings that isolation had forced off (flyout / auto-recover)");
 
         try { _store.Save(_settings); }
         catch (Exception ex) { AppLog.Warn("Settings save after load/normalize failed", ex); }
 
-        // Pre-isolation transport: GENA push (as last week) + SOAP poll as backup.
-        // Do not gut features to "fix" crashes — restarter covers process death.
-        SonosManager.UseGenaSubscriptions = true;
+        // Isolation ladder (crash1): version 1.0.0.59-N where N = last item applied.
+        // #1 GENA forced off (poll-only). Override: HOTSONOS_GENA=1.
+        // #2 MCP ManualHostLifetime + Kestrel limits (see HotSonosMcpHost).
+        // #3 Do not force McpEnabled=true on startup.
+        // #4 AppLog: lifecycle trail, Before/WriteThrough last-action, Heartbeat split.
+        // #5 CrashDumpBootstrap (WER + DOTNET dumps + last-alive).
+        // #6 Keep-alive close-cancel + SessionEnding / extra exit-lifecycle.
+        var forceGena = string.Equals(
+            Environment.GetEnvironmentVariable("HOTSONOS_GENA"), "1", StringComparison.Ordinal);
+        SonosManager.UseGenaSubscriptions = forceGena;
         SonosManager.UseNowPlayingPoll = true;
+        AppLog.Lifecycle(
+            forceGena
+                ? "Transport: GENA+poll (HOTSONOS_GENA=1) — isolation #1 overridden"
+                : "Transport: POLL-ONLY — #1–#6 (1.0.0.59-6)");
         _sonos = new SonosManager(() => _settings);
         _sonos.NowPlayingChanged += OnNowPlayingChanged;
         _sonos.TopologyChanged += OnTopologyChanged;
@@ -263,9 +305,15 @@ public partial class App : System.Windows.Application
                 if (!string.IsNullOrEmpty(src))
                     np = $"{np} | src={src}";
                 if (np.Length > 90) np = np[..87] + "...";
-                AppLog.Lifecycle(
+                // Isolation #4: heartbeat is log/ring only — never lifecycle trail.
+                AppLog.Heartbeat(
                     $"Heartbeat uptime={_uptime.Elapsed:hh\\:mm\\:ss} ws={wsMb:F0}MB " +
                     $"groups={_sonos?.Groups.Count ?? 0} mode={mode} mcp={_mcpHost?.IsRunning == true} np={np}");
+                // Isolation #5: tiny last-alive pulse (survives hard death without ProcessExit).
+                CrashDumpBootstrap.TouchAlive(
+                    $"heartbeat up={_uptime.Elapsed:hh\\:mm\\:ss} groups={_sonos?.Groups.Count ?? 0}");
+                AppLog.Before(
+                    $"idle/heartbeat up={_uptime.Elapsed:hh\\:mm\\:ss} mcp={_mcpHost?.IsRunning == true}");
             }
             catch (Exception ex)
             {
@@ -346,6 +394,7 @@ public partial class App : System.Windows.Application
         {
             AppLog.Error("Fatal startup failure", ex);
             AppLog.Lifecycle($"Fatal startup failure: {ex.GetType().Name}: {ex.Message}");
+            CrashDumpBootstrap.TouchAlive($"fatal startup: {ex.GetType().Name}");
             try
             {
                 System.Windows.MessageBox.Show(
@@ -628,10 +677,13 @@ public partial class App : System.Windows.Application
             AppLog.Info(
                 $"Startup sequence complete (GENA={SonosManager.UseGenaSubscriptions}, " +
                 $"poll={SonosManager.UseNowPlayingPoll}, mcp={_settings.McpEnabled})");
+            CrashDumpBootstrap.TouchAlive(
+                $"startup complete groups={_sonos.Groups.Count} mcp={_mcpHost?.IsRunning == true}");
         }
         catch (Exception ex)
         {
             AppLog.Error("Startup sequence failed", ex);
+            CrashDumpBootstrap.TouchAlive($"startup FAILED: {ex.GetType().Name}");
             _startupReady = true;
         }
     }
@@ -1467,8 +1519,18 @@ public partial class App : System.Windows.Application
         Shutdown();
     }
 
+    private void OnSessionEnding(object sender, SessionEndingEventArgs e)
+    {
+        AppLog.Lifecycle(
+            $"Windows SessionEnding reason={e.Reason} cancel={e.Cancel} " +
+            $"uptime={_uptime.Elapsed:hh\\:mm\\:ss} isExiting={_isExiting}");
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
+        AppLog.Lifecycle(
+            $"OnExit exitCode={e.ApplicationExitCode} isExiting={_isExiting} " +
+            $"uptime={_uptime.Elapsed:hh\\:mm\\:ss}");
         _singleInstanceMutex?.Dispose();
         base.OnExit(e);
     }

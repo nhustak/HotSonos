@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 
@@ -11,12 +12,13 @@ namespace HotSonos.App.Mcp;
 
 /// <summary>
 /// Hosts the loopback HTTP MCP endpoint inside the tray process
-/// (http://127.0.0.1:{port}/mcp). Same pattern as HotSSC / SmartInspect.
+/// (http://127.0.0.1:{port}/mcp). Isolation item #2: <see cref="ManualHostLifetime"/>,
+/// HostOptions ignore background faults, Kestrel connection limits.
 /// </summary>
 public sealed class HotSonosMcpHost : IAsyncDisposable
 {
     private WebApplication? _app;
-    private CancellationTokenSource? _cts;
+    private ManualHostLifetime? _lifetime;
     private Task? _runTask;
 
     public string? Endpoint { get; private set; }
@@ -38,10 +40,27 @@ public sealed class HotSonosMcpHost : IAsyncDisposable
         });
 
         builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+        builder.WebHost.ConfigureKestrel(k =>
+        {
+            k.Limits.MaxConcurrentConnections = 40;
+            k.Limits.MaxRequestBodySize = 2 * 1024 * 1024;
+            k.AddServerHeader = false;
+        });
         builder.Logging.ClearProviders();
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
         // Route /mcp vs /mcp/ was matching two endpoints → AmbiguousMatchException on GET probes.
         builder.Services.Configure<RouteOptions>(o => o.AppendTrailingSlash = false);
+
+        // Background MCP service faults must not stop the host (or the tray).
+        builder.Services.Configure<HostOptions>(o =>
+        {
+            o.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+            o.ShutdownTimeout = TimeSpan.FromSeconds(2);
+        });
+
+        // IHostLifetime only — never replace IHostApplicationLifetime (.NET 10 throws).
+        _lifetime = new ManualHostLifetime();
+        builder.Services.AddSingleton<IHostLifetime>(_lifetime);
 
         builder.Services.AddSingleton(state);
         builder.Services
@@ -49,7 +68,16 @@ public sealed class HotSonosMcpHost : IAsyncDisposable
             .WithHttpTransport()
             .WithTools<HotSonosDebugTools>();
 
-        _app = builder.Build();
+        try
+        {
+            _app = builder.Build();
+        }
+        catch (Exception ex)
+        {
+            _lifetime = null;
+            AppLog.Error($"MCP host Build() failed on port {port}", ex);
+            throw;
+        }
 
         // Never let a single bad MCP request take down the host (or the tray app).
         _app.Use(async (ctx, next) =>
@@ -73,33 +101,41 @@ public sealed class HotSonosMcpHost : IAsyncDisposable
         _app.MapMcp("/mcp");
 
         _runTask = _app.RunAsync();
-        // Surface host-level failures (bind error, fatal) — do not let them vanish.
         _ = _runTask.ContinueWith(
             t =>
             {
                 state.IsRunning = false;
                 if (t.IsFaulted)
+                {
                     AppLog.Error("MCP host run task faulted", t.Exception?.GetBaseException());
+                    AppLog.Lifecycle(
+                        $"MCP run faulted: {t.Exception?.GetBaseException()?.GetType().Name}: " +
+                        $"{t.Exception?.GetBaseException()?.Message}");
+                }
                 else if (t.IsCanceled)
                     AppLog.Info("MCP host run task canceled");
                 else
-                    AppLog.Info("MCP host run task completed");
+                    AppLog.Info("MCP host run task completed (tray should keep running)");
             },
             TaskScheduler.Default);
 
         state.IsRunning = true;
 
         // Brief yield so bind failures surface before we claim success.
-        await Task.Delay(150, ct).ConfigureAwait(false);
+        await Task.Delay(200, ct).ConfigureAwait(false);
         if (_runTask.IsFaulted)
         {
             state.IsRunning = false;
-            var ex = _runTask.Exception?.GetBaseException() ?? new InvalidOperationException("MCP host failed to start.");
+            var ex = _runTask.Exception?.GetBaseException()
+                     ?? new InvalidOperationException("MCP host failed to start.");
             AppLog.Error($"MCP host failed on port {port}", ex);
+            AppLog.Lifecycle($"MCP start FAILED: {ex.GetType().Name}: {ex.Message}");
+            try { await StopAsync().ConfigureAwait(false); } catch { /* ignore */ }
             throw ex;
         }
 
-        AppLog.Info($"MCP listening at {Endpoint}");
+        AppLog.Info($"MCP listening at {Endpoint} (ManualHostLifetime / isolation #2)");
+        AppLog.Lifecycle($"MCP listening {Endpoint} (isolation #2)");
     }
 
     public async Task StopAsync()
@@ -116,6 +152,7 @@ public sealed class HotSonosMcpHost : IAsyncDisposable
                 catch (OperationCanceledException) { }
                 catch (Exception ex) { AppLog.Warn("MCP host run ended with error", ex); }
             }
+
             await _app.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -126,8 +163,7 @@ public sealed class HotSonosMcpHost : IAsyncDisposable
         {
             _app = null;
             _runTask = null;
-            _cts?.Dispose();
-            _cts = null;
+            _lifetime = null;
             Endpoint = null;
         }
     }

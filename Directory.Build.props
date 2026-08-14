@@ -7,9 +7,11 @@
     -p:Version=x.y.z, so the app exe and the MSI always carry the same version.
   -->
   <PropertyGroup>
-    <Version>1.0.0.59</Version>
-    <AssemblyVersion>$(Version)</AssemblyVersion>
-    <FileVersion>$(Version)</FileVersion>
+    <!-- Isolation ladder on crash1: 1.0.0.59-#  (# = last isolation item applied). -->
+    <Version>1.0.0.59-6</Version>
+    <!-- Assembly/FileVersion must be 4 numeric parts; map 59-N → 1.0.59.N -->
+    <AssemblyVersion>1.0.59.6</AssemblyVersion>
+    <FileVersion>1.0.59.6</FileVersion>
     <!-- Keep InformationalVersion exactly equal to $(Version) (no +commit suffix),
          since the app displays it. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>

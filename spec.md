@@ -11,6 +11,31 @@
 
 > Update this section **in the same task** whenever library-plan or MCP work advances. This is the resume point after context compression.
 
+### Crash isolation (`crash1`) — 2026-08-14
+
+Numbered re-land of `stable/aug5-topology` commit `f6a3148` (1.0.0.70) onto hours-stable `.59` (`8543e20`). Version = `1.0.0.59-N` / Assembly `1.0.59.N`.
+
+| # | Version | Item | Status |
+|---|---------|------|--------|
+| **1** | `1.0.0.59-1` | GENA forced off (poll-only; `HOTSONOS_GENA=1` re-enables) | **DONE** (overnight OK) |
+| **2** | `1.0.0.59-2` | MCP `ManualHostLifetime` + Kestrel limits | **DONE** (overnight OK) |
+| **3** | `1.0.0.59-3` | Do not force `McpEnabled=true` on startup | **DONE** (overnight OK) |
+| **4** | `1.0.0.59-4` | AppLog lifecycle / `Before` last-action / heartbeat split | **DONE** (overnight OK) |
+| **5** | `1.0.0.59-5` | CrashDumpBootstrap + `last-alive` | **DONE** — pid 29536 up ~24h (started 2026-08-13 08:56) |
+| **6** | `1.0.0.59-6` | Keep-alive close-cancel + SessionEnding / extra exit-lifecycle | **RAD** — pid 51856 started 2026-08-14 08:50; MCP up; soak overnight |
+| **7** | `1.0.0.59-7` | Poll 5s→10s + poll breadcrumbs | Pending |
+| **8** | `1.0.0.59-8` | SSDP serialize send/recv | Pending |
+| **9** | `1.0.0.59-9` | Full ChannelMapSet on members | Pending |
+| **10** | `1.0.0.59-10` | SubGain | Pending |
+| **11** | `1.0.0.59-11` | Safer regroup | Pending |
+| **12** | `1.0.0.59-12` | Rebuild-bond | Pending |
+| **13** | `1.0.0.59-13` | MainWindow topology UI | Pending |
+| **14** | `1.0.0.59-14` | MCP tools expansion | Pending |
+| **15** | `1.0.0.59-15` | Flyout art log extras | Pending |
+| **16** | `1.0.0.59-16` | GENA renew Trace-only | Pending |
+
+Master `1.0.0.60` / `1.0.0.61` (stale-queue reshuffle, fail-fast regroup) stay **off** this ladder until `.70` items are isolated.
+
 ### Snapshot (2026-07-28)
 
 | Item | State |
