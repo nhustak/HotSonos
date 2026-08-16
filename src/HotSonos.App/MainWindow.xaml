@@ -739,13 +739,22 @@
                         </StackPanel>
                     </Expander>
 
-                    <!-- Label + field + actions grouped left — buttons stay by the box, not window-right -->
+                    <!-- From scope (same tokens as Control shuffle) + search — buttons stay by the box -->
                     <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="From" FontWeight="SemiBold" FontSize="13"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"
+                                   ToolTip="Restrict results to the same sources as Control → From (All / folder / tag / genre)" />
+                        <ComboBox x:Name="LibrarySearchScopeCombo" Height="30" Width="200" MinWidth="150"
+                                  Margin="0,0,12,0" VerticalContentAlignment="Center"
+                                  DisplayMemberPath="Display"
+                                  SelectedValuePath="Token"
+                                  ToolTip="Same list as Control → Shuffle → From. All · Daily mix = only Daily-checked folders (Library tab checkboxes), not every scanned root."
+                                  SelectionChanged="LibrarySearchScopeCombo_SelectionChanged" />
                         <TextBlock Text="Search" FontWeight="SemiBold" FontSize="13"
                                    VerticalAlignment="Center" Margin="0,0,10,0" />
-                        <TextBox x:Name="LibrarySearchBox" Height="30" MinWidth="280" Width="420" Padding="8,4"
+                        <TextBox x:Name="LibrarySearchBox" Height="30" MinWidth="220" Width="320" Padding="8,4"
                                  VerticalContentAlignment="Center"
-                                 ToolTip="Search all fields, or restrict: T:title · A:artist · TG:tag · F:format (one prefix at a time)"
+                                 ToolTip="Search all fields, or restrict: T:title · A:artist · TG:tag · F:format (one prefix at a time). Combined with From."
                                  KeyDown="LibrarySearchBox_KeyDown" />
                         <Button Content="Go" Height="30" Padding="16,0" Margin="8,0,0,0"
                                 Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
@@ -850,7 +859,7 @@
                                     ToolTip="Permanently delete selected files from the Sonos library share (and master twin when linked). Not a hotkey." />
                         </StackPanel>
                         <TextBlock x:Name="LibraryResultsMetaText" Foreground="#FF60707F" FontSize="11"
-                                   Text="Search: free text, or T:title · A:artist · TG:tag · F:flac (one prefix). Tags chips toggle on selection." />
+                                   Text="From scopes Search/Browse (same list as Control shuffle). Free text or T:title · A:artist · TG:tag · F:flac. Tag chips toggle on selection." />
                         <TextBox x:Name="LibraryMcpResultBox" MinHeight="56" MaxHeight="120" Margin="0,6,0,0"
                                  IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                                  FontFamily="Consolas" FontSize="11" Background="#FF1C2536" Foreground="#FFE8EEF4"

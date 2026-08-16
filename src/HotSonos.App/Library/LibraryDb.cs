@@ -395,88 +395,101 @@ public sealed class LibraryDb : IDisposable
     /// For <see cref="LibrarySearchField.Tags"/>, pass resolved catalog keys in <paramref name="tagKeys"/>
     /// (query text is ignored); track must have <b>all</b> listed keys.
     /// </param>
+    /// <param name="pathPrefixes">
+    /// Optional folder scope(s) (UNC). Track path must sit under at least one prefix
+    /// (Daily mix may pass several roots).
+    /// </param>
+    /// <param name="genreLabel">Optional genre scope; whole genre label match (case-insensitive).</param>
     public IReadOnlyList<LibraryTrack> Search(
         string? query,
         int limit,
         int offset,
         bool sonosUnplayableOnly = false,
         LibrarySearchField field = LibrarySearchField.All,
-        IReadOnlyList<string>? tagKeys = null)
+        IReadOnlyList<string>? tagKeys = null,
+        IReadOnlyList<string>? pathPrefixes = null,
+        string? genreLabel = null)
     {
         limit = Math.Clamp(limit, 1, 200);
         offset = Math.Max(0, offset);
         var q = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+        var folders = NormalizePathPrefixes(pathPrefixes);
+        var genre = (genreLabel ?? "").Trim();
+        var needsGenreExact = genre.Length > 0;
 
         lock (_gate)
         {
             EnsureOpen();
             using var cmd = _conn!.CreateCommand();
-            var playFilter = sonosUnplayableOnly ? "sonos_playable = 0" : "1=1";
+            var parts = new List<string>
+            {
+                sonosUnplayableOnly ? "sonos_playable = 0" : "1=1",
+            };
+
+            if (folders.Count > 0)
+            {
+                var or = new List<string>(folders.Count);
+                for (var i = 0; i < folders.Count; i++)
+                {
+                    // Path-under-root. LIKE uses ESCAPE '\': a trailing "\%" would mean
+                    // literal % (no matches). Use "\\%" → one path separator + wildcard.
+                    or.Add(
+                        $"""
+                        (path = $scopePath{i} COLLATE NOCASE
+                         OR lower(path) LIKE lower($scopePath{i}Slash) ESCAPE '\'
+                         OR lower(path) LIKE lower($scopePath{i}SlashFwd) ESCAPE '\')
+                        """);
+                    cmd.Parameters.AddWithValue($"$scopePath{i}", folders[i]);
+                    cmd.Parameters.AddWithValue($"$scopePath{i}Slash", PathPrefixLikeBackslash(folders[i]));
+                    cmd.Parameters.AddWithValue($"$scopePath{i}SlashFwd", PathPrefixLikeForward(folders[i]));
+                }
+
+                parts.Add("(" + string.Join(" OR ", or) + ")");
+            }
+
+            if (needsGenreExact)
+            {
+                parts.Add("genre IS NOT NULL AND genre LIKE $scopeGenre ESCAPE '\\'");
+                cmd.Parameters.AddWithValue("$scopeGenre", "%" + EscapeLike(genre) + "%");
+            }
+
+            var keys = (tagKeys ?? [])
+                .Where(k => !string.IsNullOrWhiteSpace(k))
+                .Select(k => k.Trim().ToLowerInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             if (field == LibrarySearchField.Tags)
             {
-                var keys = (tagKeys ?? [])
-                    .Where(k => !string.IsNullOrWhiteSpace(k))
-                    .Select(k => k.Trim().ToLowerInvariant())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
                 if (keys.Count == 0)
                     return [];
 
-                // Prefilter: every key must appear in custom_tags JSON; refine with HasTagKey in memory.
-                var parts = new List<string> { playFilter };
                 for (var i = 0; i < keys.Count; i++)
                 {
                     parts.Add($"custom_tags LIKE $tk{i} ESCAPE '\\'");
                     cmd.Parameters.AddWithValue($"$tk{i}", "%" + EscapeLike(keys[i]) + "%");
                 }
-
-                cmd.CommandText =
-                    $"""
-                    SELECT {SelectTrackCols}
-                    FROM tracks
-                    WHERE {string.Join(" AND ", parts)}
-                    ORDER BY artist, album, track_number, title
-                    LIMIT $lim OFFSET $off;
-                    """;
-                cmd.Parameters.AddWithValue("$lim", limit);
-                cmd.Parameters.AddWithValue("$off", offset);
-
-                var list = new List<LibraryTrack>();
-                using var reader = cmd.ExecuteReader();
-                while (reader.Read())
-                {
-                    var t = ReadTrack(reader);
-                    if (keys.All(t.HasTagKey))
-                        list.Add(t);
-                }
-
-                return list;
             }
-
-            if (q is null && field == LibrarySearchField.All)
+            else if (keys.Count > 0)
             {
-                cmd.CommandText =
-                    $"""
-                    SELECT {SelectTrackCols}
-                    FROM tracks
-                    WHERE {playFilter}
-                    ORDER BY artist, album, track_number, title
-                    LIMIT $lim OFFSET $off;
-                    """;
+                // Scope tag (From = Tag · …) while free-text / field search still applies.
+                for (var i = 0; i < keys.Count; i++)
+                {
+                    parts.Add($"custom_tags LIKE $tk{i} ESCAPE '\\'");
+                    cmd.Parameters.AddWithValue($"$tk{i}", "%" + EscapeLike(keys[i]) + "%");
+                }
             }
-            else if (q is null)
+            else if (q is null && field != LibrarySearchField.All)
             {
                 // Prefixed search with empty term (e.g. "T:") → no matches.
                 return [];
             }
-            else
+            else if (q is not null)
             {
                 var columnFilter = field switch
                 {
                     LibrarySearchField.Title => "title LIKE $q ESCAPE '\\'",
                     LibrarySearchField.Artist => "artist LIKE $q ESCAPE '\\'",
-                    // codec description and path extension (e.g. flac, mp3, 24-bit if present in codec)
                     LibrarySearchField.Format =>
                         "(codec LIKE $q ESCAPE '\\' OR path LIKE $q ESCAPE '\\')",
                     _ =>
@@ -491,37 +504,73 @@ public sealed class LibraryDb : IDisposable
                          OR path LIKE $q ESCAPE '\')
                         """,
                 };
-
-                cmd.CommandText =
-                    $"""
-                    SELECT {SelectTrackCols}
-                    FROM tracks
-                    WHERE {playFilter}
-                      AND {columnFilter}
-                    ORDER BY artist, album, track_number, title
-                    LIMIT $lim OFFSET $off;
-                    """;
+                parts.Add(columnFilter);
                 cmd.Parameters.AddWithValue("$q", $"%{EscapeLike(q)}%");
             }
 
-            cmd.Parameters.AddWithValue("$lim", limit);
-            cmd.Parameters.AddWithValue("$off", offset);
+            // When genre/tag need exact in-memory refine, over-fetch then page in memory.
+            var refineInMemory = needsGenreExact || keys.Count > 0;
+            var fetchLimit = refineInMemory
+                ? Math.Min(5000, Math.Max(limit + offset, limit) * 20)
+                : limit;
+            var fetchOffset = refineInMemory ? 0 : offset;
 
-            var listAll = new List<LibraryTrack>();
-            using (var reader = cmd.ExecuteReader())
+            cmd.CommandText =
+                $"""
+                SELECT {SelectTrackCols}
+                FROM tracks
+                WHERE {string.Join(" AND ", parts)}
+                ORDER BY artist, album, track_number, title
+                LIMIT $lim OFFSET $off;
+                """;
+            cmd.Parameters.AddWithValue("$lim", fetchLimit);
+            cmd.Parameters.AddWithValue("$off", fetchOffset);
+
+            var list = new List<LibraryTrack>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
             {
-                while (reader.Read())
-                    listAll.Add(ReadTrack(reader));
+                var t = ReadTrack(reader);
+                if (keys.Count > 0 && !keys.All(t.HasTagKey))
+                    continue;
+                if (needsGenreExact && !TrackHasGenreLabel(t.Genre, genre))
+                    continue;
+                list.Add(t);
             }
 
-            return listAll;
+            if (!refineInMemory)
+                return list;
+
+            return list.Skip(offset).Take(limit).ToList();
         }
+    }
+
+    /// <summary>Normalize UNC/local folder prefixes for path-under-root matching.</summary>
+    private static List<string> NormalizePathPrefixes(IReadOnlyList<string>? pathPrefixes)
+    {
+        if (pathPrefixes is null || pathPrefixes.Count == 0)
+            return [];
+
+        var list = new List<string>();
+        foreach (var raw in pathPrefixes)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            // Keep backslashes for UNC; also accept forward-slash forms.
+            var p = raw.Trim().Replace('/', '\\').TrimEnd('\\');
+            if (p.Length == 0)
+                continue;
+            if (!list.Any(x => string.Equals(x, p, StringComparison.OrdinalIgnoreCase)))
+                list.Add(p);
+        }
+
+        return list;
     }
 
     /// <summary>Tracks whose path is under <paramref name="folderPrefix"/> (UNC/local).</summary>
     public IReadOnlyList<LibraryTrack> FindTracksUnderPath(string folderPrefix, bool sonosPlayableOnly = true)
     {
-        folderPrefix = (folderPrefix ?? "").Trim().TrimEnd('\\', '/');
+        folderPrefix = (folderPrefix ?? "").Trim().Replace('/', '\\').TrimEnd('\\');
         if (folderPrefix.Length == 0)
             return [];
 
@@ -535,14 +584,14 @@ public sealed class LibraryDb : IDisposable
                 SELECT {SelectTrackCols}
                 FROM tracks
                 WHERE (path = $p COLLATE NOCASE
-                       OR path LIKE $pSlash ESCAPE '\'
-                       OR path LIKE $pSlashFwd ESCAPE '\')
+                       OR lower(path) LIKE lower($pSlash) ESCAPE '\'
+                       OR lower(path) LIKE lower($pSlashFwd) ESCAPE '\')
                   {(sonosPlayableOnly ? "AND sonos_playable = 1" : "")}
                 ORDER BY artist, album, track_number, title;
                 """;
             cmd.Parameters.AddWithValue("$p", folderPrefix);
-            cmd.Parameters.AddWithValue("$pSlash", EscapeLike(folderPrefix) + "\\%");
-            cmd.Parameters.AddWithValue("$pSlashFwd", EscapeLike(folderPrefix) + "/%");
+            cmd.Parameters.AddWithValue("$pSlash", PathPrefixLikeBackslash(folderPrefix));
+            cmd.Parameters.AddWithValue("$pSlashFwd", PathPrefixLikeForward(folderPrefix));
 
             var list = new List<LibraryTrack>();
             using var reader = cmd.ExecuteReader();
@@ -899,6 +948,18 @@ public sealed class LibraryDb : IDisposable
         value.Replace("\\", "\\\\", StringComparison.Ordinal)
              .Replace("%", "\\%", StringComparison.Ordinal)
              .Replace("_", "\\_", StringComparison.Ordinal);
+
+    /// <summary>
+    /// LIKE pattern for "path under folder\" with ESCAPE '\'.
+    /// Must end with <c>\\%</c> (escaped backslash + wildcard), not <c>\%</c>
+    /// (which is a literal percent and matches nothing useful).
+    /// </summary>
+    private static string PathPrefixLikeBackslash(string folderPrefix) =>
+        EscapeLike(folderPrefix) + "\\\\%";
+
+    /// <summary>LIKE pattern for "path under folder/" with ESCAPE '\'.</summary>
+    private static string PathPrefixLikeForward(string folderPrefix) =>
+        EscapeLike(folderPrefix) + "/%";
 
     private void EnsureOpen()
     {

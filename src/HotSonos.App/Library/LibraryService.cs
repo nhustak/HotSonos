@@ -225,20 +225,101 @@ public sealed class LibraryService : IDisposable
     public int CountTracksUnderFolder(string folderPath) =>
         GetTracksUnderFolder(folderPath).Count;
 
-    public IReadOnlyList<LibraryTrack> Search(string? query, int limit = 25, int offset = 0, bool sonosUnplayableOnly = false)
+    /// <param name="scopeToken">
+    /// Same tokens as Control shuffle From: <c>all</c> (Daily mix folders), <c>folder:…</c>,
+    /// <c>tag:…</c>, or <c>genre:…</c>. Restricts search/browse without changing free-text query.
+    /// </param>
+    public IReadOnlyList<LibraryTrack> Search(
+        string? query,
+        int limit = 25,
+        int offset = 0,
+        bool sonosUnplayableOnly = false,
+        string? scopeToken = null)
     {
+        var s = _settings().EnsureShape();
+        ParseSearchScope(scopeToken, s, out var pathPrefixes, out var scopeTagKey, out var genreLabel);
+
         var (field, term) = LibrarySearchQuery.Parse(query);
+        List<string>? keys = null;
+
         if (field == LibrarySearchField.Tags)
         {
-            var s = _settings().EnsureShape();
-            var keys = s.NormalizeTagKeys(LibrarySearchQuery.SplitTagList(term));
+            keys = s.NormalizeTagKeys(LibrarySearchQuery.SplitTagList(term)).ToList();
             // Unknown tag names → empty result (don't fall back to free-text).
             if (keys.Count == 0 && !string.IsNullOrWhiteSpace(term))
                 return [];
-            return _db.Search(null, limit, offset, sonosUnplayableOnly, LibrarySearchField.Tags, keys);
         }
 
-        return _db.Search(term, limit, offset, sonosUnplayableOnly, field);
+        if (!string.IsNullOrWhiteSpace(scopeTagKey))
+        {
+            keys ??= [];
+            if (!keys.Contains(scopeTagKey, StringComparer.OrdinalIgnoreCase))
+                keys.Add(scopeTagKey);
+        }
+
+        if (field == LibrarySearchField.Tags || keys is { Count: > 0 })
+        {
+            if (keys is null || keys.Count == 0)
+                return [];
+            // Tag field search ignores free-text term; scope folder/genre still apply.
+            var tagField = field == LibrarySearchField.Tags ? LibrarySearchField.Tags : LibrarySearchField.All;
+            var text = field == LibrarySearchField.Tags ? null : term;
+            // When only scope-tag (no TG: and no free text), use Tags field path for key-only match.
+            if (field != LibrarySearchField.Tags && string.IsNullOrWhiteSpace(term) && keys.Count > 0)
+                tagField = LibrarySearchField.Tags;
+            return _db.Search(text, limit, offset, sonosUnplayableOnly, tagField, keys, pathPrefixes, genreLabel);
+        }
+
+        return _db.Search(term, limit, offset, sonosUnplayableOnly, field, null, pathPrefixes, genreLabel);
+    }
+
+    /// <summary>
+    /// Parse Control/Library From token into folder / tag / genre scope.
+    /// <c>all</c> → Daily mix folders only (same pool as house shuffle), not every scanned path.
+    /// </summary>
+    public static void ParseSearchScope(
+        string? scopeToken,
+        AppSettings settings,
+        out IReadOnlyList<string>? pathPrefixes,
+        out string? tagKey,
+        out string? genreLabel)
+    {
+        pathPrefixes = null;
+        tagKey = null;
+        genreLabel = null;
+        var token = (scopeToken ?? "").Trim();
+        var s = settings.EnsureShape();
+
+        if (token.Length == 0
+            || string.Equals(token, AppSettings.ControlShuffleAll, StringComparison.OrdinalIgnoreCase))
+        {
+            // Match Control “All · Daily mix”: only Daily-checked roots (e.g. …\Sonos),
+            // not Jazz / Marie / other scanned folders left in the cache.
+            var daily = s.GetEffectiveDailyLibraryRoots();
+            pathPrefixes = daily.Count > 0 ? daily : null;
+            return;
+        }
+
+        if (AppSettings.TryParseFolderShuffleToken(token, out var folder))
+        {
+            pathPrefixes = [folder];
+            return;
+        }
+
+        if (token.StartsWith(AppSettings.ControlShuffleTagPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var key = token[AppSettings.ControlShuffleTagPrefix.Length..].Trim();
+            if (key.Length > 0)
+                tagKey = key;
+            return;
+        }
+
+        if (token.StartsWith(AppSettings.ControlShuffleGenrePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var g = token[AppSettings.ControlShuffleGenrePrefix.Length..].Trim();
+            if (g.Length > 0)
+                genreLabel = g;
+        }
     }
 
     public LibraryTrack? GetTrack(string path) => _db.GetByPath(path);

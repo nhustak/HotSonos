@@ -309,6 +309,7 @@ public partial class MainWindow : Window
         _ = LoadFavoritesAsync();
         _ = LoadSpeakerVolumesAsync();
         RefreshControlShuffleSourceCombo();
+        RefreshLibrarySearchScopeCombo();
         RefreshControlDailySpeakersUi();
         RefreshControlPlayList();
         // Seed from live cache (poll/GENA already running). Null only if truly unknown.
@@ -1804,7 +1805,10 @@ public partial class MainWindow : Window
         else if (MainTabs.SelectedItem == TopologyTab)
             RefreshTopologyUi(scrollToEnd: false);
         else if (MainTabs.SelectedItem == LibraryTab)
+        {
             RefreshLibraryStatusUi();
+            RefreshLibrarySearchScopeCombo();
+        }
         else if (MainTabs.SelectedItem == TagsTab)
             RefreshTagsCatalogGrid();
         else if (MainTabs.SelectedItem == ControlTab)
@@ -2441,11 +2445,15 @@ public partial class MainWindow : Window
 
         var q = browse || string.IsNullOrWhiteSpace(query) ? null : query.Trim();
         var unplayableOnly = LibraryUnplayableOnlyCheck.IsChecked == true;
-        var tracks = _library.Search(q, limit: 100, offset: 0, sonosUnplayableOnly: unplayableOnly);
+        var scopeToken = ResolveLibrarySearchScopeToken();
+        var tracks = _library.Search(q, limit: 100, offset: 0, sonosUnplayableOnly: unplayableOnly, scopeToken: scopeToken);
         _libraryRows = new ObservableCollection<LibraryResultRow>(tracks.Select(ToLibraryResultRow));
         LibraryResultsGrid.ItemsSource = _libraryRows;
         var st = _library.GetStatus();
         var filter = unplayableOnly ? " [Sonos-unplayable only]" : "";
+        var scopeLabel = LibrarySearchScopeCombo?.SelectedItem is ControlShufflePick p
+            ? $" · From {p.Display}"
+            : $" · From {scopeToken}";
         var (field, _) = LibrarySearchQuery.Parse(q);
         var mode = field switch
         {
@@ -2456,8 +2464,8 @@ public partial class MainWindow : Window
             _ => "",
         };
         LibraryResultsMetaText.Text = q is null
-            ? $"Browse{filter}: {tracks.Count} shown · cache {st.TrackCount} · unplayable {st.SonosUnplayableCount}."
-            : $"Search “{q}”{mode}{filter}: {tracks.Count} hit(s) · cache {st.TrackCount} · unplayable {st.SonosUnplayableCount}.";
+            ? $"Browse{filter}{scopeLabel}: {tracks.Count} shown · cache {st.TrackCount} · unplayable {st.SonosUnplayableCount}."
+            : $"Search “{q}”{mode}{filter}{scopeLabel}: {tracks.Count} hit(s) · cache {st.TrackCount} · unplayable {st.SonosUnplayableCount}.";
         LibraryMcpResultBox.Visibility = Visibility.Collapsed;
         SetStatus(LibraryResultsMetaText.Text, warn: false);
         SyncLibraryPresetButtonsFromSelection();
@@ -3938,6 +3946,7 @@ public partial class MainWindow : Window
     }
 
     private bool _suppressControlShufflePick;
+    private bool _suppressLibrarySearchScopePick;
     private bool _suppressDailySpeakerUi;
 
     /// <summary>Control tab: All speakers checkbox + expandable per-room list for Daily group.</summary>
@@ -4149,19 +4158,42 @@ public partial class MainWindow : Window
         if (ControlShuffleSourceCombo is null)
             return;
 
-        _suppressControlShufflePick = true;
+        var want = (_settings.ControlShuffleSource ?? AppSettings.ControlShuffleAll).Trim();
+        FillShuffleSourceCombo(ControlShuffleSourceCombo, want, ref _suppressControlShufflePick);
+    }
+
+    private void RefreshLibrarySearchScopeCombo()
+    {
+        if (LibrarySearchScopeCombo is null)
+            return;
+
+        // Keep prior Library selection when refreshing list; default All.
+        var want = LibrarySearchScopeCombo.SelectedItem is ControlShufflePick cur
+            ? cur.Token
+            : AppSettings.ControlShuffleAll;
+        FillShuffleSourceCombo(LibrarySearchScopeCombo, want, ref _suppressLibrarySearchScopePick);
+    }
+
+    /// <summary>
+    /// Shared All / folder / tag / genre list used by Control shuffle From and Library search From.
+    /// </summary>
+    private void FillShuffleSourceCombo(ComboBox combo, string wantToken, ref bool suppressFlag)
+    {
+        suppressFlag = true;
         try
         {
-            var want = (_settings.ControlShuffleSource ?? AppSettings.ControlShuffleAll).Trim();
-            ControlShuffleSourceCombo.Items.Clear();
-            ControlShuffleSourceCombo.Items.Add(new ControlShufflePick("All · Daily mix", AppSettings.ControlShuffleAll));
+            var want = string.IsNullOrWhiteSpace(wantToken)
+                ? AppSettings.ControlShuffleAll
+                : wantToken.Trim();
+            combo.Items.Clear();
+            combo.Items.Add(new ControlShufflePick("All · Daily mix", AppSettings.ControlShuffleAll));
 
             foreach (var folder in _settings.EnsureShape().SonosLibraryRoots)
             {
                 var name = System.IO.Path.GetFileName(folder.TrimEnd('\\', '/'));
                 if (string.IsNullOrWhiteSpace(name)) name = folder;
                 var count = _library?.CountTracksUnderFolder(folder) ?? 0;
-                ControlShuffleSourceCombo.Items.Add(new ControlShufflePick(
+                combo.Items.Add(new ControlShufflePick(
                     count > 0 ? $"Folder · {name} ({count})" : $"Folder · {name}",
                     AppSettings.FolderShuffleToken(folder)));
             }
@@ -4169,46 +4201,46 @@ public partial class MainWindow : Window
             foreach (var t in _settings.EnsureShape().Tags)
             {
                 var count = _library?.GetTracksWithTag(t.Key).Count ?? 0;
-                ControlShuffleSourceCombo.Items.Add(new ControlShufflePick(
+                combo.Items.Add(new ControlShufflePick(
                     count > 0 ? $"Tag · {t.Label} ({count})" : $"Tag · {t.Label}",
                     $"tag:{t.Key}"));
             }
 
             foreach (var (genre, count) in GetPlayGenres())
             {
-                ControlShuffleSourceCombo.Items.Add(new ControlShufflePick(
+                combo.Items.Add(new ControlShufflePick(
                     $"Genre · {genre} ({count})",
                     $"genre:{genre}"));
             }
 
-            object? select = ControlShuffleSourceCombo.Items.OfType<ControlShufflePick>()
+            object? select = combo.Items.OfType<ControlShufflePick>()
                 .FirstOrDefault(p => string.Equals(p.Token, want, StringComparison.OrdinalIgnoreCase));
 
             if (select is null && AppSettings.TryParseFolderShuffleToken(want, out var folderPath))
             {
                 var name = System.IO.Path.GetFileName(folderPath.TrimEnd('\\', '/'));
                 select = new ControlShufflePick($"Folder · {name}", want);
-                ControlShuffleSourceCombo.Items.Add(select);
+                combo.Items.Add(select);
             }
             else if (select is null && want.StartsWith("tag:", StringComparison.OrdinalIgnoreCase))
             {
                 var key = want["tag:".Length..].Trim();
                 var label = _settings.FindTag(key)?.Label ?? key;
                 select = new ControlShufflePick($"Tag · {label}", want);
-                ControlShuffleSourceCombo.Items.Add(select);
+                combo.Items.Add(select);
             }
             else if (select is null && want.StartsWith("genre:", StringComparison.OrdinalIgnoreCase))
             {
                 var name = want["genre:".Length..].Trim();
                 select = new ControlShufflePick($"Genre · {name}", want);
-                ControlShuffleSourceCombo.Items.Add(select);
+                combo.Items.Add(select);
             }
 
-            ControlShuffleSourceCombo.SelectedItem = select ?? ControlShuffleSourceCombo.Items[0];
+            combo.SelectedItem = select ?? (combo.Items.Count > 0 ? combo.Items[0] : null);
         }
         finally
         {
-            _suppressControlShufflePick = false;
+            suppressFlag = false;
         }
     }
 
@@ -4222,6 +4254,25 @@ public partial class MainWindow : Window
         _settings.ControlShuffleSource = pick.Token;
         try { _store.Save(_settings); }
         catch (Exception ex) { AppLog.Warn("Save ControlShuffleSource failed", ex); }
+    }
+
+    private void LibrarySearchScopeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressLibrarySearchScopePick || !_loaded)
+            return;
+        // Re-run current Go/Browse intent so From changes take effect immediately.
+        if (_libraryRows is not null)
+            RunLibrarySearch(LibrarySearchBox?.Text, browse: string.IsNullOrWhiteSpace(LibrarySearchBox?.Text));
+    }
+
+    /// <summary>Library From combo token (defaults to Daily mix / all).</summary>
+    private string ResolveLibrarySearchScopeToken()
+    {
+        if (LibrarySearchScopeCombo?.SelectedValue is string sv && !string.IsNullOrWhiteSpace(sv))
+            return sv.Trim();
+        if (LibrarySearchScopeCombo?.SelectedItem is ControlShufflePick pick)
+            return pick.Token;
+        return AppSettings.ControlShuffleAll;
     }
 
     private void PopulateSlotCombo(ComboBox combo, IReadOnlyList<string> sonosTitles, FavoriteSlot bound)
