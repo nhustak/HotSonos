@@ -32,7 +32,10 @@
                 <TextBlock x:Name="SourceText" Foreground="#FF7EC8E3" FontFamily="Segoe UI" FontSize="11"
                            FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" Text=""
                            ToolTip="Where the audio is coming from" />
+                <!-- Wraps: status doubles as the error line, and a hard clip mid-word
+                     ("...was canceled du") tells the user nothing. -->
                 <TextBlock x:Name="StatusText" Foreground="#FF2ECC71" FontFamily="Segoe UI" FontSize="12"
+                           TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="48"
                            Margin="0,4,0,0" Text="" />
             </StackPanel>
 

@@ -244,7 +244,21 @@
                             </DockPanel>
                             <TextBlock Text="Sliders = raw Sonos %. Volume ± / Level all / Wake use house logical % (median of offset-0 rooms); offset rooms (e.g. Port +60) get logical+offset on write — Port is never the primary number."
                                        Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
-                            <StackPanel x:Name="SpeakersPanel" />
+                            <!-- Left: the volume rows. Right: detail for the selected speaker
+                                 (click a room name). Overall controls stay put either way. -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" MinWidth="420" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel x:Name="SpeakersPanel" Grid.Column="0" />
+                                <Border x:Name="SpeakerDetailBox" Grid.Column="1" Width="270"
+                                        Margin="14,0,0,0" Padding="12,10"
+                                        Background="#FFF8FAFC" BorderBrush="#FFD8DEE4" BorderThickness="1"
+                                        CornerRadius="6" VerticalAlignment="Top" Visibility="Collapsed">
+                                    <StackPanel x:Name="SpeakerDetailPanel" />
+                                </Border>
+                            </Grid>
                         </StackPanel>
                     </Border>
 
@@ -1001,6 +1015,11 @@
                                         ToolTip="Pull every speaker into the active group (does not restart shuffle)" />
                                 <Button Content="Open log file" Height="28" Padding="12,0" Margin="8,0,0,0"
                                         Click="TopologyOpenLog_Click" />
+                                <Button x:Name="TopologyRebootAllButton" Content="Reboot all speakers"
+                                        Height="28" Padding="12,0" Margin="8,0,0,0"
+                                        Background="#FFC0392B" Foreground="White" FontWeight="SemiBold"
+                                        Click="TopologyRebootAll_Click"
+                                        ToolTip="Restart every reachable speaker. Coordinator goes last so the group survives as long as possible. Music stops; speakers return in ~30–60s." />
                             </StackPanel>
                             <TextBlock x:Name="TopologySummaryText" Text="Monitor OFF — not logging topology events (system stays light)."
                                        Foreground="#FF1C2536" FontSize="12" Margin="0,8,0,4" TextWrapping="Wrap"

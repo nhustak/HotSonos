@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Net.Http;
@@ -37,6 +37,23 @@ public partial class MainWindow : Window
     private readonly Func<string?> _mcpEndpoint;
     private DispatcherTimer? _libraryStatusTimer;
     private bool _mcpUiHooked;
+
+    /// <summary>
+    /// Short-timeout client used only to ask each speaker "are you actually there?".
+    /// Topology membership comes from a peer's ZoneGroupState, which keeps listing a
+    /// speaker long after it stops answering — that is how a dead coordinator showed
+    /// as a healthy green card while every command timed out.
+    /// </summary>
+    private static readonly HttpClient ReachabilityHttp = new() { Timeout = TimeSpan.FromSeconds(2) };
+
+    /// <summary>Last reachability probe result, keyed by speaker IP. Empty = not probed yet.</summary>
+    private readonly Dictionary<string, bool> _topologyReachable = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Clickable name cells in the Speakers list, keyed by IP (for selection highlight).</summary>
+    private readonly Dictionary<string, Border> _speakerNameHosts = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>IP of the speaker whose detail panel is open, or null when none.</summary>
+    private string? _selectedSpeakerIp;
 
     /// <summary>Working master mappings edited in Library paths UI (committed on Save).</summary>
     private readonly ObservableCollection<MasterLibraryMapping> _masterMappings = [];
@@ -746,10 +763,94 @@ public partial class MainWindow : Window
         var subs = t.Subs.Select(s => s.DisplayLabel).ToList();
         var subLine = subs.Count == 0 ? "Sub: (none in topology)" : "Sub: " + string.Join(", ", subs);
         var van = t.VanishedRooms.Count == 0
-            ? "none offline"
-            : "offline: " + string.Join(", ", t.VanishedRooms);
+            ? "none reported vanished by Sonos"
+            : "Sonos reports vanished: " + string.Join(", ", t.VanishedRooms);
         TopologySummaryText.Text =
-            $"{mon} · {t.VisibleCount} room(s), {t.InvisibleCount} bonded · {t.GroupCount} group(s): {string.Join(" · ", groups)}  |  {subLine}  |  {van}";
+            $"{mon} · {t.VisibleCount} room(s), {t.InvisibleCount} bonded · {t.GroupCount} group(s): {string.Join(" · ", groups)}  |  {subLine}  |  {van}  |  {ReachabilitySummary(t)}";
+
+        // Red the whole line when we cannot reach a coordinator — that is the case
+        // where every transport command fails while the map still looks healthy.
+        TopologySummaryText.Foreground = UnreachableCoordinators(t).Count > 0
+            ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0x39, 0x2B))
+            : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1C, 0x25, 0x36));
+    }
+
+    /// <summary>Coordinators that did not answer the last reachability probe.</summary>
+    private List<string> UnreachableCoordinators(HotSonos.Core.Models.SonosTopologySnapshot t) =>
+        t.Members
+            .Where(m => m.IsCoordinator && !m.Invisible && IsReachable(m.IpAddress) == false)
+            .Select(m => m.RoomName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>Probe result for an IP: true/false, or null when not probed yet.</summary>
+    private bool? IsReachable(string ip) =>
+        _topologyReachable.TryGetValue(ip, out var ok) ? ok : null;
+
+    /// <summary>Human summary of who actually answered, with coordinators called out.</summary>
+    private string ReachabilitySummary(HotSonos.Core.Models.SonosTopologySnapshot t)
+    {
+        if (_topologyReachable.Count == 0)
+            return "reachability: not checked yet — click Refresh now";
+
+        var probed = t.Members.Where(m => IsReachable(m.IpAddress) is not null).ToList();
+        if (probed.Count == 0)
+            return "reachability: not checked yet — click Refresh now";
+
+        var dead = probed.Where(m => IsReachable(m.IpAddress) == false).ToList();
+        if (dead.Count == 0)
+            return $"✅ all {probed.Count} responded";
+
+        var deadCoords = UnreachableCoordinators(t);
+        var names = string.Join(", ", dead
+            .Select(m => m.IsCoordinator && !m.Invisible ? $"{m.RoomName} (COORDINATOR)" : m.RoomName)
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+
+        var head = deadCoords.Count > 0
+            ? $"⛔ UNREACHABLE — {names}. The coordinator is not responding, so play/pause/next will fail for the whole group."
+            : $"⚠ UNREACHABLE — {names}";
+        return $"{head}  ({probed.Count - dead.Count}/{probed.Count} responded)";
+    }
+
+    /// <summary>
+    /// Asks every known speaker IP for its device description. Membership in the
+    /// Sonos topology is not proof of life; this is.
+    /// </summary>
+    private async Task ProbeTopologyReachabilityAsync()
+    {
+        var t = _sonos.LastTopology;
+        if (t is null || t.Members.Count == 0)
+            return;
+
+        var ips = t.Members
+            .Select(m => m.IpAddress)
+            .Where(ip => !string.IsNullOrWhiteSpace(ip))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var results = await Task.WhenAll(ips.Select(async ip =>
+        {
+            try
+            {
+                using var resp = await ReachabilityHttp.GetAsync(
+                    $"http://{ip}:1400/xml/device_description.xml",
+                    HttpCompletionOption.ResponseHeadersRead);
+                return (ip, ok: resp.IsSuccessStatusCode);
+            }
+            catch
+            {
+                return (ip, ok: false);
+            }
+        }));
+
+        _topologyReachable.Clear();
+        foreach (var (ip, ok) in results)
+            _topologyReachable[ip] = ok;
+
+        var dead = results.Where(r => !r.ok).Select(r => r.ip).ToList();
+        AppLog.Info(dead.Count == 0
+            ? $"Reachability probe: all {results.Length} speaker(s) responded"
+            : $"Reachability probe: {results.Length - dead.Count}/{results.Length} responded; no answer from {string.Join(", ", dead)}");
     }
 
     /// <summary>
@@ -897,8 +998,18 @@ public partial class MainWindow : Window
 
         System.Windows.Media.Color bg, fg, edge;
         var thick = 1.0;
+        var unreachable = IsReachable(m.IpAddress) == false;
+        // Not responding beats every other style: a speaker we cannot reach must never
+        // render as a healthy green coordinator card.
+        if (unreachable)
+        {
+            bg = System.Windows.Media.Color.FromRgb(0xFD, 0xEC, 0xEC);
+            fg = System.Windows.Media.Color.FromRgb(0xC0, 0x39, 0x2B);
+            edge = System.Windows.Media.Color.FromRgb(0xE7, 0x4C, 0x3C);
+            thick = 2;
+        }
         // Coordinator always wins over Port/purple styling so Theater-as-boss is visible.
-        if (m.IsCoordinator && !m.Invisible)
+        else if (m.IsCoordinator && !m.Invisible)
         {
             bg = System.Windows.Media.Color.FromRgb(0xD5, 0xF5, 0xE3);
             fg = System.Windows.Media.Color.FromRgb(0x0E, 0x66, 0x3A);
@@ -950,6 +1061,8 @@ public partial class MainWindow : Window
         var labelText = m.DisplayLabel;
         if (m.ConnectionLabel is not null && labelText.EndsWith(" · " + m.ConnectionLabel, StringComparison.Ordinal))
             labelText = labelText[..^(m.ConnectionLabel.Length + 3)];
+        if (unreachable)
+            labelText = "⛔ " + labelText + " — NO RESPONSE";
 
         var child = AppIcons.Row(
             labelText,
@@ -1372,28 +1485,51 @@ public partial class MainWindow : Window
 
     private async void TopologyRefresh_Click(object sender, RoutedEventArgs e)
     {
-        try
+        await RunBusyAsync(sender, "⏳ Refreshing…", async () =>
         {
-            SetStatus("Refreshing topology…", warn: false);
-            await _sonos.RefreshAsync(_settings.ActiveRoom);
-            RefreshTopologyUi(scrollToEnd: _settings.TopologyMonitorEnabled);
-            var mon = _settings.TopologyMonitorEnabled ? "" : " (monitor off — map only, no event trail)";
-            SetStatus(
-                $"Topology: {_sonos.Groups.Count} group(s), bonded={_sonos.LastTopology?.InvisibleCount ?? 0}{mon}.",
-                warn: false);
-        }
-        catch (Exception ex)
-        {
-            AppLog.Warn("Topology refresh failed", ex);
-            SetStatus(ex.Message, warn: true);
-        }
+            try
+            {
+                SetStatus("Refreshing topology…", warn: false);
+                await _sonos.RefreshAsync(_settings.ActiveRoom);
+
+                SetStatus("Checking which speakers actually respond…", warn: false);
+                await ProbeTopologyReachabilityAsync();
+
+                RefreshTopologyUi(scrollToEnd: _settings.TopologyMonitorEnabled);
+
+                var t = _sonos.LastTopology;
+                List<string> deadCoords = t is null ? new() : UnreachableCoordinators(t);
+                if (deadCoords.Count > 0)
+                {
+                    SetStatus(
+                        $"⛔ Coordinator not responding: {string.Join(", ", deadCoords)} — "
+                        + "play/pause/next will fail until it is power-cycled.",
+                        warn: true);
+                    return;
+                }
+
+                var mon = _settings.TopologyMonitorEnabled ? "" : " (monitor off — map only, no event trail)";
+                SetStatus(
+                    $"Topology: {_sonos.Groups.Count} group(s), bonded={_sonos.LastTopology?.InvisibleCount ?? 0}{mon}.",
+                    warn: false);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Topology refresh failed", ex);
+                SetStatus(ex.Message, warn: true);
+            }
+        }, TopologyTab);
     }
 
     private async void TopologyRegroup_Click(object sender, RoutedEventArgs e)
     {
+        await RunBusyAsync(sender, "⏳ Regrouping…", TopologyRegroupAsync, TopologyTab);
+    }
+
+    private async Task TopologyRegroupAsync()
+    {
         try
         {
-            TopologyRegroupButton.IsEnabled = false;
             var preferred = _settings.PreferredHouseCoordinatorRoom
                             ?? _sonos.ActiveRoom
                             ?? _settings.ActiveRoom;
@@ -1419,6 +1555,7 @@ public partial class MainWindow : Window
             }
 
             await _sonos.RefreshAsync(_settings.ActiveRoom).ConfigureAwait(true);
+            await ProbeTopologyReachabilityAsync().ConfigureAwait(true);
             PopulateRooms();
             RefreshTopologyUi(scrollToEnd: true);
             var n = _sonos.Groups.OrderByDescending(x => x.MemberCount).FirstOrDefault()?.MemberCount ?? 0;
@@ -1444,10 +1581,90 @@ public partial class MainWindow : Window
             }
             catch { /* ignore */ }
         }
-        finally
+    }
+
+    /// <summary>
+    /// Restarts every reachable speaker. The coordinator is rebooted last: rebooting
+    /// it first drops the group and the remaining reboot requests then race a
+    /// re-election. Unreachable players are skipped and reported, since a reboot
+    /// request to a silent speaker just burns the timeout.
+    /// </summary>
+    private async void TopologyRebootAll_Click(object sender, RoutedEventArgs e)
+    {
+        var t = _sonos.LastTopology;
+        if (t is null || t.Members.Count == 0)
         {
-            TopologyRegroupButton.IsEnabled = true;
+            SetStatus("No topology yet — click Refresh now first.", warn: true);
+            return;
         }
+
+        // One entry per device (bonded mates included — they are separate players).
+        var players = t.Members
+            .Where(m => !string.IsNullOrWhiteSpace(m.IpAddress))
+            .GroupBy(m => m.IpAddress, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(m => m.IsCoordinator && !m.Invisible) // false first → coordinator last
+            .ThenBy(m => m.RoomName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var coordName = players.FirstOrDefault(m => m.IsCoordinator && !m.Invisible)?.RoomName;
+        var confirm = MessageBox.Show(
+            this,
+            $"Restart all {players.Count} speaker(s)?\n\n"
+            + string.Join(", ", players.Select(m => m.RoomName).Distinct(StringComparer.OrdinalIgnoreCase))
+            + "\n\nMusic stops everywhere. Each speaker drops for ~30–60s, then rejoins.\n"
+            + (coordName is null ? "" : $"The coordinator ({coordName}) is restarted last.\n")
+            + "\nThis does not change grouping — use Regroup all afterwards if needed.",
+            "Confirm reboot of ALL speakers",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirm != MessageBoxResult.Yes)
+            return;
+
+        await RunBusyAsync(sender, "⏳ Rebooting…", async () =>
+        {
+            AppLog.Info($"Reboot all: {players.Count} player(s) requested from Topology UI");
+            var ok = 0;
+            var skipped = new List<string>();
+
+            for (var i = 0; i < players.Count; i++)
+            {
+                var m = players[i];
+                var isCoord = m.IsCoordinator && !m.Invisible;
+                SetStatus(
+                    $"Restarting {i + 1}/{players.Count}: {m.RoomName}{(isCoord ? " (coordinator, last)" : "")}…",
+                    warn: false);
+
+                // Skip players that are not answering — the request would only time out.
+                if (IsReachable(m.IpAddress) == false)
+                {
+                    skipped.Add(m.RoomName);
+                    AppLog.Warn($"Reboot all: skipped {m.RoomName} @ {m.IpAddress} (not responding)");
+                    continue;
+                }
+
+                try
+                {
+                    var status = await _sonos.RebootPlayerAsync(m.IpAddress).ConfigureAwait(true);
+                    AppLog.Info($"Reboot all → {m.RoomName}: {status}");
+                    ok++;
+                }
+                catch (Exception ex)
+                {
+                    skipped.Add(m.RoomName);
+                    AppLog.Warn($"Reboot all: {m.RoomName} failed", ex);
+                }
+
+                // Small gap so the mesh is not hit with every reboot at once.
+                await Task.Delay(600).ConfigureAwait(true);
+            }
+
+            var tail = skipped.Count == 0 ? "" : $" Skipped (no response): {string.Join(", ", skipped)}.";
+            SetStatus(
+                $"Reboot requested for {ok}/{players.Count} speaker(s).{tail} They return in ~30–60s — then click Refresh now.",
+                warn: skipped.Count > 0);
+        }, TopologyTab);
     }
 
     private void TopologyOpenLog_Click(object sender, RoutedEventArgs e)
@@ -2918,6 +3135,8 @@ public partial class MainWindow : Window
     private async Task LoadSpeakerVolumesAsync()
     {
         SpeakersPanel.Children.Clear();
+        // Rows are rebuilt, so the old name-cell references are stale.
+        _speakerNameHosts.Clear();
 
         // Topology supplies product / ETH-Wi‑Fi / bond / coordinator icons for the name column.
         try
@@ -2973,6 +3192,194 @@ public partial class MainWindow : Window
     /// </summary>
     private const double SpeakerNameColumnWidth = 168;
 
+    /// <summary>Tints the selected speaker's name cell so the open panel has an obvious owner.</summary>
+    private void ApplySpeakerRowHighlight(string ip)
+    {
+        if (!_speakerNameHosts.TryGetValue(ip, out var host))
+            return;
+        host.Background = string.Equals(ip, _selectedSpeakerIp, StringComparison.OrdinalIgnoreCase)
+            ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xF5, 0xE3))
+            : System.Windows.Media.Brushes.Transparent;
+    }
+
+    /// <summary>
+    /// Opens the per-speaker panel beside the volume list. Clicking the already
+    /// selected room closes it again.
+    /// </summary>
+    private async Task SelectSpeakerAsync(SpeakerVolume speaker)
+    {
+        if (string.Equals(_selectedSpeakerIp, speaker.IpAddress, StringComparison.OrdinalIgnoreCase))
+        {
+            CloseSpeakerDetail();
+            return;
+        }
+
+        _selectedSpeakerIp = speaker.IpAddress;
+        foreach (var ip in _speakerNameHosts.Keys.ToList())
+            ApplySpeakerRowHighlight(ip);
+
+        await BuildSpeakerDetailAsync(speaker);
+    }
+
+    private void CloseSpeakerDetail()
+    {
+        _selectedSpeakerIp = null;
+        foreach (var ip in _speakerNameHosts.Keys.ToList())
+            ApplySpeakerRowHighlight(ip);
+        SpeakerDetailPanel.Children.Clear();
+        SpeakerDetailBox.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Builds the detail panel: identity, then EQ read live from the speaker.
+    /// Anything else that is per-speaker rather than house-wide belongs here.
+    /// </summary>
+    private async Task BuildSpeakerDetailAsync(SpeakerVolume speaker)
+    {
+        var member = FindTopologyMember(speaker.IpAddress, speaker.RoomName);
+        SpeakerDetailPanel.Children.Clear();
+        SpeakerDetailBox.Visibility = Visibility.Visible;
+
+        // Header: room name + close button
+        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 2) };
+        var close = new System.Windows.Controls.Button
+        {
+            Content = "✕",
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            FontSize = 11,
+            ToolTip = "Close (or click the room name again)",
+        };
+        close.Click += (_, _) => CloseSpeakerDetail();
+        DockPanel.SetDock(close, Dock.Right);
+        header.Children.Add(close);
+        header.Children.Add(new TextBlock
+        {
+            Text = speaker.RoomName,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        SpeakerDetailPanel.Children.Add(header);
+
+        var subtitle = member is null
+            ? speaker.IpAddress
+            : $"{(string.IsNullOrWhiteSpace(member.ProductName) ? member.ProductKind : member.ProductName)}"
+              + $" · {member.ConnectionLabel ?? "link ?"} · {speaker.IpAddress}"
+              + (member.IsCoordinator && !member.Invisible ? "  ★ COORD" : "");
+        SpeakerDetailPanel.Children.Add(new TextBlock
+        {
+            Text = subtitle,
+            FontSize = 11,
+            Foreground = System.Windows.Media.Brushes.DimGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8),
+        });
+
+        if (!speaker.Reachable)
+        {
+            SpeakerDetailPanel.Children.Add(new TextBlock
+            {
+                Text = "⛔ This speaker is not responding — settings cannot be read or changed.",
+                FontSize = 11,
+                Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0x39, 0x2B)),
+                TextWrapping = TextWrapping.Wrap,
+            });
+            return;
+        }
+
+        var loading = new TextBlock
+        {
+            Text = "Reading EQ from speaker…",
+            FontSize = 11,
+            Foreground = System.Windows.Media.Brushes.DimGray,
+        };
+        SpeakerDetailPanel.Children.Add(loading);
+
+        var eq = await _sonos.GetSpeakerEqAsync(speaker.IpAddress).ConfigureAwait(true);
+
+        // The user may have closed or switched rooms while the read was in flight.
+        if (!string.Equals(_selectedSpeakerIp, speaker.IpAddress, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        SpeakerDetailPanel.Children.Remove(loading);
+
+        if (eq is null)
+        {
+            SpeakerDetailPanel.Children.Add(new TextBlock
+            {
+                Text = "This product does not report EQ settings.",
+                FontSize = 11,
+                Foreground = System.Windows.Media.Brushes.DimGray,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            return;
+        }
+
+        SpeakerDetailPanel.Children.Add(BuildEqSlider(
+            "Bass", eq.Bass, v => _sonos.SetSpeakerBassAsync(speaker.IpAddress, v)));
+        SpeakerDetailPanel.Children.Add(BuildEqSlider(
+            "Treble", eq.Treble, v => _sonos.SetSpeakerTrebleAsync(speaker.IpAddress, v)));
+
+        if (eq.Loudness is bool loud)
+        {
+            var loudness = new System.Windows.Controls.CheckBox
+            {
+                Content = "Loudness",
+                IsChecked = loud,
+                Margin = new Thickness(0, 8, 0, 0),
+                FontSize = 12,
+                ToolTip = "Sonos loudness compensation — boosts bass and treble at low volume.",
+            };
+            loudness.Checked += async (_, _) => await _sonos.SetSpeakerLoudnessAsync(speaker.IpAddress, true);
+            loudness.Unchecked += async (_, _) => await _sonos.SetSpeakerLoudnessAsync(speaker.IpAddress, false);
+            SpeakerDetailPanel.Children.Add(loudness);
+        }
+    }
+
+    /// <summary>One −10…+10 EQ row: label, live value, slider that writes on release.</summary>
+    private static UIElement BuildEqSlider(string label, int value, Func<int, Task> commit)
+    {
+        var panel = new StackPanel { Margin = new Thickness(0, 6, 0, 0) };
+
+        var head = new DockPanel { LastChildFill = false };
+        var valueText = new TextBlock
+        {
+            Text = value > 0 ? $"+{value}" : value.ToString(),
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            MinWidth = 28,
+            TextAlignment = TextAlignment.Right,
+        };
+        DockPanel.SetDock(valueText, Dock.Right);
+        head.Children.Add(valueText);
+        head.Children.Add(new TextBlock { Text = label, FontSize = 12 });
+        panel.Children.Add(head);
+
+        var slider = new Slider
+        {
+            Minimum = -10,
+            Maximum = 10,
+            Value = value,
+            TickFrequency = 1,
+            IsSnapToTickEnabled = true,
+            SmallChange = 1,
+            LargeChange = 2,
+        };
+        slider.ValueChanged += (_, e) =>
+        {
+            var v = (int)e.NewValue;
+            valueText.Text = v > 0 ? $"+{v}" : v.ToString();
+        };
+        slider.PreviewMouseLeftButtonUp += async (_, _) => await commit((int)slider.Value);
+        slider.LostKeyboardFocus += async (_, _) => await commit((int)slider.Value);
+        panel.Children.Add(slider);
+
+        return panel;
+    }
+
     private UIElement BuildSpeakerRow(SpeakerVolume speaker)
     {
         // Name (fixed width, left-aligned) | slider (*) | % | Offset | Mute
@@ -3011,12 +3418,27 @@ public partial class MainWindow : Window
         name.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
         name.SetValue(FrameworkElement.HorizontalAlignmentProperty, System.Windows.HorizontalAlignment.Left);
         name.SetValue(FrameworkElement.ToolTipProperty,
-            member is null
+            (member is null
                 ? $"{speaker.RoomName}\n{speaker.IpAddress}"
                 : $"{member.DisplayLabel}\n{(string.IsNullOrWhiteSpace(member.ProductName) ? member.ProductKind : member.ProductName)}"
                   + $" · {member.ConnectionDetail}\n{member.IpAddress}"
-                  + (member.IsCoordinator && !member.Invisible ? "\n★ GROUP COORDINATOR" : ""));
-        Grid.SetColumn(name, 0);
+                  + (member.IsCoordinator && !member.Invisible ? "\n★ GROUP COORDINATOR" : ""))
+            + "\n\nClick for bass / treble and per-speaker settings.");
+
+        // Clicking the room name opens the detail panel for that speaker.
+        var nameHost = new Border
+        {
+            Child = name,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(4, 2, 4, 2),
+            Margin = new Thickness(-4, 0, 2, 0),
+            Background = System.Windows.Media.Brushes.Transparent,
+        };
+        nameHost.MouseLeftButtonUp += async (_, _) => await SelectSpeakerAsync(speaker);
+        _speakerNameHosts[speaker.IpAddress] = nameHost;
+        ApplySpeakerRowHighlight(speaker.IpAddress);
+        Grid.SetColumn(nameHost, 0);
 
         var valueLabel = new TextBlock
         {
@@ -3092,7 +3514,7 @@ public partial class MainWindow : Window
         muteCheck.Unchecked += async (_, _) => await _sonos.SetSpeakerMuteAsync(speaker.IpAddress, false);
         Grid.SetColumn(muteCheck, 4);
 
-        row.Children.Add(name);
+        row.Children.Add(nameHost);
         row.Children.Add(slider);
         row.Children.Add(valueLabel);
         row.Children.Add(offsetPanel);
@@ -3206,8 +3628,28 @@ public partial class MainWindow : Window
         public required string Ip { get; init; }
         public required string Uuid { get; init; }
         public bool IsLeading { get; init; }
-        public override string ToString() =>
-            IsLeading ? $"{Room}  ({Ip})  · leading now" : $"{Room}  ({Ip})";
+
+        /// <summary>ETH / Wi‑Fi, or null when topology did not report it.</summary>
+        public string? Link { get; init; }
+
+        /// <summary>Product short name (Port, One SL, Era 100) when known.</summary>
+        public string? Product { get; init; }
+
+        /// <summary>
+        /// A coordinator feeds every other speaker, so the link type is the single
+        /// most useful thing to see when choosing one — wired beats Wi‑Fi.
+        /// </summary>
+        public override string ToString()
+        {
+            var parts = new List<string> { Room };
+            if (!string.IsNullOrWhiteSpace(Product))
+                parts.Add(Product!);
+            if (!string.IsNullOrWhiteSpace(Link))
+                parts.Add(Link!);
+            parts.Add($"({Ip})");
+            var text = string.Join("  ·  ", parts);
+            return IsLeading ? text + "  · leading now" : text;
+        }
     }
 
     private void PopulateRooms()
@@ -3250,12 +3692,18 @@ public partial class MainWindow : Window
 
         var preferred = _settings.PreferredHouseCoordinatorRoom;
         var items = _sonos.GetCoordinatorCandidates()
-            .Select(c => new HouseCoordinatorPick
+            .Select(c =>
             {
-                Room = c.Room,
-                Ip = c.Ip,
-                Uuid = c.Uuid,
-                IsLeading = c.IsLeading,
+                var m = FindTopologyMember(c.Ip, c.Room);
+                return new HouseCoordinatorPick
+                {
+                    Room = c.Room,
+                    Ip = c.Ip,
+                    Uuid = c.Uuid,
+                    IsLeading = c.IsLeading,
+                    Link = m?.ConnectionLabel,
+                    Product = m?.ProductName,
+                };
             })
             .ToList();
 
@@ -4608,6 +5056,52 @@ public partial class MainWindow : Window
         _loadingStartupPreference = true;
         StartWithWindowsCheckBox.IsChecked = WindowsStartupManager.IsEnabled();
         _loadingStartupPreference = false;
+    }
+
+    /// <summary>
+    /// Runs a slow click handler with visible feedback: the button disables and shows
+    /// busy text, and only <paramref name="scope"/> (e.g. the Topology toolbar) takes a
+    /// wait cursor. Sonos calls can block for many seconds, and without this a click
+    /// looks like nothing happened, so people click again and queue up more work.
+    /// The work is async — the rest of the app stays live, so the busy affordance is
+    /// deliberately scoped rather than window-wide.
+    /// </summary>
+    private static async Task RunBusyAsync(
+        object? sender,
+        string busyText,
+        Func<Task> work,
+        FrameworkElement? scope = null)
+    {
+        var btn = sender as System.Windows.Controls.Button;
+        object? originalContent = null;
+        System.Windows.Input.Cursor? previousCursor = null;
+
+        if (btn is not null)
+        {
+            originalContent = btn.Content;
+            btn.Content = busyText;
+            btn.IsEnabled = false;
+        }
+        if (scope is not null)
+        {
+            previousCursor = scope.Cursor;
+            scope.Cursor = System.Windows.Input.Cursors.Wait;
+        }
+
+        try
+        {
+            await work();
+        }
+        finally
+        {
+            if (scope is not null)
+                scope.Cursor = previousCursor;
+            if (btn is not null)
+            {
+                btn.Content = originalContent;
+                btn.IsEnabled = true;
+            }
+        }
     }
 
     private void SetStatus(string message, bool warn)

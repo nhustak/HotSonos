@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -26,6 +27,8 @@ public partial class App : System.Windows.Application
     private ConfigStore _store = null!;
     private AppSettings _settings = null!;
     private SonosManager _sonos = null!;
+    private SpeakerOutageLog _speakerOutages = null!;
+    private SpeakerReachabilityWatcher? _speakerWatcher;
     private GlobalHotkeyManager _hotkeys = null!;
     private TrayController _tray = null!;
     private NowPlayingFlyout? _flyout;
@@ -248,6 +251,14 @@ public partial class App : System.Windows.Application
         _sonos.NowPlayingChanged += OnNowPlayingChanged;
         _sonos.TopologyChanged += OnTopologyChanged;
         _sonos.SpeakerAvailabilityChanged += OnSpeakerAvailabilityChanged;
+
+        // Independent liveness check: topology reports membership, not whether a
+        // speaker still answers. Records every drop/recovery so an intermittent
+        // speaker can be proven after the fact instead of chased live.
+        _speakerOutages = new SpeakerOutageLog();
+        _speakerOutages.Recorded += OnSpeakerOutageRecorded;
+        _speakerWatcher = new SpeakerReachabilityWatcher(_sonos, _speakerOutages);
+        _speakerWatcher.Start();
 
         _hotkeys = new GlobalHotkeyManager();
         _hotkeys.HotkeyPressed += OnHotkeyPressed;
@@ -1030,13 +1041,69 @@ public partial class App : System.Windows.Application
             catch (Exception ex)
             {
                 AppLog.Error($"Action {action} failed", ex);
-                EnsureFlyout().ShowAction($"Sonos error: {ex.Message}"); // errors always surface
+                EnsureFlyout().ShowAction(FriendlyError(ex)); // errors always surface
             }
         }
         finally
         {
             _actionGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Short, readable flyout text for a failed action. Raw exception messages run
+    /// well past the flyout width (the HttpClient timeout text is ~100 chars), and
+    /// say nothing a user can act on. Full detail still goes to the log.
+    /// </summary>
+    /// <summary>
+    /// Surfaces speaker drops the moment they happen. A coordinator going away
+    /// breaks play/pause for the whole house, so that case is called out by name
+    /// rather than left for the user to infer from failing commands.
+    /// </summary>
+    private void OnSpeakerOutageRecorded(SpeakerOutageEvent ev)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            try
+            {
+                if (ev.Kind == "down" && ev.IsCoordinator)
+                {
+                    _tray?.ShowBalloon("HotSonos",
+                        $"{ev.Room} (group coordinator) stopped responding — play/pause/next will fail until it returns.");
+                    EnsureFlyout().ShowAction($"⛔ {ev.Room} unreachable (coordinator)");
+                }
+                else if (ev.Kind == "down")
+                {
+                    _tray?.ShowBalloon("HotSonos", $"{ev.Room} stopped responding.");
+                }
+                else if (ev.IsCoordinator)
+                {
+                    _tray?.ShowBalloon("HotSonos", $"{ev.Room} is back after {ev.DownSeconds:F0}s.");
+                    EnsureFlyout().ShowAction($"✅ {ev.Room} back after {ev.DownSeconds:F0}s");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Speaker outage notification failed", ex);
+            }
+        });
+    }
+
+    private static string FriendlyError(Exception ex)
+    {
+        var reason = ex switch
+        {
+            TaskCanceledException or OperationCanceledException => "speaker did not respond (timeout)",
+            HttpRequestException => "cannot reach speaker (network)",
+            _ => ex.Message,
+        };
+
+        // Belt and braces: the flyout wraps to two lines, so keep it inside that.
+        const int max = 80;
+        if (reason.Length > max)
+            reason = string.Concat(reason.AsSpan(0, max - 1), "…");
+
+        return $"Sonos error: {reason}";
     }
 
     /// <summary>
@@ -1090,7 +1157,7 @@ public partial class App : System.Windows.Application
                 {
                     AppLog.Error("Volume delta failed", ex);
                     await Dispatcher.InvokeAsync(() =>
-                        EnsureFlyout().ShowAction($"Sonos error: {ex.Message}"));
+                        EnsureFlyout().ShowAction(FriendlyError(ex)));
                 }
             }
         }

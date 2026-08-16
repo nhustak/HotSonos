@@ -26,18 +26,31 @@ public sealed record SpeakerVolume(
     bool Reachable = true);
 
 /// <summary>
+/// Per-speaker EQ state. Bass/Treble are Sonos's −10…+10 steps.
+/// <paramref name="Loudness"/> is null on products that do not expose it.
+/// </summary>
+public sealed record SpeakerEq(int Bass, int Treble, bool? Loudness);
+
+/// <summary>
 /// App-facing wrapper over the Core UPnP client. Holds the discovered topology
 /// as groups and turns <see cref="HotsonosAction"/> into Sonos commands. Cheap
 /// to call repeatedly; discovery is cached until refreshed.
 /// </summary>
 public sealed class SonosManager
 {
+    /// <summary>Rebuild older than this is treated as a leftover Sonos queue (overnight / post-restart).</summary>
+    public static readonly TimeSpan StaleShuffleQueueAge = TimeSpan.FromHours(8);
+
+    /// <summary>Min cooldown between automatic stale/replay reshuffles.</summary>
+    private static readonly TimeSpan StaleReshuffleCooldown = TimeSpan.FromMinutes(12);
+
     private readonly SonosSoapClient _soap = new();
     private readonly SonosDiscovery _discovery;
     private readonly SonosEventSubscriber _events = new();
     private readonly PlayHistoryStore _playHistory;
     private readonly PlayEventLog _playEvents;
     private readonly TopologyEventLog _topologyEvents;
+    private readonly ShuffleQueueStateStore _shuffleQueueState;
     private readonly Func<AppSettings> _settings;
 
     private IReadOnlyList<SonosZone> _zones = [];
@@ -93,6 +106,13 @@ public sealed class SonosManager
     /// <summary>When <see cref="_playbackMode"/> is folder, top-up stays inside this path prefix.</summary>
     private string? _folderShufflePrefix;
 
+    /// <summary>Last observed 1-based queue index (for detecting Play restarting the same batch).</summary>
+    private int? _prevQueueTrackIndex;
+    private int? _prevQueueTrackTotal;
+    private DateTime _ignoreIndexResetUntilUtc = DateTime.MinValue;
+    private DateTime _lastStaleReshuffleUtc = DateTime.MinValue;
+    private int _staleReshuffleInFlight; // 0/1
+
     /// <summary>True after a library shuffle until a special play replaces the queue.</summary>
     public bool ShuffleSessionActive =>
         string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase);
@@ -101,7 +121,11 @@ public sealed class SonosManager
     public bool CanResumeShuffle =>
         string.Equals(_playbackMode, "special", StringComparison.OrdinalIgnoreCase)
         || string.Equals(_playbackMode, "one_shot", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase);
+        || string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(_playbackMode, "folder", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Persisted last library shuffle rebuild (MCP / diagnostics).</summary>
+    public ShuffleQueueStateStore ShuffleQueueState => _shuffleQueueState;
 
     public object GetPlaybackSessionSnapshot() => new
     {
@@ -110,6 +134,7 @@ public sealed class SonosManager
         canResumeShuffle = CanResumeShuffle,
         continueLibraryShuffleAfterSpecialPlay = _settings().EnsureShape().ContinueLibraryShuffleAfterSpecialPlay,
         folderPrefix = _folderShufflePrefix,
+        shuffleQueue = _shuffleQueueState.Snapshot(),
         note = "shuffle = Daily mix; folder = one library path (top-up stays there); special = tag/genre/one-shot (top-up may enter Daily).",
     };
 
@@ -174,12 +199,14 @@ public sealed class SonosManager
         Func<AppSettings>? settings = null,
         PlayHistoryStore? playHistory = null,
         PlayEventLog? playEvents = null,
-        TopologyEventLog? topologyEvents = null)
+        TopologyEventLog? topologyEvents = null,
+        ShuffleQueueStateStore? shuffleQueueState = null)
     {
         _settings = settings ?? AppSettings.CreateDefault;
         _playHistory = playHistory ?? new PlayHistoryStore(() => _settings().EnsureShape().ShuffleHistoryDays);
         _playEvents = playEvents ?? new PlayEventLog();
         _topologyEvents = topologyEvents ?? new TopologyEventLog();
+        _shuffleQueueState = shuffleQueueState ?? new ShuffleQueueStateStore();
         _discovery = new SonosDiscovery(_soap);
         _events.NowPlayingChanged += HandleNowPlayingSnapshot;
         _events.TopologyChanged += OnTopologyEvent;
@@ -191,6 +218,13 @@ public sealed class SonosManager
             EnsureNowPlayingPoller();
         if (!UseGenaSubscriptions && !UseNowPlayingPoll)
             AppLog.Warn("GENA and now-playing poll both OFF — control-only (not recommended)");
+
+        if (_shuffleQueueState.LastRebuildUtc is DateTime rebuilt)
+        {
+            AppLog.Info(
+                $"Shuffle queue state: last rebuild {rebuilt:u} " +
+                $"(age {(DateTime.UtcNow - rebuilt).TotalHours:0.0}h, size {_shuffleQueueState.LastRebuildQueueSize})");
+        }
     }
 
     /// <summary>Latest now-playing snapshot (GENA or poll). Used to seed UI that opened mid-track.</summary>
@@ -216,6 +250,9 @@ public sealed class SonosManager
 
             try { MaybeRearmShuffleFromLibraryQueue(np); }
             catch (Exception ex) { AppLog.Warn("Rearm shuffle failed", ex); }
+
+            try { MaybeDetectStaleOrReplayQueue(np); }
+            catch (Exception ex) { AppLog.Warn("Stale/replay queue check failed", ex); }
 
             // History / top-up off the hot path — never block poll/UI on disk or library shuffle.
             var uri = np.TrackUri;
@@ -380,6 +417,8 @@ public sealed class SonosManager
     /// <summary>
     /// After app restart, in-memory <see cref="_playbackMode"/> is "none" even while Sonos is
     /// still playing the library queue — top-up never runs and the same NORMAL queue can loop.
+    /// If that queue is stale (rebuild older than <see cref="StaleShuffleQueueAge"/>), rebuild
+    /// history-aware instead of only flipping the mode flag.
     /// </summary>
     private void MaybeRearmShuffleFromLibraryQueue(NowPlaying np)
     {
@@ -394,6 +433,145 @@ public sealed class SonosManager
         AppLog.Info(
             $"Re-armed shuffle session from active library queue (mode was none; top-up enabled). " +
             $"track={np.CurrentTrack}/{np.NumberOfTracks} title={np.Title}");
+
+        if (_shuffleQueueState.IsRebuildStale(StaleShuffleQueueAge))
+        {
+            var age = _shuffleQueueState.LastRebuildUtc is DateTime t
+                ? $"{(DateTime.UtcNow - t).TotalHours:0.0}h"
+                : "never";
+            ScheduleStaleReshuffle(
+                $"stale queue on rearm (last rebuild {age}, track={np.CurrentTrack}/{np.NumberOfTracks})");
+        }
+    }
+
+    /// <summary>
+    /// Detect Sonos restarting the same NORMAL queue (index jump backward) or a long-lived
+    /// leftover batch after overnight / speaker reboot — then history-aware reshuffle.
+    /// </summary>
+    private void MaybeDetectStaleOrReplayQueue(NowPlaying np)
+    {
+        if (!IsPlayingLike(np.State) || !LooksLikeLibraryTrack(np.TrackUri))
+            return;
+
+        // Don't fight intentional non-library or special sessions.
+        if (string.Equals(_playbackMode, "sonos_fav", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(_playbackMode, "special", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(_playbackMode, "one_shot", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var cur = np.CurrentTrack;
+        var total = np.NumberOfTracks;
+        _shuffleQueueState.ObservePosition(cur, total);
+
+        // Index reset: e.g. 72/80 → 1/80 after Play recovery / coordinator reboot.
+        var indexReset = false;
+        var prevIdx = _prevQueueTrackIndex;
+        if (cur is int c && c > 0 && prevIdx is int prev && prev > 0
+            && DateTime.UtcNow >= _ignoreIndexResetUntilUtc)
+        {
+            if (prev >= 15 && c <= 5)
+                indexReset = true;
+            else if (prev - c >= 12 && c <= 10)
+                indexReset = true;
+        }
+
+        _prevQueueTrackIndex = cur ?? _prevQueueTrackIndex;
+        _prevQueueTrackTotal = total ?? _prevQueueTrackTotal;
+
+        if (indexReset)
+        {
+            ScheduleStaleReshuffle(
+                $"queue index reset ({prevIdx}→{cur}/{total} — likely Play/restart of same batch)");
+            return;
+        }
+
+        // Already in shuffle/folder with a rebuild older than 8h (same queue riding for days).
+        // Theater offline does not cause this — leftover coordinator queue does.
+        if ((string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase)
+             || string.Equals(_playbackMode, "folder", StringComparison.OrdinalIgnoreCase)
+             || string.Equals(_playbackMode, "none", StringComparison.OrdinalIgnoreCase))
+            && _shuffleQueueState.IsRebuildStale(StaleShuffleQueueAge))
+        {
+            var age = _shuffleQueueState.LastRebuildUtc is DateTime t
+                ? $"{(DateTime.UtcNow - t).TotalHours:0.0}h"
+                : "never";
+            ScheduleStaleReshuffle(
+                $"stale rebuild age {age} while mode={_playbackMode} track={cur}/{total}");
+        }
+    }
+
+    /// <summary>
+    /// Wake / MCP: if library is already playing but the last shuffle rebuild is stale,
+    /// rebuild a history-aware queue. Returns a toast line, or null when no action taken.
+    /// </summary>
+    public async Task<string?> EnsureFreshLibraryShuffleIfStaleAsync(
+        string reason,
+        CancellationToken ct = default)
+    {
+        if (!_shuffleQueueState.IsRebuildStale(StaleShuffleQueueAge))
+            return null;
+
+        var np = LastNowPlaying;
+        var library =
+            np is not null && LooksLikeLibraryTrack(np.TrackUri)
+            || string.Equals(_playbackMode, "shuffle", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(_playbackMode, "none", StringComparison.OrdinalIgnoreCase);
+
+        if (!library)
+            return null;
+
+        var age = _shuffleQueueState.LastRebuildUtc is DateTime t
+            ? $"{(DateTime.UtcNow - t).TotalHours:0.0}h"
+            : "never";
+        AppLog.Info($"Stale/replay queue detected ({reason}; last rebuild {age}) — reshuffling");
+        var summary = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
+        return $"🔀 Stale queue ({reason}, rebuild age {age}) → fresh shuffle ({summary})";
+    }
+
+    /// <summary>True when last library shuffle rebuild is older than <see cref="StaleShuffleQueueAge"/>.</summary>
+    public bool IsShuffleQueueStale() => _shuffleQueueState.IsRebuildStale(StaleShuffleQueueAge);
+
+    private void ScheduleStaleReshuffle(string reason)
+    {
+        if ((DateTime.UtcNow - _lastStaleReshuffleUtc) < StaleReshuffleCooldown)
+        {
+            AppLog.Info($"Stale/replay reshuffle suppressed (cooldown): {reason}");
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _staleReshuffleInFlight, 1, 0) != 0)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Debounce GENA storms / double rearm / poll duplicates.
+                await Task.Delay(1500).ConfigureAwait(false);
+                if (_controller is null)
+                    return;
+                if ((DateTime.UtcNow - _lastStaleReshuffleUtc) < StaleReshuffleCooldown)
+                    return;
+
+                if (string.Equals(_playbackMode, "sonos_fav", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(_playbackMode, "special", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(_playbackMode, "one_shot", StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                _lastStaleReshuffleUtc = DateTime.UtcNow;
+                AppLog.Info($"Stale/replay queue detected ({reason}) — reshuffling");
+                var summary = await ShuffleWithHistoryAsync().ConfigureAwait(false);
+                AppLog.Info($"Stale/replay reshuffle OK ({summary})");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"Stale/replay reshuffle failed ({reason})", ex);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _staleReshuffleInFlight, 0);
+            }
+        });
     }
 
     private static bool LooksLikeLibraryTrack(string? trackUri)
@@ -1313,6 +1491,78 @@ public sealed class SonosManager
         }
     }
 
+    /// <summary>
+    /// Per-speaker EQ read: bass, treble, loudness. Sonos ranges are −10…+10 for
+    /// bass/treble. Returns null when the speaker does not answer or the product has
+    /// no EQ (Sub-only bonds, some line-out devices).
+    /// </summary>
+    public async Task<SpeakerEq?> GetSpeakerEqAsync(string ip, CancellationToken ct = default)
+    {
+        try
+        {
+            var bassResponse = await _soap.InvokeAsync(ip, SonosService.RenderingControl, "GetBass",
+                [new("InstanceID", "0")], ct).ConfigureAwait(false);
+            var trebleResponse = await _soap.InvokeAsync(ip, SonosService.RenderingControl, "GetTreble",
+                [new("InstanceID", "0")], ct).ConfigureAwait(false);
+
+            var bass = int.TryParse(SonosSoapClient.ReadValue(bassResponse, "CurrentBass"), out var b) ? b : 0;
+            var treble = int.TryParse(SonosSoapClient.ReadValue(trebleResponse, "CurrentTreble"), out var t) ? t : 0;
+
+            // Loudness is optional on some products — never fail the whole read for it.
+            bool? loudness = null;
+            try
+            {
+                var loudResponse = await _soap.InvokeAsync(ip, SonosService.RenderingControl, "GetLoudness",
+                    [new("InstanceID", "0"), new("Channel", "Master")], ct).ConfigureAwait(false);
+                loudness = SonosSoapClient.ReadValue(loudResponse, "CurrentLoudness") == "1";
+            }
+            catch { /* product without loudness */ }
+
+            return new SpeakerEq(bass, treble, loudness);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Sets one speaker's bass (−10…+10).</summary>
+    public Task SetSpeakerBassAsync(string ip, int value, CancellationToken ct = default) =>
+        SetEqValueAsync(ip, "SetBass", "DesiredBass", Math.Clamp(value, -10, 10), ct);
+
+    /// <summary>Sets one speaker's treble (−10…+10).</summary>
+    public Task SetSpeakerTrebleAsync(string ip, int value, CancellationToken ct = default) =>
+        SetEqValueAsync(ip, "SetTreble", "DesiredTreble", Math.Clamp(value, -10, 10), ct);
+
+    private async Task SetEqValueAsync(string ip, string action, string argName, int value, CancellationToken ct)
+    {
+        try
+        {
+            await _soap.InvokeAsync(ip, SonosService.RenderingControl, action,
+                [new("InstanceID", "0"), new(argName, value.ToString())], ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Sub / fixed-output devices reject EQ writes; surface once, do not throw.
+            AppLog.Warn($"{action} failed on {ip}", ex);
+        }
+    }
+
+    /// <summary>Turns loudness compensation on/off for one speaker.</summary>
+    public async Task SetSpeakerLoudnessAsync(string ip, bool on, CancellationToken ct = default)
+    {
+        try
+        {
+            await _soap.InvokeAsync(ip, SonosService.RenderingControl, "SetLoudness",
+                [new("InstanceID", "0"), new("Channel", "Master"), new("DesiredLoudness", on ? "1" : "0")], ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"SetLoudness failed on {ip}", ex);
+        }
+    }
+
     /// <summary>Mutes/unmutes one speaker.</summary>
     public async Task SetSpeakerMuteAsync(string ip, bool mute, CancellationToken ct = default)
     {
@@ -1827,6 +2077,10 @@ public sealed class SonosManager
         ClearSessionServed();
         RememberServed(result.EnqueuedUris);
         _lastGenaNpSignature = null;
+        _ignoreIndexResetUntilUtc = DateTime.UtcNow.AddSeconds(90);
+        _prevQueueTrackIndex = 1;
+        _prevQueueTrackTotal = result.Enqueued;
+        _shuffleQueueState.RecordRebuild(result.Enqueued, "shuffle", result.EnqueuedUris);
 
         _playbackMode = "shuffle";
         _folderShufflePrefix = null;
@@ -1882,6 +2136,10 @@ public sealed class SonosManager
 
         ClearSessionServed();
         RememberServed(result.EnqueuedUris);
+        _ignoreIndexResetUntilUtc = DateTime.UtcNow.AddSeconds(90);
+        _prevQueueTrackIndex = 1;
+        _prevQueueTrackTotal = result.Enqueued;
+        _shuffleQueueState.RecordRebuild(result.Enqueued, "folder", result.EnqueuedUris);
         _playbackMode = "folder";
         _folderShufflePrefix = folderPath;
 
@@ -2185,6 +2443,7 @@ public sealed class SonosManager
                 ct).ConfigureAwait(false);
 
             RememberServed(result.EnqueuedUris);
+            _shuffleQueueState.RecordTopUp(result.Enqueued);
 
             // Special → daily after first library top-up. Folder mode stays folder.
             if (string.Equals(_playbackMode, "special", StringComparison.OrdinalIgnoreCase)
