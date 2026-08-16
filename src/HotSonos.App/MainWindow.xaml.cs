@@ -309,6 +309,7 @@ public partial class MainWindow : Window
         _ = LoadFavoritesAsync();
         _ = LoadSpeakerVolumesAsync();
         RefreshControlShuffleSourceCombo();
+        RefreshControlDailySpeakersUi();
         RefreshControlPlayList();
         // Seed from live cache (poll/GENA already running). Null only if truly unknown.
         ApplyControlNowPlaying(_sonos.LastNowPlaying);
@@ -3681,6 +3682,7 @@ public partial class MainWindow : Window
 
         PopulateHouseCoordinatorCombo();
         UpdateHouseCoordinatorStatus();
+        RefreshControlDailySpeakersUi();
 
         _suppressRoomChange = false;
     }
@@ -3845,6 +3847,211 @@ public partial class MainWindow : Window
     }
 
     private bool _suppressControlShufflePick;
+    private bool _suppressDailySpeakerUi;
+
+    /// <summary>Control tab: All speakers checkbox + expandable per-room list for Daily group.</summary>
+    private void RefreshControlDailySpeakersUi()
+    {
+        if (ControlDailyAllSpeakersCheck is null || ControlDailySpeakersExpander is null
+            || ControlDailySpeakersPanel is null)
+            return;
+
+        _suppressDailySpeakerUi = true;
+        try
+        {
+            var all = _settings.EnsureShape().DailyGroupAllSpeakers;
+            ControlDailyAllSpeakersCheck.IsChecked = all;
+            // Expand only when All is unchecked (pick-list mode).
+            ControlDailySpeakersExpander.IsExpanded = !all;
+            ControlDailySpeakersExpander.Visibility = Visibility.Visible;
+            ControlDailySpeakersExpander.IsEnabled = !all;
+
+            ControlDailySpeakersPanel.Children.Clear();
+            var rooms = _sonos.GetCoordinatorCandidates()
+                .Select(c => c.Room)
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // Prefer topology visible rooms if candidates are thin (single group).
+            if (rooms.Count == 0 && _sonos.LastTopology is { Members: { Count: > 0 } members })
+            {
+                rooms = members
+                    .Where(m => !m.Invisible && !string.IsNullOrWhiteSpace(m.RoomName))
+                    .Select(m => m.RoomName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            var selected = _settings.DailyGroupRooms
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // Seed selection: if empty and not-all, check preferred + active so user has a starting set.
+            if (!all && selected.Count == 0)
+            {
+                var seed = _settings.PreferredHouseCoordinatorRoom
+                           ?? _settings.ActiveRoom
+                           ?? _sonos.ActiveRoom;
+                if (!string.IsNullOrWhiteSpace(seed))
+                    selected.Add(seed.Trim());
+            }
+
+            if (ControlDailySpeakersHint is not null)
+            {
+                ControlDailySpeakersHint.Text = all
+                    ? "All speakers join Daily shuffle / Fresh Start / house regroup."
+                    : selected.Count == 0
+                        ? "Check at least one room (or turn All speakers back on)."
+                        : $"{selected.Count} room(s) selected · unchecked rooms leave the Daily group on shuffle.";
+            }
+
+            foreach (var room in rooms)
+            {
+                var included = all || selected.Contains(room);
+                var cb = new System.Windows.Controls.CheckBox
+                {
+                    Content = room,
+                    IsChecked = included,
+                    Margin = new Thickness(0, 2, 0, 2),
+                    Tag = room,
+                    IsEnabled = !all,
+                };
+                cb.Checked += ControlDailySpeakerRoomCheck_Changed;
+                cb.Unchecked += ControlDailySpeakerRoomCheck_Changed;
+                ControlDailySpeakersPanel.Children.Add(cb);
+            }
+
+            if (rooms.Count == 0 && ControlDailySpeakersHint is not null)
+                ControlDailySpeakersHint.Text = "No rooms discovered yet — refresh devices, then re-open Control.";
+        }
+        finally
+        {
+            _suppressDailySpeakerUi = false;
+        }
+    }
+
+    private void ControlDailyAllSpeakersCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressDailySpeakerUi || !_loaded || ControlDailyAllSpeakersCheck is null)
+            return;
+
+        var all = ControlDailyAllSpeakersCheck.IsChecked == true;
+        _settings.DailyGroupAllSpeakers = all;
+        if (all)
+        {
+            // Keep DailyGroupRooms as last custom set for next uncheck.
+        }
+        else
+        {
+            // Expand and ensure preferred/active is in the list.
+            if (_settings.DailyGroupRooms.Count == 0)
+            {
+                var seed = _settings.PreferredHouseCoordinatorRoom
+                           ?? _settings.ActiveRoom
+                           ?? _sonos.ActiveRoom;
+                if (!string.IsNullOrWhiteSpace(seed))
+                    _settings.DailyGroupRooms = [seed.Trim()];
+            }
+        }
+
+        try { _store.Save(_settings.EnsureShape()); }
+        catch (Exception ex) { AppLog.Warn("Save Daily speakers (All) failed", ex); }
+
+        // Expand when not-all; collapse when all.
+        if (ControlDailySpeakersExpander is not null)
+        {
+            ControlDailySpeakersExpander.IsExpanded = !all;
+            ControlDailySpeakersExpander.IsEnabled = !all;
+        }
+
+        RefreshControlDailySpeakersUi();
+    }
+
+    private void ControlDailySpeakersExpander_Expanded(object sender, RoutedEventArgs e)
+    {
+        // If user expands while All is on, switch to pick mode.
+        if (_suppressDailySpeakerUi || !_loaded)
+            return;
+        if (ControlDailyAllSpeakersCheck?.IsChecked == true)
+        {
+            ControlDailyAllSpeakersCheck.IsChecked = false;
+        }
+        else
+        {
+            RefreshControlDailySpeakersUi();
+        }
+    }
+
+    private void ControlDailySpeakerRoomCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressDailySpeakerUi || !_loaded)
+            return;
+        if (_settings.DailyGroupAllSpeakers)
+            return;
+
+        PersistDailySpeakerRoomChecksFromUi();
+    }
+
+    private void ControlDailySpeakersCheckAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded || _settings.DailyGroupAllSpeakers)
+            return;
+        SetAllDailySpeakerRoomChecks(included: true);
+    }
+
+    private void ControlDailySpeakersUncheckAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded || _settings.DailyGroupAllSpeakers)
+            return;
+        SetAllDailySpeakerRoomChecks(included: false);
+    }
+
+    private void SetAllDailySpeakerRoomChecks(bool included)
+    {
+        if (ControlDailySpeakersPanel is null)
+            return;
+
+        _suppressDailySpeakerUi = true;
+        try
+        {
+            foreach (var cb in ControlDailySpeakersPanel.Children.OfType<System.Windows.Controls.CheckBox>())
+                cb.IsChecked = included;
+        }
+        finally
+        {
+            _suppressDailySpeakerUi = false;
+        }
+
+        PersistDailySpeakerRoomChecksFromUi();
+    }
+
+    private void PersistDailySpeakerRoomChecksFromUi()
+    {
+        if (ControlDailySpeakersPanel is null)
+            return;
+
+        var selected = ControlDailySpeakersPanel.Children
+            .OfType<System.Windows.Controls.CheckBox>()
+            .Where(c => c.IsChecked == true && c.Tag is string)
+            .Select(c => (string)c.Tag!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _settings.DailyGroupRooms = selected;
+
+        try { _store.Save(_settings.EnsureShape()); }
+        catch (Exception ex) { AppLog.Warn("Save Daily speaker list failed", ex); }
+
+        if (ControlDailySpeakersHint is not null)
+        {
+            ControlDailySpeakersHint.Text = selected.Count == 0
+                ? "Check at least one room (or turn All speakers back on)."
+                : $"{selected.Count} room(s) selected · unchecked rooms leave the Daily group on shuffle.";
+        }
+    }
 
     private void RefreshControlShuffleSourceCombo()
     {

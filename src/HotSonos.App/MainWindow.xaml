@@ -110,6 +110,41 @@
                                                Text=""
                                                FontSize="12" FontWeight="SemiBold"
                                                Foreground="#FF1C8E54" Margin="0,8,0,0" TextWrapping="Wrap" />
+
+                                    <!-- Daily house group: which speakers join on shuffle / Fresh Start / house regroup -->
+                                    <TextBlock Text="Speakers in Daily group" FontWeight="SemiBold" Margin="0,12,0,2"
+                                               Foreground="#FF1C2536" />
+                                    <TextBlock Text="All = whole house. Uncheck All to pick rooms (e.g. leave upstairs off while guests sleep)."
+                                               Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                    <CheckBox x:Name="ControlDailyAllSpeakersCheck"
+                                              Content="All speakers"
+                                              FontWeight="SemiBold"
+                                              Margin="0,2,0,2"
+                                              Checked="ControlDailyAllSpeakersCheck_Changed"
+                                              Unchecked="ControlDailyAllSpeakersCheck_Changed" />
+                                    <Expander x:Name="ControlDailySpeakersExpander"
+                                              Header="Choose speakers…"
+                                              Margin="0,2,0,0"
+                                              IsExpanded="False"
+                                              Expanded="ControlDailySpeakersExpander_Expanded">
+                                        <Border BorderBrush="#FFBFD9C9" BorderThickness="1" CornerRadius="4"
+                                                Background="#FFF7FCF8" Padding="8,6" Margin="0,4,0,0">
+                                            <StackPanel>
+                                                <TextBlock x:Name="ControlDailySpeakersHint"
+                                                           Text=""
+                                                           FontSize="11" Foreground="#FF60707F"
+                                                           TextWrapping="Wrap" Margin="0,0,0,6" />
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="Check all" Height="26" Padding="10,0" Margin="0,0,8,0"
+                                                            Click="ControlDailySpeakersCheckAll_Click" />
+                                                    <Button Content="Uncheck all" Height="26" Padding="10,0"
+                                                            Click="ControlDailySpeakersUncheckAll_Click" />
+                                                </StackPanel>
+                                                <StackPanel x:Name="ControlDailySpeakersPanel" />
+                                            </StackPanel>
+                                        </Border>
+                                    </Expander>
+
                                     <Separator Margin="0,12,0,10" Background="#FF2ECC71" Opacity="0.4" />
                                     <TextBlock Text="🔄 Restart fresh" FontSize="15" FontWeight="SemiBold" Foreground="#FF1C2536" />
                                     <TextBlock Text="Re-discover, regroup all speakers, and start a new shuffle."

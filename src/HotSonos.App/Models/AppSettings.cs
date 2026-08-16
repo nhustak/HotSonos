@@ -81,6 +81,43 @@ public sealed class AppSettings
     /// </summary>
     public string? PreferredHouseCoordinatorRoom { get; set; }
 
+    /// <summary>
+    /// When true (default), Daily shuffle / Fresh Start / house regroup join every visible speaker.
+    /// When false, only rooms in <see cref="DailyGroupRooms"/> join (and others are left out of the group).
+    /// </summary>
+    public bool DailyGroupAllSpeakers { get; set; } = true;
+
+    /// <summary>
+    /// Room names included in the Daily house group when <see cref="DailyGroupAllSpeakers"/> is false.
+    /// Empty while not-all is treated as all (safe fallback). Prefer keeping the preferred coordinator checked.
+    /// </summary>
+    public List<string> DailyGroupRooms { get; set; } = [];
+
+    /// <summary>
+    /// Rooms allowed in the Daily group, or null when every speaker should join.
+    /// </summary>
+    public IReadOnlySet<string>? GetDailyGroupRoomAllowList()
+    {
+        if (DailyGroupAllSpeakers)
+            return null;
+        DailyGroupRooms ??= [];
+        var set = DailyGroupRooms
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Empty selection must not strand the house — fall back to all.
+        return set.Count == 0 ? null : set;
+    }
+
+    public bool IsDailyGroupRoom(string? roomName)
+    {
+        if (string.IsNullOrWhiteSpace(roomName))
+            return false;
+        var allow = GetDailyGroupRoomAllowList();
+        return allow is null || allow.Contains(roomName.Trim());
+    }
+
     /// <summary>Pop the Now-Playing flyout on every track change.</summary>
     public bool ShowFlyoutOnTrackChange { get; set; } = true;
 
@@ -514,6 +551,15 @@ public sealed class AppSettings
             .Select(g => g.Last())
             .Where(o => o.OffsetPercent != 0)
             .ToList();
+        DailyGroupRooms ??= [];
+        DailyGroupRooms = DailyGroupRooms
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        // Not-all with zero rooms → treat as all (avoid empty house by accident).
+        if (!DailyGroupAllSpeakers && DailyGroupRooms.Count == 0)
+            DailyGroupAllSpeakers = true;
         if (NightlyResetMinutes is < 0 or > 1439) NightlyResetMinutes = 180;
         if (WakeMinutes is < 0 or > 1439) WakeMinutes = 7 * 60;
         if (WakeDaysMask is < 0 or > 0b1111111) WakeDaysMask = DefaultWakeDaysMask;

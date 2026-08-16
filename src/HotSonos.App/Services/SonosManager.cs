@@ -1761,15 +1761,33 @@ public sealed class SonosManager
 
         await RefreshAsync(null, ct).ConfigureAwait(false);
 
+        var allow = _settings().EnsureShape().GetDailyGroupRoomAllowList();
+        var want = roomName.Trim();
+        // Preferred must be in the Daily speaker set when subset mode is on.
+        if (allow is not null && !allow.Contains(want))
+        {
+            var fallback = allow
+                .Select(r => _zones.FirstOrDefault(z =>
+                    string.Equals(z.RoomName, r, StringComparison.OrdinalIgnoreCase)))
+                .FirstOrDefault(z => z is not null);
+            if (fallback is null)
+                throw new InvalidOperationException(
+                    $"Preferred coordinator '{want}' is not in the Daily speaker list, " +
+                    "and none of the checked rooms are online. Check Control → Speakers in Daily.");
+            AppLog.Warn(
+                $"Preferred coordinator '{want}' not in Daily list — using '{fallback.RoomName}' instead");
+            want = fallback.RoomName;
+        }
+
         var zone = _zones.FirstOrDefault(z =>
-            string.Equals(z.RoomName, roomName.Trim(), StringComparison.OrdinalIgnoreCase));
+            string.Equals(z.RoomName, want, StringComparison.OrdinalIgnoreCase));
         if (zone is null)
             throw new InvalidOperationException(
-                $"Room '{roomName}' not found. Refresh devices and pick a room from the list.");
+                $"Room '{want}' not found. Refresh devices and pick a room from the list.");
 
         AppLog.Info(
             $"SetHouseCoordinator start → {zone.RoomName} @ {zone.IpAddress} uuid={zone.Uuid} " +
-            $"(wasCoordinator={zone.IsCoordinator})");
+            $"(wasCoordinator={zone.IsCoordinator}, dailySubset={(allow is null ? "all" : string.Join("+", allow))})");
 
         // If Theater (etc.) is currently a slave of Office, it must become standalone first
         // or other rooms cannot join it as coordinator.
@@ -1810,10 +1828,14 @@ public sealed class SonosManager
         return msg;
     }
 
-    /// <summary>Live check: is <paramref name="coordinatorUuid"/> leading one house-sized group?</summary>
+    /// <summary>
+    /// Live check: is <paramref name="coordinatorUuid"/> leading the intended group?
+    /// Full-house: almost all visible rooms. Daily subset: all allow-listed rooms under the coordinator.
+    /// </summary>
     public (bool Ok, int GroupCount, int MembersUnderCoordinator, bool CoordinatorIsLeader, string? LeaderRoom)
         VerifyHouseGrouping(string coordinatorUuid, string? expectedRoom = null)
     {
+        var allow = _settings().EnsureShape().GetDailyGroupRoomAllowList();
         var visible = _zones.Where(z => !string.IsNullOrWhiteSpace(z.RoomName)).ToList();
         // Prefer topology snapshot when monitor has full members (incl bonded)
         var members = LastTopology?.Members
@@ -1821,28 +1843,46 @@ public sealed class SonosManager
             .ToList();
         if (members is { Count: > 0 })
         {
-            var under = members.Count(m =>
+            var scoped = allow is null
+                ? members
+                : members.Where(m => allow.Contains(m.RoomName)).ToList();
+            var under = scoped.Count(m =>
                 string.Equals(m.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase));
             var leader = members.FirstOrDefault(m =>
                 string.Equals(m.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase));
             var isLeader = leader is not null && leader.IsCoordinator;
             var groupCount = members.Select(m => m.GroupId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            // Success: one primary group with almost all visible rooms under this uuid
-            var visibleRooms = members.Select(m => m.RoomName).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            var ok = isLeader && under >= Math.Max(2, visibleRooms - 1) && groupCount <= 2;
-            // Allow 2 groups if one is tiny leftover (e.g. Workshop left out once)
-            if (!ok && isLeader && under >= visibleRooms - 2 && groupCount <= 3)
-                ok = under >= 3;
+            var scopedRooms = scoped.Select(m => m.RoomName).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            bool ok;
+            if (allow is not null)
+            {
+                // Subset: every intended room under this coordinator (allow 1 miss for flaky Wi-Fi).
+                ok = isLeader && scopedRooms >= 1 && under >= Math.Max(1, scopedRooms - 1);
+            }
+            else
+            {
+                // Full house: one primary group with almost all visible rooms under this uuid
+                var visibleRooms = members.Select(m => m.RoomName).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                ok = isLeader && under >= Math.Max(2, visibleRooms - 1) && groupCount <= 2;
+                if (!ok && isLeader && under >= visibleRooms - 2 && groupCount <= 3)
+                    ok = under >= 3;
+            }
+
             return (ok, groupCount, under, isLeader, leader?.RoomName);
         }
 
-        var underZ = visible.Count(z =>
+        var scopedZ = allow is null
+            ? visible
+            : visible.Where(z => allow.Contains(z.RoomName)).ToList();
+        var underZ = scopedZ.Count(z =>
             string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase));
         var leadZ = visible.FirstOrDefault(z =>
             string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase));
         var isLead = leadZ?.IsCoordinator == true;
         var gc = Groups.Count;
-        var okZ = isLead && underZ >= Math.Max(2, visible.Count - 1);
+        var okZ = allow is null
+            ? isLead && underZ >= Math.Max(2, visible.Count - 1)
+            : isLead && underZ >= Math.Max(1, scopedZ.Count - 1);
         return (okZ, gc, underZ, isLead, leadZ?.RoomName);
     }
 
@@ -1878,16 +1918,52 @@ public sealed class SonosManager
     {
         var failed = new List<string>();
         var joined = 0;
+        var allow = _settings().EnsureShape().GetDailyGroupRoomAllowList();
+
         // Distinct players by UUID (not room — stereo pairs).
-        var targets = _zones
+        var allPlayers = _zones
             .Where(z => !string.IsNullOrWhiteSpace(z.Uuid) && !string.IsNullOrWhiteSpace(z.IpAddress))
             .GroupBy(z => z.Uuid, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
-            .Where(z => !string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
+        // Join only Daily-allowlisted rooms (null allowlist = all). Always exclude the coordinator itself.
+        var targets = allPlayers
+            .Where(z => !string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
+            .Where(z => allow is null || allow.Contains(z.RoomName))
+            .ToList();
+
+        // Leave rooms that must stay out of Daily (e.g. upstairs while daughter is visiting).
+        var leave = allow is null
+            ? []
+            : allPlayers
+                .Where(z => !string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
+                .Where(z => !allow.Contains(z.RoomName))
+                .Where(z => string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(z.CoordinatorUuid, z.Uuid, StringComparison.OrdinalIgnoreCase) == false)
+                .ToList();
+
         AppLog.Info(
-            $"RegroupAllTo {coordinatorRoom} ({coordinatorUuid}): joining {targets.Count} player(s)");
+            $"RegroupAllTo {coordinatorRoom} ({coordinatorUuid}): joining {targets.Count} player(s)" +
+            (allow is null ? " (all speakers)" : $", leaving {leave.Count} out of Daily"));
+
+        foreach (var zone in leave)
+        {
+            // Already alone — nothing to detach.
+            if (string.Equals(zone.CoordinatorUuid, zone.Uuid, StringComparison.OrdinalIgnoreCase)
+                && zone.IsCoordinator)
+                continue;
+
+            try
+            {
+                await BecomeStandaloneCoordinatorAsync(zone, ct).ConfigureAwait(false);
+                AppLog.Info($"Daily leave: {zone.RoomName} detached from house group");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"Daily leave FAILED {zone.RoomName}: {ex.Message}");
+            }
+        }
 
         foreach (var zone in targets)
         {

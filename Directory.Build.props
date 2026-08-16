@@ -10,10 +10,10 @@
     <!-- Isolation ladder on crash1: 1.0.0.59-#  (# = last isolation item applied).
          A trailing .P marks a non-ladder patch on top of rung #, so ladder numbering
          stays intact (this is NOT rung 7 — that rung is still poll 5s→10s). -->
-    <Version>1.0.0.59-6.7</Version>
+    <Version>1.0.0.59-6.9</Version>
     <!-- Assembly/FileVersion must be 4 numeric parts; map 59-N.P → 1.0.59.N0P -->
-    <AssemblyVersion>1.0.59.607</AssemblyVersion>
-    <FileVersion>1.0.59.607</FileVersion>
+    <AssemblyVersion>1.0.59.609</AssemblyVersion>
+    <FileVersion>1.0.59.609</FileVersion>
     <!-- Keep InformationalVersion exactly equal to $(Version) (no +commit suffix),
          since the app displays it. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
