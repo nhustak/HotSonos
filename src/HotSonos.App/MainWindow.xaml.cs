@@ -2026,6 +2026,28 @@ public partial class MainWindow : Window
     private void LibraryResultsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
         SyncLibraryPresetButtonsFromSelection();
 
+    /// <summary>
+    /// Per-row tooltip: last plays from play-events trail (up to 5 started events).
+    /// play-history.json only keeps one “played” key per track for shuffle exclude.
+    /// </summary>
+    private void LibraryResultsGrid_LoadingRow(object? sender, DataGridRowEventArgs e)
+    {
+        if (e.Row.Item is not LibraryResultRow row || string.IsNullOrWhiteSpace(row.Path))
+        {
+            e.Row.ToolTip = null;
+            return;
+        }
+
+        try
+        {
+            e.Row.ToolTip = _sonos.PlayEvents.FormatRecentPlaysTooltip(row.Path, max: 5);
+        }
+        catch
+        {
+            e.Row.ToolTip = "Play history unavailable.";
+        }
+    }
+
     /// <summary>Build toggle buttons from the flat tag catalog (labels only; keys stay internal).</summary>
     private void RebuildLibraryPresetButtons()
     {

@@ -64,6 +64,8 @@ public sealed class SonosManager
     private bool _topologySeen;
     private int _topUpInFlight; // 0/1
     private int _recoverInFlight; // 0/1
+    /// <summary>Depth of pause-while-regroup. Auto-recover must not Next/Play while this is &gt; 0.</summary>
+    private int _regroupHoldDepth;
     private int _nowPlayingPollInFlight; // 0/1
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private System.Threading.Timer? _nowPlayingPollTimer;
@@ -607,6 +609,8 @@ public sealed class SonosManager
         var s = _settings().EnsureShape();
         if (!s.AutoRecoverPlayback)
             return;
+        if (Volatile.Read(ref _regroupHoldDepth) > 0)
+            return;
         if (_controller is null)
             return;
 
@@ -1059,7 +1063,7 @@ public sealed class SonosManager
             await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
             if (_controller is null)
                 throw new InvalidOperationException("No Sonos speakers found. Check the speakers are powered on and on the network.");
-            await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
+            await GroupAllSpeakersAsync(ct, resumeAfter: false).ConfigureAwait(false);
             var fresh = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
             _playbackMode = "shuffle";
             return $"🔄 Fresh start: re-synced + shuffle ({fresh})";
@@ -1126,7 +1130,7 @@ public sealed class SonosManager
                 return "⏮ Previous";
             }
             case HotsonosAction.ShuffleLibrary:
-                await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
+                await GroupAllSpeakersAsync(ct, resumeAfter: false).ConfigureAwait(false);
                 var shuffleSummary = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
                 _playbackMode = "shuffle";
                 return $"🔀 Shuffling library → all speakers ({shuffleSummary})";
@@ -1719,35 +1723,40 @@ public sealed class SonosManager
     /// Pulls every visible player under one coordinator so playback covers all speakers.
     /// Uses <see cref="AppSettings.PreferredHouseCoordinatorRoom"/> when that room is online;
     /// otherwise the active group's coordinator. Always re-discovers and verifies topology.
+    /// Pauses playing coordinators for the join, then resumes unless
+    /// <paramref name="resumeAfter"/> is false (caller is about to start a new queue).
     /// </summary>
-    public async Task GroupAllSpeakersAsync(CancellationToken ct = default)
+    public async Task GroupAllSpeakersAsync(CancellationToken ct = default, bool resumeAfter = true)
     {
-        var preferred = _settings().EnsureShape().PreferredHouseCoordinatorRoom;
-        if (!string.IsNullOrWhiteSpace(preferred))
+        await HoldPlaybackForRegroupAsync(async () =>
         {
-            try
+            var preferred = _settings().EnsureShape().PreferredHouseCoordinatorRoom;
+            if (!string.IsNullOrWhiteSpace(preferred))
             {
-                await SetHouseCoordinatorAsync(preferred, ct).ConfigureAwait(false);
+                try
+                {
+                    await SetHouseCoordinatorAsync(preferred, ct).ConfigureAwait(false);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn(
+                        $"GroupAll via preferred '{preferred}' failed — falling back to active coordinator",
+                        ex);
+                }
+            }
+
+            if (_zones.Count == 0)
+                await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
+            if (_controller is null)
                 return;
-            }
-            catch (Exception ex)
-            {
-                AppLog.Warn(
-                    $"GroupAll via preferred '{preferred}' failed — falling back to active coordinator",
-                    ex);
-            }
-        }
 
-        if (_zones.Count == 0)
+            var uuid = _controller.CoordinatorUuid;
+            var room = ActiveRoom ?? _controller.CoordinatorIp;
+            await RegroupAllToUuidAsync(uuid, room, ct).ConfigureAwait(false);
             await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
-        if (_controller is null)
-            return;
-
-        var uuid = _controller.CoordinatorUuid;
-        var room = ActiveRoom ?? _controller.CoordinatorIp;
-        await RegroupAllToUuidAsync(uuid, room, ct).ConfigureAwait(false);
-        await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
-        LogGroupingVerification(uuid, room);
+            LogGroupingVerification(uuid, room);
+        }, ct, resumeAfter).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1759,6 +1768,12 @@ public sealed class SonosManager
         if (string.IsNullOrWhiteSpace(roomName))
             throw new ArgumentException("Room name required.", nameof(roomName));
 
+        return await HoldPlaybackForRegroupAsync(() => SetHouseCoordinatorCoreAsync(roomName, ct), ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<string> SetHouseCoordinatorCoreAsync(string roomName, CancellationToken ct)
+    {
         await RefreshAsync(null, ct).ConfigureAwait(false);
 
         var allow = _settings().EnsureShape().GetDailyGroupRoomAllowList();
@@ -1789,10 +1804,19 @@ public sealed class SonosManager
             $"SetHouseCoordinator start → {zone.RoomName} @ {zone.IpAddress} uuid={zone.Uuid} " +
             $"(wasCoordinator={zone.IsCoordinator}, dailySubset={(allow is null ? "all" : string.Join("+", allow))})");
 
-        // If Theater (etc.) is currently a slave of Office, it must become standalone first
-        // or other rooms cannot join it as coordinator.
-        await BecomeStandaloneCoordinatorAsync(zone, ct).ConfigureAwait(false);
-        await Task.Delay(400, ct).ConfigureAwait(false);
+        // Only BecomeStandalone when the preferred room is a *slave* of another group.
+        // Calling it on an already-leading coordinator tears the house group down and
+        // advances/skips tracks on the AVTransport queue (Topology Regroup All symptom).
+        if (!zone.IsCoordinator)
+        {
+            await BecomeStandaloneCoordinatorAsync(zone, ct).ConfigureAwait(false);
+            await Task.Delay(400, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            AppLog.Info(
+                $"SetHouseCoordinator: {zone.RoomName} already group leader — skip BecomeStandalone (protect queue)");
+        }
 
         var join = await RegroupAllToUuidAsync(zone.Uuid, zone.RoomName, ct).ConfigureAwait(false);
 
@@ -1927,25 +1951,34 @@ public sealed class SonosManager
             .Select(g => g.First())
             .ToList();
 
-        // Join only Daily-allowlisted rooms (null allowlist = all). Always exclude the coordinator itself.
+        // Join only Daily-allowlisted rooms (null allowlist = all). Skip coordinator + rooms
+        // already under it — re-SetAVTransportURI(x-rincon) on members that are already joined
+        // can blip transport and skip tracks.
         var targets = allPlayers
             .Where(z => !string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
             .Where(z => allow is null || allow.Contains(z.RoomName))
+            .Where(z => !string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-        // Leave rooms that must stay out of Daily (e.g. upstairs while daughter is visiting).
+        // Leave rooms that must stay out of Daily (e.g. upstairs while daughter is visiting)
+        // and are currently following this coordinator.
         var leave = allow is null
             ? []
             : allPlayers
                 .Where(z => !string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
                 .Where(z => !allow.Contains(z.RoomName))
-                .Where(z => string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(z.CoordinatorUuid, z.Uuid, StringComparison.OrdinalIgnoreCase) == false)
+                .Where(z => string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
+        var already = allPlayers.Count(z =>
+            !string.Equals(z.Uuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(z.CoordinatorUuid, coordinatorUuid, StringComparison.OrdinalIgnoreCase)
+            && (allow is null || allow.Contains(z.RoomName)));
+
         AppLog.Info(
-            $"RegroupAllTo {coordinatorRoom} ({coordinatorUuid}): joining {targets.Count} player(s)" +
-            (allow is null ? " (all speakers)" : $", leaving {leave.Count} out of Daily"));
+            $"RegroupAllTo {coordinatorRoom} ({coordinatorUuid}): joining {targets.Count} " +
+            $"(already in group {already})" +
+            (allow is null ? " · all speakers" : $", leaving {leave.Count} out of Daily"));
 
         foreach (var zone in leave)
         {
@@ -2005,7 +2038,94 @@ public sealed class SonosManager
 
     /// <summary>Joins every visible player to the given coordinator UUID (whole-house).</summary>
     public async Task GroupAllSpeakersToAsync(string coordinatorUuid, CancellationToken ct = default) =>
-        await RegroupAllToUuidAsync(coordinatorUuid, coordinatorUuid, ct).ConfigureAwait(false);
+        await HoldPlaybackForRegroupAsync(
+            () => RegroupAllToUuidAsync(coordinatorUuid, coordinatorUuid, ct),
+            ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// Pause every playing coordinator, run <paramref name="work"/> (joins / standalone),
+    /// then resume if we paused — unless <paramref name="resumeAfter"/> is false.
+    /// Re-entrant so GroupAll → SetHouseCoordinator does not double-pause.
+    /// </summary>
+    private async Task HoldPlaybackForRegroupAsync(Func<Task> work, CancellationToken ct, bool resumeAfter = true)
+    {
+        await HoldPlaybackForRegroupAsync(async () =>
+        {
+            await work().ConfigureAwait(false);
+            return 0;
+        }, ct, resumeAfter).ConfigureAwait(false);
+    }
+
+    private async Task<T> HoldPlaybackForRegroupAsync<T>(Func<Task<T>> work, CancellationToken ct, bool resumeAfter = true)
+    {
+        var outer = Interlocked.Increment(ref _regroupHoldDepth) == 1;
+        var resume = false;
+        try
+        {
+            if (outer)
+            {
+                AppLog.Info("Regroup hold: pause while the group is built");
+                foreach (var group in Groups)
+                {
+                    try
+                    {
+                        var c = new SonosController(group.CoordinatorIp, group.CoordinatorUuid, _soap);
+                        var state = await c.GetTransportStateAsync(ct).ConfigureAwait(false);
+                        if (!IsPlayingLike(state))
+                            continue;
+                        await c.PauseAsync(ct).ConfigureAwait(false);
+                        resume = true;
+                        AppLog.Info($"Regroup hold: paused {group.CoordinatorRoom} @ {group.CoordinatorIp}");
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Warn($"Regroup hold: pause failed @ {group.CoordinatorIp}: {ex.Message}");
+                    }
+                }
+
+                if (!resume && _controller is not null)
+                {
+                    try
+                    {
+                        var state = await _controller.GetTransportStateAsync(ct).ConfigureAwait(false);
+                        if (IsPlayingLike(state))
+                        {
+                            await _controller.PauseAsync(ct).ConfigureAwait(false);
+                            resume = true;
+                            AppLog.Info("Regroup hold: paused active coordinator");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Warn($"Regroup hold: pause active failed: {ex.Message}");
+                    }
+                }
+            }
+
+            return await work().ConfigureAwait(false);
+        }
+        finally
+        {
+            try
+            {
+                if (outer && resume && resumeAfter && _controller is not null)
+                {
+                    await _controller.PlayAsync(ct).ConfigureAwait(false);
+                    AppLog.Info("Regroup hold: resumed after group built");
+                }
+                else if (outer && resume && !resumeAfter)
+                {
+                    AppLog.Info("Regroup hold: left paused (caller starts new playback)");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Regroup hold: resume failed", ex);
+            }
+
+            Interlocked.Decrement(ref _regroupHoldDepth);
+        }
+    }
 
     /// <summary>
     /// Renames a player room via DeviceProperties <c>SetZoneAttributes</c>
@@ -2454,7 +2574,7 @@ public sealed class SonosManager
         if (_controller is null)
             throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
 
-        await GroupAllSpeakersAsync(ct).ConfigureAwait(false);
+        await GroupAllSpeakersAsync(ct, resumeAfter: false).ConfigureAwait(false);
         var summary = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
         return $"🔀 Resume shuffle → all speakers ({summary})";
     }

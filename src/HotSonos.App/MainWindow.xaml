@@ -803,7 +803,8 @@
                               AlternatingRowBackground="#FFF0F4F8" Background="White"
                               BorderBrush="#FFD8DEE4" BorderThickness="1"
                               SelectionMode="Extended" FontSize="12"
-                              SelectionChanged="LibraryResultsGrid_SelectionChanged">
+                              SelectionChanged="LibraryResultsGrid_SelectionChanged"
+                              LoadingRow="LibraryResultsGrid_LoadingRow">
                         <DataGrid.ContextMenu>
                             <ContextMenu Opened="LibraryContextMenu_Opened">
                                 <MenuItem x:Name="LibraryApplyPresetMenu" Header="Toggle tag…" />

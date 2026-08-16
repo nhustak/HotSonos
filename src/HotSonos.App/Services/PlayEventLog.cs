@@ -69,6 +69,53 @@ public sealed class PlayEventLog
         }
     }
 
+    /// <summary>
+    /// Most recent plays for one track (library path or Sonos URI). Newest first.
+    /// Uses the play-events trail (started by default) — not play-history.json, which
+    /// only keeps one “played” key per track for shuffle exclusion.
+    /// </summary>
+    public IReadOnlyList<PlayEvent> GetRecentForTrack(string? pathOrUri, int max = 5, string kind = "started")
+    {
+        max = Math.Clamp(max, 1, 20);
+        var key = PlayHistoryStore.NormalizeKey(pathOrUri);
+        if (key.Length == 0)
+            return [];
+
+        lock (_gate)
+        {
+            // Match full key or path tail (UNC vs x-file-cifs can differ in host/prefix shape).
+            var fileTail = key.Contains('/') ? key[(key.LastIndexOf('/') + 1)..] : key;
+            return _ring
+                .Where(e =>
+                    string.Equals(e.Kind, kind, StringComparison.OrdinalIgnoreCase)
+                    && e.Key is { Length: > 0 } ek
+                    && (string.Equals(ek, key, StringComparison.OrdinalIgnoreCase)
+                        || ek.EndsWith("/" + fileTail, StringComparison.OrdinalIgnoreCase)
+                        || ek.EndsWith(fileTail, StringComparison.OrdinalIgnoreCase)))
+                .OrderByDescending(e => e.Utc)
+                .Take(max)
+                .ToList();
+        }
+    }
+
+    /// <summary>Human lines for a library tooltip (local time). Empty if no plays known.</summary>
+    public string FormatRecentPlaysTooltip(string? pathOrUri, int max = 5)
+    {
+        var plays = GetRecentForTrack(pathOrUri, max, "started");
+        if (plays.Count == 0)
+            return "No recent plays recorded.";
+
+        var lines = new List<string> { plays.Count == 1 ? "Last play:" : $"Last {plays.Count} plays:" };
+        foreach (var p in plays)
+        {
+            var local = p.Utc.ToLocalTime();
+            var src = string.IsNullOrWhiteSpace(p.Source) ? "" : $" · {p.Source}";
+            lines.Add($"  {local:yyyy-MM-dd HH:mm}{src}");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
     public object Snapshot(int max = 40) => new
     {
         file = _path,

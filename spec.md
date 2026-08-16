@@ -27,7 +27,7 @@ Numbered re-land of `stable/aug5-topology` commit `f6a3148` (1.0.0.70) onto hour
 | **8** | `1.0.0.59-8` | SSDP serialize send/recv | Pending |
 | **9** | `1.0.0.59-9` | Full ChannelMapSet on members | Pending |
 | **10** | `1.0.0.59-10` | SubGain | Pending |
-| **11** | `1.0.0.59-11` | Safer regroup | Pending |
+| **11** | `1.0.0.59-11` | Safer regroup | Partial — pause all playing coordinators for the join; block auto-recover Next/Play during hold; resume after unless caller starts a new shuffle. Version not bumped (ladder still on #6). |
 | **12** | `1.0.0.59-12` | Rebuild-bond | Pending |
 | **13** | `1.0.0.59-13` | MainWindow topology UI | Pending |
 | **14** | `1.0.0.59-14` | MCP tools expansion | Pending |
