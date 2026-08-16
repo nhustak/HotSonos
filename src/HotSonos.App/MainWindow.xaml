@@ -815,6 +815,18 @@
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="" Width="36" CanUserResize="False" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Loaded="LibraryPlayNowButton_Loaded"
+                                                Click="LibraryPlayNowButton_Click"
+                                                ToolTip="Play now — insert next and play without clearing the shuffle queue"
+                                                Padding="2" Margin="1" Width="28" Height="24"
+                                                Cursor="Hand" Background="Transparent" BorderThickness="0"
+                                                Focusable="False" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="1.6*" />
                             <DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="1.2*" />
                             <DataGridTextColumn Header="Album" Binding="{Binding Album}" Width="1.2*" />

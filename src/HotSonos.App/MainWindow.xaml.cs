@@ -2048,6 +2048,75 @@ public partial class MainWindow : Window
         }
     }
 
+    private void LibraryPlayNowButton_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn || btn.Content is not null)
+            return;
+        var img = AppIcons.CreateImage(AppIcons.Lightning, 14);
+        img.Margin = new Thickness(0);
+        btn.Content = img;
+    }
+
+    /// <summary>
+    /// Library ⚡: insert this track next and play immediately without
+    /// RemoveAllTracksFromQueue (shuffle remainder stays put).
+    /// </summary>
+    private async void LibraryPlayNowButton_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not System.Windows.Controls.Button btn)
+            return;
+        var row = btn.DataContext as LibraryResultRow
+                  ?? (btn.TemplatedParent as FrameworkElement)?.DataContext as LibraryResultRow;
+        // DataGrid cell: DataContext is usually the row item.
+        if (row is null && btn.DataContext is null)
+        {
+            var fe = btn as FrameworkElement;
+            while (fe is not null && row is null)
+            {
+                fe = System.Windows.Media.VisualTreeHelper.GetParent(fe) as FrameworkElement;
+                row = fe?.DataContext as LibraryResultRow;
+            }
+        }
+
+        if (row is null || string.IsNullOrWhiteSpace(row.Path))
+        {
+            MessageBox.Show(this, "No track path on this row.", "Play now",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (string.Equals(row.SonosOk, "NO", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this,
+                "This track is marked Sonos-unplayable. Fix format/path first.",
+                "Play now", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        btn.IsEnabled = false;
+        try
+        {
+            var toast = await _sonos.PlayLibraryTrackNowAsync(row.Path, row.Title, row.Artist)
+                .ConfigureAwait(true);
+            if (StatusText is not null) StatusText.Text = toast;
+            if (LibraryStatusText is not null) LibraryStatusText.Text = toast;
+            AppLog.Info(toast);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Play now failed", ex);
+            if (StatusText is not null) StatusText.Text = "Play now failed.";
+            if (LibraryStatusText is not null) LibraryStatusText.Text = "Play now failed.";
+            MessageBox.Show(this, ex.Message, "Play now",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            btn.IsEnabled = true;
+        }
+    }
+
     /// <summary>Build toggle buttons from the flat tag catalog (labels only; keys stay internal).</summary>
     private void RebuildLibraryPresetButtons()
     {

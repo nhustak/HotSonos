@@ -2438,6 +2438,36 @@ public sealed class SonosManager
     }
 
     /// <summary>
+    /// Insert one library track after the current song and play it now without
+    /// clearing the queue (keeps shuffle / remaining order intact). Does not
+    /// switch playback mode away from shuffle/folder so auto top-up continues.
+    /// </summary>
+    public async Task<string> PlayLibraryTrackNowAsync(
+        string pathOrUri,
+        string? title = null,
+        string? artist = null,
+        CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+
+        if (!SonosPath.TryToCifsUri(pathOrUri, out var cifs))
+            throw new ArgumentException("Path must be a UNC path or x-file-cifs URI under the Sonos library.", nameof(pathOrUri));
+
+        await _controller.InsertLibraryUriAndPlayNowAsync(cifs, title, artist, ct).ConfigureAwait(false);
+        // Session-served so top-up won't re-queue this cut immediately; keep mode.
+        RememberServed([cifs]);
+        try { _playHistory.RecordPlayed(cifs); }
+        catch (Exception ex) { AppLog.Warn("RecordPlayed (play now) failed", ex); }
+
+        var label = string.IsNullOrWhiteSpace(title)
+            ? System.IO.Path.GetFileName(pathOrUri)
+            : (string.IsNullOrWhiteSpace(artist) ? title : $"{title} — {artist}");
+        AppLog.Info($"Play library track now (queue preserved, mode={_playbackMode}): {cifs}");
+        return $"▶ now {label}";
+    }
+
+    /// <summary>
     /// Queue all library tracks with a catalog tag (label or key), optionally shuffled, and play.
     /// With <see cref="AppSettings.ContinueLibraryShuffleAfterSpecialPlay"/>, auto top-up
     /// continues into full-library shuffle when the tag queue runs low (same as one-shot).

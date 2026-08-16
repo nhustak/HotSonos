@@ -791,6 +791,74 @@ public sealed class SonosController
     }
 
     /// <summary>
+    /// Insert one local-library URI after the current track (or at end if idle),
+    /// seek to it, and play — without clearing or rebuilding the queue.
+    /// Preserves an existing shuffle queue so the rest keeps playing afterward.
+    /// </summary>
+    public async Task InsertLibraryUriAndPlayNowAsync(
+        string cifsUri,
+        string? title = null,
+        string? artist = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(cifsUri))
+            throw new ArgumentException("Track URI is required.", nameof(cifsUri));
+
+        var uri = cifsUri.Trim();
+        var meta = BuildMinimalTrackMetadata(uri, title, artist);
+
+        // EnqueueAsNext=1 inserts after the currently playing track (Sonos "play next").
+        // DesiredFirstTrackNumberEnqueued=0 is ignored when EnqueueAsNext is set.
+        var enqueue = await _soap.InvokeAsync(
+            CoordinatorIp, SonosService.AvTransport, "AddURIToQueue",
+            [
+                new("InstanceID", "0"),
+                new("EnqueuedURI", uri),
+                new("EnqueuedURIMetaData", meta),
+                new("DesiredFirstTrackNumberEnqueued", "0"),
+                new("EnqueueAsNext", "1"),
+            ],
+            ct).ConfigureAwait(false);
+
+        var trackNr = 1;
+        if (int.TryParse(SonosSoapClient.ReadValue(enqueue, "FirstTrackNumberEnqueued"), out var first)
+            && first > 0)
+        {
+            trackNr = first;
+        }
+        else
+        {
+            // Fallback: current track + 1 when response omits the index.
+            var pos = await _soap.InvokeAsync(
+                CoordinatorIp, SonosService.AvTransport, "GetPositionInfo",
+                [new("InstanceID", "0")], ct).ConfigureAwait(false);
+            if (int.TryParse(SonosSoapClient.ReadValue(pos, "Track"), out var cur) && cur > 0)
+                trackNr = cur + 1;
+        }
+
+        // Point at the local queue if transport is on something else (radio, stream, etc.).
+        var media = await _soap.InvokeAsync(
+            CoordinatorIp, SonosService.AvTransport, "GetMediaInfo",
+            [new("InstanceID", "0")], ct).ConfigureAwait(false);
+        var currentUri = SonosSoapClient.ReadValue(media, "CurrentURI") ?? "";
+        var queueUri = $"x-rincon-queue:{CoordinatorUuid}#0";
+        if (!currentUri.StartsWith("x-rincon-queue:", StringComparison.OrdinalIgnoreCase))
+        {
+            await InvokeAvTransport("SetAVTransportURI", ct,
+                ("InstanceID", "0"),
+                ("CurrentURI", queueUri),
+                ("CurrentURIMetaData", "")).ConfigureAwait(false);
+        }
+
+        await InvokeAvTransport("Seek", ct,
+            ("InstanceID", "0"),
+            ("Unit", "TRACK_NR"),
+            ("Target", trackNr.ToString())).ConfigureAwait(false);
+
+        await PlayAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Clear the queue, enqueue one local-library URI (<c>x-file-cifs://…</c>), play it.
     /// Optional title/artist improve the queue display; empty metadata is accepted.
     /// </summary>
