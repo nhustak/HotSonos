@@ -36,7 +36,7 @@ Numbered re-land of `stable/aug5-topology` commit `f6a3148` (1.0.0.70) onto hour
 
 Master `1.0.0.60` / `1.0.0.61` (stale-queue reshuffle, fail-fast regroup) stay **off** this ladder until `.70` items are isolated.
 
-**Patch notes on #6 (crash1):** `6.11` regroup preserves queue. `6.12` Library ⚡ Play now. `6.13–6.14` Library **From** / Daily path scope. `6.15` fix folder/Daily path LIKE (`\%` was literal % under ESCAPE — zero hits for scoped search).
+**Patch notes on #6 (crash1):** `6.11` regroup preserves queue. `6.12` Library ⚡ Play now. `6.13–6.14` Library **From** / Daily path scope. `6.15` fix folder/Daily path LIKE (`\%` was literal % under ESCAPE — zero hits for scoped search). `6.16` Options checkbox for GENA (`HOTSONOS_GENA=1` still overrides). `6.17` GENA default on for new installs.
 
 ### Snapshot (2026-07-28)
 

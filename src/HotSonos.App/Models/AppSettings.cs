@@ -281,6 +281,14 @@ public sealed class AppSettings
     /// <summary>After ramp completes: join all speakers and shuffle the full library.</summary>
     public bool WakeExpandToHouse { get; set; } = true;
 
+    // ---- Sonos event transport --------------------------------------------
+
+    /// <summary>
+    /// Subscribe to speaker GENA push events (now-playing / volume / topology).
+    /// Default on for new installs. Toggle on Options; existing saved false stays off.
+    /// </summary>
+    public bool GenaEnabled { get; set; } = true;
+
     // ---- MCP (loopback agent access while the app is running) -------------
 
     /// <summary>Host an HTTP MCP server on 127.0.0.1 for AI debug/control tools.</summary>

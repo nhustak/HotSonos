@@ -41,6 +41,7 @@ public sealed class HotSonosDebugTools
             {
                 version = AppVersion.Current,
                 mcp = new { running = _state.IsRunning, endpoint = _state.Endpoint, port = s.McpPort, enabled = s.McpEnabled },
+                gena = new { enabled = s.GenaEnabled, active = SonosManager.UseGenaSubscriptions },
                 deviceListPopulated = groupCount > 0,
                 zoneCount,
                 groupCount,
@@ -374,6 +375,8 @@ public sealed class HotSonosDebugTools
                 s.WakeVolumeStep,
                 s.WakeStepIntervalMinutes,
                 s.WakeExpandToHouse,
+                s.GenaEnabled,
+                genaActive = SonosManager.UseGenaSubscriptions,
                 s.McpEnabled,
                 s.McpPort,
                 s.ShuffleQueueTracks,

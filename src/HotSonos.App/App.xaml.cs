@@ -233,19 +233,22 @@ public partial class App : System.Windows.Application
         catch (Exception ex) { AppLog.Warn("Settings save after load/normalize failed", ex); }
 
         // Isolation ladder (crash1): version 1.0.0.59-N where N = last item applied.
-        // #1 GENA forced off (poll-only). Override: HOTSONOS_GENA=1.
+        // #1 GENA default off (poll-only). Options checkbox or HOTSONOS_GENA=1 re-enables.
         // #2 MCP ManualHostLifetime + Kestrel limits (see HotSonosMcpHost).
         // #3 Do not force McpEnabled=true on startup.
         // #4 AppLog: lifecycle trail, Before/WriteThrough last-action, Heartbeat split.
         // #5 CrashDumpBootstrap (WER + DOTNET dumps + last-alive).
         // #6 Keep-alive close-cancel + SessionEnding / extra exit-lifecycle.
-        var forceGena = string.Equals(
+        var envGena = string.Equals(
             Environment.GetEnvironmentVariable("HOTSONOS_GENA"), "1", StringComparison.Ordinal);
-        SonosManager.UseGenaSubscriptions = forceGena;
+        var useGena = _settings.GenaEnabled || envGena;
+        SonosManager.UseGenaSubscriptions = useGena;
         SonosManager.UseNowPlayingPoll = true;
         AppLog.Lifecycle(
-            forceGena
-                ? "Transport: GENA+poll (HOTSONOS_GENA=1) — isolation #1 overridden"
+            useGena
+                ? envGena && !_settings.GenaEnabled
+                    ? "Transport: GENA+poll (HOTSONOS_GENA=1) — isolation #1 overridden"
+                    : "Transport: GENA+poll (Options)"
                 : "Transport: POLL-ONLY — #1–#6 (1.0.0.59-6)");
         _sonos = new SonosManager(() => _settings);
         _sonos.NowPlayingChanged += OnNowPlayingChanged;

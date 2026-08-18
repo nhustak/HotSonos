@@ -72,9 +72,9 @@ public sealed class SonosManager
     private DateTime _lastRecoverUtc = DateTime.MinValue;
 
     /// <summary>
-    /// Sonos GENA TCP event subscriptions (AVTransport / topology). Default on — product path since Phase 2/3.
+    /// Sonos GENA TCP event subscriptions (AVTransport / topology). Set from Options / HOTSONOS_GENA.
     /// </summary>
-    public static bool UseGenaSubscriptions { get; set; } = true;
+    public static bool UseGenaSubscriptions { get; set; }
 
     /// <summary>
     /// SOAP poll of now-playing as backup/coalesce with GENA. Default on so UI stays live if GENA flaps.
@@ -2777,6 +2777,27 @@ public sealed class SonosManager
 
         _controller = new SonosController(nextIp, nextUuid, _soap);
         SubscribeToActiveCoordinator();
+    }
+
+    /// <summary>Turn GENA on or off without restarting. Poll stays as configured.</summary>
+    public void ApplyGenaEnabled(bool enabled)
+    {
+        var envOn = string.Equals(
+            Environment.GetEnvironmentVariable("HOTSONOS_GENA"), "1", StringComparison.Ordinal);
+        var want = enabled || envOn;
+        if (want == UseGenaSubscriptions)
+            return;
+
+        UseGenaSubscriptions = want;
+        if (want)
+        {
+            AppLog.Info("GENA subscriptions ON (Options)");
+            SubscribeToActiveCoordinator();
+            return;
+        }
+
+        AppLog.Info("GENA subscriptions OFF (Options) — poll-only");
+        _ = _events.UnsubscribeAsync();
     }
 
     private void SubscribeToActiveCoordinator()

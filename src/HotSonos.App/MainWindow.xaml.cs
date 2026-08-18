@@ -271,6 +271,7 @@ public partial class MainWindow : Window
         NightlyResetCheckBox.IsChecked = _settings.NightlyResetEnabled;
         NightlyResetTimeBox.Text = MinutesToHhmm(_settings.NightlyResetMinutes);
         NightlyResetReshuffleCheckBox.IsChecked = _settings.NightlyResetReshuffle;
+        GenaEnabledCheckBox.IsChecked = _settings.GenaEnabled;
         McpEnabledCheckBox.IsChecked = _settings.McpEnabled;
         McpPortBox.Text = _settings.McpPort.ToString();
         ShuffleQueueTracksBox.Text = _settings.ShuffleQueueTracks.ToString();
@@ -4671,6 +4672,7 @@ public partial class MainWindow : Window
         }
 
         failures = _applyBindings();
+        _sonos.ApplyGenaEnabled(_settings.GenaEnabled);
         return true;
     }
 
@@ -4764,6 +4766,7 @@ public partial class MainWindow : Window
             }
         }
 
+        _settings.GenaEnabled = GenaEnabledCheckBox.IsChecked == true;
         _settings.McpEnabled = McpEnabledCheckBox.IsChecked == true;
         if (int.TryParse(McpPortBox.Text, out var mcpPort) && mcpPort is >= 1024 and <= 65535)
             _settings.McpPort = mcpPort;

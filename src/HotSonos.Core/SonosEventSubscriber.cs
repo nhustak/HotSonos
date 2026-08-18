@@ -51,6 +51,22 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
     /// <summary>Raised (background thread) with the decoded ZoneGroupState XML on a topology change.</summary>
     public event Action<string>? TopologyChanged;
 
+    /// <summary>Drop current subscriptions and stop the renew loop. Poll-only until SubscribeAsync.</summary>
+    public async Task UnsubscribeAsync(CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            await ClearSubscriptionAsync(stopRenewLoop: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     /// <summary>
     /// Points the subscriptions at <paramref name="coordinatorIp"/>. Starts the
     /// callback server on first use and re-subscribes if the coordinator changed.
