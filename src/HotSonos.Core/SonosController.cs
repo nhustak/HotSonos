@@ -37,6 +37,15 @@ public sealed class SonosController
     public Task PauseAsync(CancellationToken ct = default) =>
         InvokeAvTransport("Pause", ct, ("InstanceID", "0"));
 
+    public Task StopAsync(CancellationToken ct = default) =>
+        InvokeAvTransport("Stop", ct, ("InstanceID", "0"));
+
+    public Task SeekToTrackAsync(int trackNumber, CancellationToken ct = default) =>
+        InvokeAvTransport("Seek", ct,
+            ("InstanceID", "0"),
+            ("Unit", "TRACK_NR"),
+            ("Target", Math.Max(1, trackNumber).ToString()));
+
     public Task NextAsync(CancellationToken ct = default) =>
         InvokeAvTransport("Next", ct, ("InstanceID", "0"));
 

@@ -130,7 +130,7 @@ public partial class MainWindow : Window
         _sonos.NowPlayingChanged += OnControlNowPlayingChanged;
     }
 
-    /// <summary>Select Settings, Library, Tags, Topology, Logs, or MCP Debug tab by name.</summary>
+    /// <summary>Select Settings, Library, Tags, Topology, Logs, or Debug tab by name.</summary>
     public void SelectTab(string tab)
     {
         if (string.Equals(tab, "library", StringComparison.OrdinalIgnoreCase))
@@ -149,6 +149,7 @@ public partial class MainWindow : Window
                  || string.Equals(tab, "log", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = LogsTab;
         else if (string.Equals(tab, "mcp", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "debug", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "mcp debug", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = McpTab;
         else if (string.Equals(tab, "shuffle", StringComparison.OrdinalIgnoreCase))
@@ -1964,6 +1965,21 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             SetStatus($"Clipboard failed: {ex.Message}", warn: true);
+        }
+    }
+
+    private async void ForceAutoRecover_Click(object sender, RoutedEventArgs e)
+    {
+        SetStatus("Forcing auto-recover…", warn: false);
+        try
+        {
+            var result = await _sonos.ForceRecoverPlaybackAsync().ConfigureAwait(true);
+            SetStatus(result, warn: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Force auto-recover failed", ex);
+            SetStatus(ex.Message, warn: true);
         }
     }
 

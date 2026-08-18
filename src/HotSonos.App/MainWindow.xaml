@@ -1183,8 +1183,8 @@
                 </Grid>
             </TabItem>
 
-            <!-- ========== MCP Debug ========== -->
-            <TabItem x:Name="McpTab" Header="MCP Debug">
+            <!-- ========== Debug ========== -->
+            <TabItem x:Name="McpTab" Header="Debug">
                 <Grid Margin="16,12,16,8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -1204,6 +1204,9 @@
                                         Click="McpClearLog_Click" />
                                 <Button Content="Copy endpoint" Height="28" Padding="12,0" Margin="8,0,0,0"
                                         Click="McpCopyEndpoint_Click" />
+                                <Button Content="Force auto-recover" Height="28" Padding="12,0" Margin="8,0,0,0"
+                                        Click="ForceAutoRecover_Click"
+                                        ToolTip="Marks the shuffle leftover, seeks track 1, Stops, then runs the stale-queue reshuffle." />
                             </StackPanel>
                             <TextBlock x:Name="McpEndpointText" Text="Endpoint: (not running)"
                                        Foreground="#FF60707F" FontSize="12" Margin="0,6,0,0"

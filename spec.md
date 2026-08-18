@@ -36,7 +36,7 @@ Numbered re-land of `stable/aug5-topology` commit `f6a3148` (1.0.0.70) onto hour
 
 Master `1.0.0.60` / `1.0.0.61` (stale-queue reshuffle, fail-fast regroup) stay **off** this ladder until `.70` items are isolated.
 
-**Patch notes on #6 (crash1):** `6.11` regroup preserves queue. `6.12` Library ⚡ Play now. `6.13–6.14` Library **From** / Daily path scope. `6.15` fix folder/Daily path LIKE (`\%` was literal % under ESCAPE — zero hits for scoped search). `6.16` Options checkbox for GENA (`HOTSONOS_GENA=1` still overrides). `6.17` GENA default on for new installs.
+**Patch notes on #6 (crash1):** `6.11` regroup preserves queue. `6.12` Library ⚡ Play now. `6.13–6.14` Library **From** / Daily path scope. `6.15` fix folder/Daily path LIKE (`\%` was literal % under ESCAPE — zero hits for scoped search). `6.16` Options checkbox for GENA (`HOTSONOS_GENA=1` still overrides). `6.17` GENA default on for new installs. `6.18` auto-recover reshuffles a stale leftover library queue near track 1 instead of Play. `6.19` Debug tab; Force auto-recover marks the queue stale, seeks track 1, Stops, then reshuffles.
 
 ### Snapshot (2026-07-28)
 
@@ -45,7 +45,7 @@ Master `1.0.0.60` / `1.0.0.61` (stale-queue reshuffle, fail-fast regroup) stay *
 | **Git HEAD** | See git log |
 | **App version** | `1.0.0.29` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
-| **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · MCP Debug |
+| **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Debug |
 | **Play sources** | Control **From**: All / tag / genre · play list · Quick Play · slots 1–6 · MCP; genres optional (`ShowGenresInPlaySources`) |
 | **Next product slice** | **Library groups** (§5.1 / §6.2) — path modes; no group hotkeys |
 | **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** on this PC |

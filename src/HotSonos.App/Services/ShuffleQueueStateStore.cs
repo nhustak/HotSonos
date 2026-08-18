@@ -79,6 +79,16 @@ public sealed class ShuffleQueueStateStore
         }
     }
 
+    /// <summary>Debug: pretend the last shuffle rebuild was <paramref name="age"/> ago.</summary>
+    public void BackdateRebuild(TimeSpan age)
+    {
+        lock (_gate)
+        {
+            _doc.LastRebuildUtc = DateTime.UtcNow - age;
+            SaveUnlocked();
+        }
+    }
+
     /// <summary>True when we have never rebuilt, or rebuild is older than <paramref name="maxAge"/>.</summary>
     public bool IsRebuildStale(TimeSpan maxAge)
     {

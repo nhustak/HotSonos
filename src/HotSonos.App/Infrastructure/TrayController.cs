@@ -60,7 +60,7 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add("Library…", null, (_, _) => _callbacks.OpenLibrary());
         _menu.Items.Add("Topology monitor…", null, (_, _) => _callbacks.OpenTopology());
         _menu.Items.Add("Logs…", null, (_, _) => _callbacks.OpenLogs());
-        _menu.Items.Add("MCP Debug…", null, (_, _) => _callbacks.OpenMcpDebug());
+        _menu.Items.Add("Debug…", null, (_, _) => _callbacks.OpenMcpDebug());
         _menu.Items.Add("Refresh devices", null, (_, _) => _callbacks.Refresh());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("🔄 Restart fresh (re-sync all + shuffle)", null, (_, _) => _callbacks.FreshStart());

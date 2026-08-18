@@ -599,28 +599,66 @@ public sealed class SonosManager
             np.Title ?? "");
 
     /// <summary>
+    /// Debug: set leftover-queue conditions (rebuild older than 8h, track 1, Stopped)
+    /// then run the auto-recover stale-reshuffle path.
+    /// </summary>
+    public async Task<string> ForceRecoverPlaybackAsync(CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+
+        _shuffleQueueState.BackdateRebuild(StaleShuffleQueueAge + TimeSpan.FromHours(1));
+        AppLog.Info(
+            $"Playback recovery FORCED: marked shuffle rebuild stale " +
+            $"(age > {StaleShuffleQueueAge.TotalHours:0}h)");
+
+        try { await _controller.StopAsync(ct).ConfigureAwait(false); }
+        catch (Exception ex) { AppLog.Warn("Force recover Stop failed", ex); }
+
+        try { await _controller.SeekToTrackAsync(1, ct).ConfigureAwait(false); }
+        catch (Exception ex) { AppLog.Warn("Force recover Seek track 1 failed", ex); }
+
+        var np = await _controller.GetNowPlayingSnapshotAsync(ct).ConfigureAwait(false);
+        np = np with
+        {
+            State = SonosTransportState.Stopped,
+            CurrentTrack = np.CurrentTrack is > 0 and <= 3 ? np.CurrentTrack : 1,
+        };
+
+        AppLog.Info(
+            $"Playback recovery FORCED: state={np.State} track={np.CurrentTrack}/{np.NumberOfTracks} " +
+            $"title={np.Title} uri={np.TrackUri}");
+        await MaybeRecoverPlaybackAsync(np, SonosTransportState.Playing, forced: true).ConfigureAwait(false);
+        return "Forced leftover-queue auto-recover — new shuffle should start. See Logs.";
+    }
+
+    /// <summary>
     /// Recover from transport ERROR_* or unexpected STOPPED (after we were playing).
     /// Does not resume deliberate Pause. Rate-limited to avoid thrash loops.
     /// Never uses Play alone at end-of-queue — that restarts the same queue from track 1.
     /// Does <b>not</b> GroupAllSpeakers (that caused topology GENA storms / hard crashes).
     /// </summary>
-    private async Task MaybeRecoverPlaybackAsync(NowPlaying np, SonosTransportState prevState)
+    private async Task MaybeRecoverPlaybackAsync(
+        NowPlaying np,
+        SonosTransportState prevState,
+        bool forced = false)
     {
         var s = _settings().EnsureShape();
-        if (!s.AutoRecoverPlayback)
+        if (!forced && !s.AutoRecoverPlayback)
             return;
-        if (Volatile.Read(ref _regroupHoldDepth) > 0)
+        if (!forced && Volatile.Read(ref _regroupHoldDepth) > 0)
             return;
         if (_controller is null)
             return;
 
-        var status = np.TransportStatus ?? "";
-        var hasError = status.Length > 0
+        var status = forced ? "FORCED" : (np.TransportStatus ?? "");
+        var hasError = !forced
+                       && status.Length > 0
                        && !status.Equals("OK", StringComparison.OrdinalIgnoreCase)
                        && status.Contains("ERROR", StringComparison.OrdinalIgnoreCase);
 
-        // User Pause must never auto-resume.
-        if (np.State is SonosTransportState.PausedPlayback)
+        // User Pause must never auto-resume (force from Debug is allowed).
+        if (!forced && np.State is SonosTransportState.PausedPlayback)
             return;
 
         var unexpectedStop = np.State is SonosTransportState.Stopped
@@ -628,15 +666,15 @@ public sealed class SonosManager
                                  or SonosTransportState.Transitioning;
 
         // Empty title+uri with ERROR is the classic ERROR_NO_RESOURCE blip mid-queue.
-        if (!hasError && !unexpectedStop)
+        if (!forced && !hasError && !unexpectedStop)
             return;
 
         // Ignore first snapshot after app start (Unknown → Stopped).
-        if (prevState is SonosTransportState.Unknown)
+        if (!forced && prevState is SonosTransportState.Unknown)
             return;
 
         // Cooldown between recoveries.
-        if ((DateTime.UtcNow - _lastRecoverUtc).TotalSeconds < 10)
+        if (!forced && (DateTime.UtcNow - _lastRecoverUtc).TotalSeconds < 10)
             return;
 
         // Burst limit: at most 4 recovers per 15 minutes.
@@ -647,7 +685,7 @@ public sealed class SonosManager
             _recoverAttemptsInWindow = 0;
         }
 
-        if (_recoverAttemptsInWindow >= 4)
+        if (!forced && _recoverAttemptsInWindow >= 4)
             return;
 
         if (Interlocked.CompareExchange(ref _recoverInFlight, 1, 0) != 0)
@@ -662,16 +700,16 @@ public sealed class SonosManager
 
         try
         {
-            // Debounce GENA double-fires.
-            await Task.Delay(1200).ConfigureAwait(false);
+            if (!forced)
+                await Task.Delay(1200).ConfigureAwait(false);
             if (_controller is null)
                 return;
 
             var state = await _controller.GetTransportStateAsync().ConfigureAwait(false);
-            if (IsPlayingLike(state))
+            if (!forced && IsPlayingLike(state))
                 return; // already recovered on its own
 
-            if (state is SonosTransportState.PausedPlayback)
+            if (!forced && state is SonosTransportState.PausedPlayback)
                 return; // user paused during debounce
 
             _recoverAttemptsInWindow++;
@@ -682,10 +720,19 @@ public sealed class SonosManager
                 $"track={np.CurrentTrack}/{np.NumberOfTracks} end={atOrPastEnd} " +
                 $"title={np.Title} uri={np.TrackUri}");
 
+            if (forced)
+            {
+                AppLog.Info(
+                    "Playback recovery: stale library queue near track 1 — reshuffling instead of Play");
+                var staleSummary = await ShuffleWithHistoryAsync().ConfigureAwait(false);
+                AppLog.Info($"Playback recovery: stale reshuffle OK ({staleSummary})");
+                return;
+            }
+
             // Natural end of NORMAL queue (or STOPPED on last track) → fresh shuffle,
             // never Play (Play restarts the same order from track 1).
             // No GroupAll here — regroup storms crash the tray app.
-            if (!hasError && (atOrPastEnd || np.IsNearQueueEnd(1)))
+            if (!forced && !hasError && (atOrPastEnd || np.IsNearQueueEnd(1)))
             {
                 AppLog.Info("Playback recovery: end of queue — reshuffling (not Play)");
                 var endSummary = await ShuffleWithHistoryAsync().ConfigureAwait(false);
@@ -745,6 +792,18 @@ public sealed class SonosManager
                 AppLog.Info("Playback recovery: still stopped at end — reshuffling");
                 var endSummary2 = await ShuffleWithHistoryAsync().ConfigureAwait(false);
                 AppLog.Info($"Playback recovery: reshuffle OK ({endSummary2})");
+                return;
+            }
+
+            // Stale leftover batch at track 1: Play would re-walk yesterday's order.
+            if (LooksLikeLibraryTrack(np.TrackUri)
+                && np.CurrentTrack is <= 3
+                && _shuffleQueueState.IsRebuildStale(StaleShuffleQueueAge))
+            {
+                AppLog.Info(
+                    "Playback recovery: stale library queue near track 1 — reshuffling instead of Play");
+                var staleSummary = await ShuffleWithHistoryAsync().ConfigureAwait(false);
+                AppLog.Info($"Playback recovery: stale reshuffle OK ({staleSummary})");
                 return;
             }
 
