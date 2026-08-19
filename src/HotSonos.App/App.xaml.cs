@@ -249,7 +249,7 @@ public partial class App : System.Windows.Application
                 ? envGena && !_settings.GenaEnabled
                     ? "Transport: GENA+poll (HOTSONOS_GENA=1) — isolation #1 overridden"
                     : "Transport: GENA+poll (Options)"
-                : "Transport: POLL-ONLY — #1–#6 (1.0.0.59-6)");
+                : "Transport: POLL-ONLY — 1.0.0.70");
         _sonos = new SonosManager(() => _settings);
         _sonos.NowPlayingChanged += OnNowPlayingChanged;
         _sonos.TopologyChanged += OnTopologyChanged;

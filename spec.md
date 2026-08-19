@@ -11,9 +11,13 @@
 
 > Update this section **in the same task** whenever library-plan or MCP work advances. This is the resume point after context compression.
 
+### Promoted to master — 2026-08-18
+
+`crash1` is **`master`** as **`1.0.0.70`**. Old master `1.0.0.61` remains on tag `v1.0.0.61` (SonosNet-era fail-fast; not this line).
+
 ### Crash isolation (`crash1`) — 2026-08-14
 
-Numbered re-land of `stable/aug5-topology` commit `f6a3148` (1.0.0.70) onto hours-stable `.59` (`8543e20`). Version = `1.0.0.59-N` / Assembly `1.0.59.N`.
+Numbered re-land of `stable/aug5-topology` commit `f6a3148` (old 1.0.0.70) onto hours-stable `.59` (`8543e20`). This line is now product **`1.0.0.70`**.
 
 | # | Version | Item | Status |
 |---|---------|------|--------|
@@ -34,7 +38,7 @@ Numbered re-land of `stable/aug5-topology` commit `f6a3148` (1.0.0.70) onto hour
 | **15** | `1.0.0.59-15` | Flyout art log extras | Pending |
 | **16** | `1.0.0.59-16` | GENA renew Trace-only | Pending |
 
-Master `1.0.0.60` / `1.0.0.61` (stale-queue reshuffle, fail-fast regroup) stay **off** this ladder until `.70` items are isolated.
+Old master `1.0.0.60` / `1.0.0.61` (fail-fast regroup) were **not** brought onto this line.
 
 **Patch notes on #6 (crash1):** `6.11` regroup preserves queue. `6.12` Library ⚡ Play now. `6.13–6.14` Library **From** / Daily path scope. `6.15` fix folder/Daily path LIKE (`\%` was literal % under ESCAPE — zero hits for scoped search). `6.16` Options checkbox for GENA (`HOTSONOS_GENA=1` still overrides). `6.17` GENA default on for new installs. `6.18` auto-recover reshuffles a stale leftover library queue near track 1 instead of Play. `6.19` Debug tab; Force auto-recover marks the queue stale, seeks track 1, Stops, then reshuffles.
 
@@ -43,7 +47,7 @@ Master `1.0.0.60` / `1.0.0.61` (stale-queue reshuffle, fail-fast regroup) stay *
 | Item | State |
 |------|--------|
 | **Git HEAD** | See git log |
-| **App version** | `1.0.0.29` |
+| **App version** | `1.0.0.70` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
 | **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Debug |
 | **Play sources** | Control **From**: All / tag / genre · play list · Quick Play · slots 1–6 · MCP; genres optional (`ShowGenresInPlaySources`) |
