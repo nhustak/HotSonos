@@ -22,6 +22,35 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 
 ---
 
+## Turn off SonosNet
+
+If you have a decent house Wi‑Fi, **turn SonosNet off.** Playback still uses **your** Wi‑Fi (or Ethernet). You do not need a second Sonos mesh.
+
+HotSonos spent a long stretch looking like it was “unstable” (stutter, dead zones, speakers that would not stay grouped) while the real problem was Sonos building that extra mesh on top of the house network.
+
+### What we found
+The first speaker that got a hard Ethernet run was a **Port**. Fine for the amp — but Sonos then treated that Port as a **SonosNet root** and turned **SonosNet on**. The other players (eight or nine) joined a Sonos mesh on **2.4 GHz** and started competing with the house APs. Result: RF fighting, a dead zone, speakers that would not work, and audio that **stuttered** even when the Sonos app still looked fine.
+
+If you are already on Wi‑Fi, you do not need a second mesh. In this house SonosNet should not have been on at all — and it should not flip on just because one box got a cable.
+
+### Group coordinator is a different knob
+Turning SonosNet off does **not** mean every speaker independently pulls the track from the NAS. In a Sonos group, one player is the **group coordinator**: it owns the queue and **distributes the audio** to the other grouped speakers over the network. That is Sonos’s own description ([grouping best practices](https://en.community.sonos.com/speakers-228992/grouping-sonos-best-practices-6807831) — Sonos staff: the coordinator is “responsible for distributing the signal to the rest of the group”). More rooms in the group = more wireless load.
+
+So even with SonosNet **off**, that fan-out still rides **house Wi‑Fi**. If the coordinator is a 2.4 GHz-bound box (a wired Port that Sonos promoted), group audio is still crowding **2.4 GHz**. This house sets **Control → Preferred coordinator** to an **Era 100** because those are on **5 GHz** Wi‑Fi. The Port can stay cabled for the amp; it should not be the speaker sending the house mix.
+
+Set that in HotSonos (**Control → Preferred coordinator** / **Set preferred coordinator**). Shuffle and fresh start keep using it. ★ COORD on Topology. MCP `set_house_coordinator`.
+
+### What to do
+1. In the **Sonos app** (S2): system / network settings → **disable SonosNet** (wording varies — SonosNet / wireless Sonos mesh / “use my Wi‑Fi only”).
+2. Leave players on **your** Wi‑Fi (or Ethernet). No parallel Sonos mesh.
+3. A wired Port is still fine. Do **not** let that cable turn the rest of the house into SonosNet.
+4. In HotSonos **Topology**, check **ETH vs Wi‑Fi**.
+5. In HotSonos **Control → Preferred coordinator**, pick a **5 GHz** player (**Era 100s** here) so group audio is sourced from that radio, not the Port.
+
+HotSonos cannot turn SonosNet off for you (no stable local API). You flip that in the **Sonos app**. It **can** keep your chosen coordinator.
+
+---
+
 ## Features
 
 ### 🔀 History-aware library shuffle
@@ -100,7 +129,7 @@ Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **libra
 ### 🎮 Control page
 - **From** dropdown (All / folder / tag / genre) + **Start shuffle now** / Restart fresh, level-all, target room/group, **full-width speakers**.
 - **Daily group** — all speakers, or a checked subset of rooms, for house shuffle.
-- **Preferred house coordinator** — who should lead when you regroup the house (e.g. Office or Theater/Port); verified after join (★ COORD on Topology map). Regroup skips `BecomeStandalone` when that room is already leader (keeps the queue).
+- **Preferred coordinator** — which room **leads the group and sends the audio** to the others (Control dropdown + **Set preferred coordinator**). Independent of SonosNet: playback is still house Wi‑Fi. Pick a **5 GHz** player (**Era 100s** here) so that fan-out is not sourced from a 2.4 GHz Port. ★ COORD on Topology. MCP `set_house_coordinator`.
 - **Play tags, genres & Sonos playlists** — one-click play; list shares vertical space with speakers.
 - Hide genres for other users under **Shuffle → Show genres in shuffle / play lists**.
 - Layout keeps **labels + fields + buttons grouped left** (no stretch-to-far-right action buttons).
@@ -226,7 +255,7 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 ## How it works
 
 - **Discovery** — SSDP across interfaces; topology from any responding player.  
-- **Control** — SOAP on TCP **1400** to group coordinators.  
+- **Control** — SOAP on TCP **1400** to group coordinators. The coordinator **distributes audio** to grouped speakers over the LAN/Wi‑Fi (not each player fetching the file). **Preferred coordinator** is who you chose for that job — e.g. an **Era 100** on 5 GHz.  
 - **Shuffle** — browse `A:TRACKS` (Daily mix folders for All), exclude recently **played** tracks, short queue (~80 default), auto **top-up** near end, play in `NORMAL` mode. Leftover queue older than 8 hours near track 1 is reshuffled instead of Play.  
 - **Tags** — catalog in settings; keys written into audio files as `HOTSONOS_TAGS`; SQLite is a rebuildable cache only.  
 - **Tag / genre / one-shot play** — client builds a queue from the library cache; optional continue into full-library top-up (`ContinueLibraryShuffleAfterSpecialPlay`).  
@@ -240,7 +269,8 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 
 ## Notes & limitations
 
-- Speakers out of sync is usually Wi‑Fi; Restart fresh / nightly re-sync help.  
+- **SonosNet + house Wi‑Fi = stutter / dead zones.** Disable SonosNet in the **Sonos app** and still play over **your** Wi‑Fi. Hardwiring a Port *without* turning SonosNet off can make things worse. Separately, set **Control → Preferred coordinator** to a **5 GHz Era 100** so the coordinator sending group audio is not a 2.4 GHz Port — see [Turn off SonosNet](#turn-off-sonosnet).
+- Speakers out of sync is often RF / path flaps; Restart fresh / nightly re-sync help, but fix the radio topology first.  
 - Nightly re-sync and wake need the **PC awake** with HotSonos running.  
 - Sonos does not reliably report “can’t play this file”; unplayable flags are **format heuristics**.  
 - Shuffle history only reshapes the queue at **rebuild/top-up**, not mid-queue.  
