@@ -8,6 +8,8 @@
 
 Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
+Some people treat AI as evil when it comes to writing software. This project is built with **Grok**, **Claude**, and **Codex**. If that bothers you, go write your own.
+
 HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/SOAP) — no cloud, no Sonos account, no internet round-trips. It lives in the system tray and gives you instant, global hotkeys for the things the Sonos apps make you click through: shuffle your whole library to every speaker, play/pause, skip, and whole-house volume — plus a live now-playing flyout, **tags as dynamic playlists**, and automatic speaker re-sync.
 
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
