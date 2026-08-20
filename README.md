@@ -13,10 +13,10 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
 
 ### Product direction
-- **Today:** history-aware shuffle (**All**, **tag**, or **genre** from Control), transport/volume hotkeys, favorite slots (Sonos / tag / genre), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play, optional **hide genres** for simpler installs, loopback MCP for agents.
-- **Settings UI:** left vertical nav — **Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · MCP Debug**.
+- **Today:** history-aware shuffle (**All**, **folder**, **tag**, or **genre** from Control), transport/volume hotkeys, favorite slots (Sonos / tag / genre / folder), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play, optional **hide genres**, loopback MCP for agents.
+- **Settings UI:** tabs — **Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Logs · Debug**. Tray: Library…, Topology…, Logs…, Debug…
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
-- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre, logs).
+- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
 
 ---
 
@@ -29,7 +29,8 @@ Groups speakers and builds a short random mix from your music library, leaves ou
 
 | From | What plays |
 |------|------------|
-| **All · Music Library** | History-aware full-library shuffle (same as the shuffle hotkey / tray double-click default) |
+| **All · Music Library** | History-aware shuffle of **Daily mix folders** (same as the shuffle hotkey / tray double-click default) |
+| **Folder · …** | Shuffle inside one library folder (top-up stays in that folder) |
 | **Tag · …** | Shuffled HotSonos tag set (optional top-up into full library when enabled) |
 | **Genre · …** | Shuffled tracks matching the standard Genre field (same top-up rules; hidden if genres are off) |
 
@@ -95,8 +96,9 @@ Flat tag catalog: each tag has an **opaque key** (stored in files) and a **renam
 Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **library genre**, with its own hotkey. Same playback path as Control Play / `play_favorite_slot`.
 
 ### 🎮 Control page
-- **From** dropdown (All / tag / genre) + **Start shuffle now** / Restart fresh, level-all, target room/group, **full-width speakers**.
-- **Preferred house coordinator** — who should lead when you regroup the house (e.g. Office or Theater/Port); verified after join (★ COORD on Topology map).
+- **From** dropdown (All / folder / tag / genre) + **Start shuffle now** / Restart fresh, level-all, target room/group, **full-width speakers**.
+- **Daily group** — all speakers, or a checked subset of rooms, for house shuffle.
+- **Preferred house coordinator** — who should lead when you regroup the house (e.g. Office or Theater/Port); verified after join (★ COORD on Topology map). Regroup skips `BecomeStandalone` when that room is already leader (keeps the queue).
 - **Play tags, genres & Sonos playlists** — one-click play; list shares vertical space with speakers.
 - Hide genres for other users under **Shuffle → Show genres in shuffle / play lists**.
 - Layout keeps **labels + fields + buttons grouped left** (no stretch-to-far-right action buttons).
@@ -112,10 +114,14 @@ Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **libra
 
 
 - Paths / rescan / force re-read tags / search under **Library**  
+- **Play now** (lightning) inserts the selected track next without clearing the shuffle queue  
 - DB: `%LocalAppData%\HotSonos\library.db`
 
 ### 🎴 Live Now-Playing flyout
-Album art, title, artist, state — GENA push updates. Draggable, pinnable; toggles under **Options**.
+Album art, title, artist, state. Draggable, pinnable; toggles under **Options**. Updates from speaker **GENA** when enabled (Options; default on for new installs), otherwise a 5s SOAP poll.
+
+### 🛠️ Debug
+**Debug** tab: MCP command log plus **Force auto-recover** (marks the shuffle leftover, seeks track 1, Stops, then runs leftover-queue reshuffle). Tray **Debug…**.
 
 ### 📡 Live speaker monitoring
 Topology events: offline tray indicator, reconnect toasts, auto-rejoin active group, live room picker.
@@ -127,7 +133,7 @@ Scheduled start on a room, volume ramp, favorite or shuffle source, optional who
 Configurable under **Options**: start shuffle (default), open Control, or open Library. Right-click still opens the full tray menu.
 
 ### 🤖 Loopback MCP
-While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery, control, library, tags, play, logs. Live command log on **MCP Debug**. Register via `C:\Project\_mcp` if you use the multi-agent MCP hub.
+While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery, control, library, tags, play, logs. Live command log on **Debug**. Register via `C:\Project\_mcp` if you use the multi-agent MCP hub. MCP is not forced on at startup; the Options checkbox is respected.
 
 **Library / tags (examples):** `discover_library_roots`, `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`, `list_tags`, `list_genres`, `tag_create`, `tag_rename`, `tag_delete`, `track_toggle_tag`, `track_set_tags`, `track_find_master`, `track_link_master`
 
@@ -219,13 +225,13 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 
 - **Discovery** — SSDP across interfaces; topology from any responding player.  
 - **Control** — SOAP on TCP **1400** to group coordinators.  
-- **Shuffle** — browse `A:TRACKS`, exclude recently **played** tracks, short queue (~80 default), auto **top-up** near end, play in `NORMAL` mode.  
+- **Shuffle** — browse `A:TRACKS` (Daily mix folders for All), exclude recently **played** tracks, short queue (~80 default), auto **top-up** near end, play in `NORMAL` mode. Leftover queue older than 8 hours near track 1 is reshuffled instead of Play.  
 - **Tags** — catalog in settings; keys written into audio files as `HOTSONOS_TAGS`; SQLite is a rebuildable cache only.  
 - **Tag / genre / one-shot play** — client builds a queue from the library cache; optional continue into full-library top-up (`ContinueLibraryShuffleAfterSpecialPlay`).  
-- **Control shuffle From** — `ControlShuffleSource` = `all` | `tag:{key}` | `genre:{name}`; genres gated by `ShowGenresInPlaySources`.  
+- **Control shuffle From** — `ControlShuffleSource` = `all` | `folder:{path}` | `tag:{key}` | `genre:{name}`; genres gated by `ShowGenresInPlaySources`.  
 - **Library** — filesystem scan under discovered UNC roots; optional master match for dual-write.  
 - **MCP** — Kestrel loopback host inside the tray process.  
-- **GENA** — local listener for now-playing, topology, and RenderingControl volume/mute (coordinator).  
+- **GENA** — optional speaker push (now-playing, topology, volume). **Options → Use speaker push events (GENA)**; `HOTSONOS_GENA=1` still forces on. Off = poll only.  
 - **Volume** — house logical % for ±; per-room offsets on absolute write (Level all / Wake / ±); Speakers sliders show raw Sonos %.
 
 ---
@@ -242,6 +248,17 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 ---
 
 ## Changelog
+
+### 1.0.0.70
+- **This is the product line.** Isolated from hours-stable `.59`, then promoted over old master `.61` (SonosNet-era fail-fast regroup was not brought forward). Tag `v1.0.0.70`.
+- **GENA** is an **Options** checkbox (default **on** for new installs). Saved off stays off. `HOTSONOS_GENA=1` still overrides.
+- **MCP** is not forced on at startup; Kestrel uses ManualHostLifetime + connection limits.
+- **Leftover shuffle queue:** if auto-recover hits a library queue near track 1 whose last rebuild is older than 8 hours, it **reshuffles** instead of Play.
+- **Debug** tab (was MCP Debug): MCP log + **Force auto-recover**.
+- **Library Play now** inserts next without clearing the queue.
+- **Daily mix folders** + **Daily group** speaker checklist (subset house shuffle).
+- **Regroup** pauses while joining, skips BecomeStandalone when already leader (keeps the queue).
+- Crash dumps / last-alive, keep-alive close-cancel, speaker reachability outage log.
 
 ### 1.0.0.55
 - **House-logical volume ±:** toast and step base from offset‑0 rooms (never Port/coordinator raw %); each room written as `logical + offset` so amp-fed Theater stays usable without driving the house number  
