@@ -20,34 +20,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
 
----
-
-## Turn off SonosNet
-
-If you have a decent house Wi‑Fi, **turn SonosNet off.** Playback still uses **your** Wi‑Fi (or Ethernet). You do not need a second Sonos mesh.
-
-HotSonos spent a long stretch looking like it was “unstable” (stutter, dead zones, speakers that would not stay grouped) while the real problem was Sonos building that extra mesh on top of the house network.
-
-### What we found
-The first speaker that got a hard Ethernet run was a **Port**. Fine for the amp — but Sonos then treated that Port as a **SonosNet root** and turned **SonosNet on**. The other players (eight or nine) joined a Sonos mesh on **2.4 GHz** and started competing with the house APs. Result: RF fighting, a dead zone, speakers that would not work, and audio that **stuttered** even when the Sonos app still looked fine.
-
-If you are already on Wi‑Fi, you do not need a second mesh. In this house SonosNet should not have been on at all — and it should not flip on just because one box got a cable.
-
-### Group coordinator is a different knob
-Turning SonosNet off does **not** mean every speaker independently pulls the track from the NAS. In a Sonos group, one player is the **group coordinator**: it owns the queue and **distributes the audio** to the other grouped speakers over the network. That is Sonos’s own description ([grouping best practices](https://en.community.sonos.com/speakers-228992/grouping-sonos-best-practices-6807831) — Sonos staff: the coordinator is “responsible for distributing the signal to the rest of the group”). More rooms in the group = more wireless load.
-
-So even with SonosNet **off**, that fan-out still rides **house Wi‑Fi**. If the coordinator is a 2.4 GHz-bound box (a wired Port that Sonos promoted), group audio is still crowding **2.4 GHz**. This house sets **Control → Preferred coordinator** to an **Era 100** because those are on **5 GHz** Wi‑Fi. The Port can stay cabled for the amp; it should not be the speaker sending the house mix.
-
-Set that in HotSonos (**Control → Preferred coordinator** / **Set preferred coordinator**). Shuffle and fresh start keep using it. ★ COORD on Topology. MCP `set_house_coordinator`.
-
-### What to do
-1. In the **Sonos app** (S2): system / network settings → **disable SonosNet** (wording varies — SonosNet / wireless Sonos mesh / “use my Wi‑Fi only”).
-2. Leave players on **your** Wi‑Fi (or Ethernet). No parallel Sonos mesh.
-3. A wired Port is still fine. Do **not** let that cable turn the rest of the house into SonosNet.
-4. In HotSonos **Topology**, check **ETH vs Wi‑Fi**.
-5. In HotSonos **Control → Preferred coordinator**, pick a **5 GHz** player (**Era 100s** here) so group audio is sourced from that radio, not the Port.
-
-HotSonos cannot turn SonosNet off for you (no stable local API). You flip that in the **Sonos app**. It **can** keep your chosen coordinator.
+**Having issues (stutter, dead zones, flaky grouping)?** Make sure **SonosNet is off** — see [Turn off SonosNet](#turn-off-sonosnet) near the bottom.
 
 ---
 
@@ -269,13 +242,41 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 
 ## Notes & limitations
 
-- **SonosNet + house Wi‑Fi = stutter / dead zones.** Disable SonosNet in the **Sonos app** and still play over **your** Wi‑Fi. Hardwiring a Port *without* turning SonosNet off can make things worse. Separately, set **Control → Preferred coordinator** to a **5 GHz Era 100** so the coordinator sending group audio is not a 2.4 GHz Port — see [Turn off SonosNet](#turn-off-sonosnet).
-- Speakers out of sync is often RF / path flaps; Restart fresh / nightly re-sync help, but fix the radio topology first.  
+- Speakers out of sync is often RF / path flaps; Restart fresh / nightly re-sync help. If it still stutters, see [Turn off SonosNet](#turn-off-sonosnet).  
 - Nightly re-sync and wake need the **PC awake** with HotSonos running.  
 - Sonos does not reliably report “can’t play this file”; unplayable flags are **format heuristics**.  
 - Shuffle history only reshapes the queue at **rebuild/top-up**, not mid-queue.  
 - Tag write needs **write** SMB access from this PC to the Sonos share (and master root if dual-write is on).  
 - GENA callback is for a **trusted home LAN**.
+
+---
+
+## Turn off SonosNet
+
+If you have a decent house Wi‑Fi, **turn SonosNet off.** Playback still uses **your** Wi‑Fi (or Ethernet). You do not need a second Sonos mesh.
+
+HotSonos spent a long stretch looking like it was “unstable” (stutter, dead zones, speakers that would not stay grouped) while the real problem was Sonos building that extra mesh on top of the house network.
+
+### What we found
+The first speaker that got a hard Ethernet run was a **Port**. Fine for the amp — but Sonos then treated that Port as a **SonosNet root** and turned **SonosNet on**. The other players (eight or nine) joined a Sonos mesh on **2.4 GHz** and started competing with the house APs. Result: RF fighting, a dead zone, speakers that would not work, and audio that **stuttered** even when the Sonos app still looked fine.
+
+If you are already on Wi‑Fi, you do not need a second mesh. In this house SonosNet should not have been on at all — and it should not flip on just because one box got a cable.
+
+### Group coordinator is a different knob
+Turning SonosNet off does **not** mean every speaker independently pulls the track from the NAS. In a Sonos group, one player is the **group coordinator**: it owns the queue and **distributes the audio** to the other grouped speakers over the network. That is Sonos’s own description ([grouping best practices](https://en.community.sonos.com/speakers-228992/grouping-sonos-best-practices-6807831) — Sonos staff: the coordinator is “responsible for distributing the signal to the rest of the group”). More rooms in the group = more wireless load.
+
+So even with SonosNet **off**, that fan-out still rides **house Wi‑Fi**. If the coordinator is a 2.4 GHz-bound box (a wired Port that Sonos promoted), group audio is still crowding **2.4 GHz**. This house sets **Control → Preferred coordinator** to an **Era 100** because those are on **5 GHz** Wi‑Fi. The Port can stay cabled for the amp; it should not be the speaker sending the house mix.
+
+Set that in HotSonos (**Control → Preferred coordinator** / **Set preferred coordinator**). Shuffle and fresh start keep using it. ★ COORD on Topology. MCP `set_house_coordinator`.
+
+### What to do
+1. In the **Sonos app** (S2): system / network settings → **disable SonosNet** (wording varies — SonosNet / wireless Sonos mesh / “use my Wi‑Fi only”).
+2. Leave players on **your** Wi‑Fi (or Ethernet). No parallel Sonos mesh.
+3. A wired Port is still fine. Do **not** let that cable turn the rest of the house into SonosNet.
+4. In HotSonos **Topology**, check **ETH vs Wi‑Fi**.
+5. In HotSonos **Control → Preferred coordinator**, pick a **5 GHz** player (**Era 100s** here) so group audio is sourced from that radio, not the Port.
+
+HotSonos cannot turn SonosNet off for you (no stable local API). You flip that in the **Sonos app**. It **can** keep your chosen coordinator.
 
 ---
 
