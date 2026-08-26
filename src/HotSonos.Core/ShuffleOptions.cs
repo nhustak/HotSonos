@@ -16,6 +16,17 @@ public sealed class ShuffleOptions
     public IReadOnlyCollection<string>? ExcludeUris { get; init; }
 
     /// <summary>
+    /// Last-played times for <see cref="ExcludeUris"/> keys (any URI form).
+    /// When the unheard pool is too small, older plays may slide back in;
+    /// anything inside <see cref="HardRecentWindow"/> does not, unless every
+    /// track in scope was heard that recently.
+    /// </summary>
+    public IReadOnlyDictionary<string, DateTime>? PlayedAtUtc { get; init; }
+
+    /// <summary>Never replay inside this window while any older track exists. Default 24 hours.</summary>
+    public TimeSpan HardRecentWindow { get; init; } = TimeSpan.FromHours(24);
+
+    /// <summary>
     /// When set, only tracks whose path falls under one of these prefixes are eligible
     /// (daily library folders). UNC or x-file-cifs; compared via <see cref="SonosController.NormalizeTrackKey"/>.
     /// Null/empty = entire Sonos Music Library (A:TRACKS).
@@ -38,6 +49,8 @@ public sealed class ShuffleResult
     public int Enqueued { get; init; }
     public int ExcludedCount { get; init; }
     public int CandidateCount { get; init; }
+    /// <summary>Older-than-24h history tracks added back because the unheard pool was short.</summary>
+    public int SlidBackCount { get; init; }
     /// <summary>Tracks removed because they were outside IncludePathPrefixes.</summary>
     public int ScopeFilteredCount { get; init; }
     public bool Appended { get; init; }

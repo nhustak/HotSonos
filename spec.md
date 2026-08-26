@@ -42,6 +42,10 @@ Old master `1.0.0.60` / `1.0.0.61` (fail-fast regroup) were **not** brought onto
 
 **Patch notes on #6 (crash1):** `6.11` regroup preserves queue. `6.12` Library ⚡ Play now. `6.13–6.14` Library **From** / Daily path scope. `6.15` fix folder/Daily path LIKE (`\%` was literal % under ESCAPE — zero hits for scoped search). `6.16` Options checkbox for GENA (`HOTSONOS_GENA=1` still overrides). `6.17` GENA default on for new installs. `6.18` auto-recover reshuffles a stale leftover library queue near track 1 instead of Play. `6.19` Debug tab; Force auto-recover marks the queue stale, seeks track 1, Stops, then reshuffles.
 
+**1.0.0.71:** shuffle no longer drops 14-day play history when the Daily folder has fewer than ~40 unheard tracks (that was re-queuing yesterday). Empty unheard pool is the only case that reuses the full folder.
+
+**1.0.0.72:** when the 14-day unheard pool is short, slide in the oldest plays first; never replay a track heard in the last 24 hours while any older track exists.
+
 ### Snapshot (2026-07-28)
 
 | Item | State |

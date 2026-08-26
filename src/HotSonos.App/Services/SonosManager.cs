@@ -2315,13 +2315,14 @@ public sealed class SonosManager
             throw new InvalidOperationException("No Sonos room is selected.");
 
         var s = _settings().EnsureShape();
-        IReadOnlyCollection<string>? exclude = s.ShuffleExcludePlayed ? _playHistory.GetPlayedKeys() : null;
+        var (exclude, playedAt) = BuildShuffleHistory(s);
         var include = s.GetDailyShuffleIncludePrefixes();
         var result = await _controller.ShuffleMusicLibraryAsync(
             new ShuffleOptions
             {
                 MaxQueueTracks = s.ShuffleQueueTracks,
                 ExcludeUris = exclude,
+                PlayedAtUtc = playedAt,
                 IncludePathPrefixes = include,
                 AppendToQueue = false,
                 ArtistSpread = s.ShuffleArtistSpread,
@@ -2345,8 +2346,15 @@ public sealed class SonosManager
         var msg =
             $"browsed {result.Browsed}, scoped-out {result.ScopeFilteredCount}, queued {result.Enqueued} " +
             $"(candidates {result.CandidateCount}, excluded played {result.ExcludedCount}, " +
-            $"{dailyNote}, history keys {_playHistory.PlayedDistinctCount}, history days {s.ShuffleHistoryDays})";
+            $"slid-back {result.SlidBackCount}, {dailyNote}, history keys {_playHistory.PlayedDistinctCount}, " +
+            $"history days {s.ShuffleHistoryDays})";
         AppLog.Info($"Shuffle rebuild: {msg}");
+        if (result.ExcludedCount == 0 && _playHistory.PlayedDistinctCount > 0)
+        {
+            AppLog.Warn(
+                "Shuffle rebuild applied no play-history exclusions " +
+                $"(history keys {_playHistory.PlayedDistinctCount}). Every in-scope track was heard in the last 24h.");
+        }
         return msg;
     }
 
@@ -2377,12 +2385,13 @@ public sealed class SonosManager
         // Prefer cache for a quick empty check / toast counts; shuffle still uses Sonos browse + prefix.
         var cached = library.CountTracksUnderFolder(folderPath);
 
-        IReadOnlyCollection<string>? exclude = s.ShuffleExcludePlayed ? _playHistory.GetPlayedKeys() : null;
+        var (exclude, playedAt) = BuildShuffleHistory(s);
         var result = await _controller.ShuffleMusicLibraryAsync(
             new ShuffleOptions
             {
                 MaxQueueTracks = s.ShuffleQueueTracks,
                 ExcludeUris = exclude,
+                PlayedAtUtc = playedAt,
                 IncludePathPrefixes = [folderPath],
                 AppendToQueue = false,
                 ArtistSpread = s.ShuffleArtistSpread,
@@ -2458,16 +2467,20 @@ public sealed class SonosManager
             return _sessionServedKeys.ToList();
     }
 
-    /// <summary>Played history + tracks already enqueued this shuffle session.</summary>
-    private IReadOnlyCollection<string>? BuildExcludeKeys(AppSettings s)
+    /// <summary>14-day play keys plus last-played times (session-served counts as just played).</summary>
+    private (IReadOnlyCollection<string>? Exclude, IReadOnlyDictionary<string, DateTime>? PlayedAt)
+        BuildShuffleHistory(AppSettings s)
     {
         if (!s.ShuffleExcludePlayed)
-            return null;
+            return (null, null);
 
-        var set = new HashSet<string>(_playHistory.GetPlayedKeys(), StringComparer.OrdinalIgnoreCase);
+        var playedAt = new Dictionary<string, DateTime>(
+            _playHistory.GetLastPlayedUtcByKey(),
+            StringComparer.OrdinalIgnoreCase);
+        var now = DateTime.UtcNow;
         foreach (var k in SnapshotSessionServed())
-            set.Add(k);
-        return set;
+            playedAt[k] = now;
+        return (playedAt.Keys.ToList(), playedAt);
     }
 
     /// <summary>
@@ -2704,7 +2717,7 @@ public sealed class SonosManager
             if (!s.ShuffleAutoTopUp || !ShouldAutoTopUp(s))
                 return;
 
-            var exclude = BuildExcludeKeys(s);
+            var (exclude, playedAt) = BuildShuffleHistory(s);
             IReadOnlyCollection<string>? include;
             if (string.Equals(_playbackMode, "folder", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(_folderShufflePrefix))
@@ -2721,6 +2734,7 @@ public sealed class SonosManager
                 {
                     MaxQueueTracks = s.ShuffleTopUpTracks,
                     ExcludeUris = exclude,
+                    PlayedAtUtc = playedAt,
                     IncludePathPrefixes = include,
                     AppendToQueue = true,
                     ArtistSpread = s.ShuffleArtistSpread,
@@ -2741,7 +2755,8 @@ public sealed class SonosManager
             var session = SnapshotSessionServed().Count;
             AppLog.Info(
                 $"Shuffle top-up: appended {result.Enqueued} " +
-                $"(excluded {result.ExcludedCount}, scoped-out {result.ScopeFilteredCount}, " +
+                $"(excluded {result.ExcludedCount}, slid-back {result.SlidBackCount}, " +
+                $"scoped-out {result.ScopeFilteredCount}, " +
                 $"mode={_playbackMode}, history {_playHistory.PlayedDistinctCount}, session served {session})");
         }
         catch (Exception ex)

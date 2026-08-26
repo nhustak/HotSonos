@@ -303,8 +303,15 @@ public sealed class SonosController
         }
 
         var excludeKeys = BuildNormalizedKeySet(options.ExcludeUris);
-        var (ordered, excludedCount, candidateCount) =
-            BuildExclusionOrder(scoped, excludeKeys, maxQueue, options.ArtistSpread);
+        var playedAt = NormalizePlayedAt(options.PlayedAtUtc);
+        var (ordered, excludedCount, candidateCount, slidBack) =
+            BuildExclusionOrder(
+                scoped,
+                excludeKeys,
+                playedAt,
+                options.HardRecentWindow,
+                maxQueue,
+                options.ArtistSpread);
 
         if (!append)
             await InvokeAvTransport("RemoveAllTracksFromQueue", ct, ("InstanceID", "0"));
@@ -340,6 +347,7 @@ public sealed class SonosController
             Enqueued = ordered.Count,
             ExcludedCount = excludedCount,
             CandidateCount = candidateCount,
+            SlidBackCount = slidBack,
             ScopeFilteredCount = scopeFiltered,
             Appended = append,
             EnqueuedUris = ordered.Select(t => t.Uri).ToList(),
@@ -428,16 +436,22 @@ public sealed class SonosController
 
     /// <summary>
     /// Hard-exclude played tracks when possible, then shuffle + artist-spread, take maxQueue.
+    /// If the unheard pool is short, slide in the oldest plays outside
+    /// <paramref name="hardRecentWindow"/>. Last-24h tracks return only when
+    /// every in-scope track was heard that recently.
     /// </summary>
-    private static (List<(string Uri, XElement Item)> Ordered, int ExcludedCount, int CandidateCount)
+    internal static (List<(string Uri, XElement Item)> Ordered, int ExcludedCount, int CandidateCount, int SlidBackCount)
         BuildExclusionOrder(
             List<(string Uri, XElement Item)> tracks,
             HashSet<string> excludeKeys,
+            IReadOnlyDictionary<string, DateTime> playedAt,
+            TimeSpan hardRecentWindow,
             int maxQueue,
             bool artistSpread)
     {
         List<(string Uri, XElement Item)> candidates;
         var excluded = 0;
+        var slidBack = 0;
         if (excludeKeys.Count == 0)
         {
             candidates = tracks.ToList();
@@ -456,11 +470,40 @@ public sealed class SonosController
                 candidates.Add(t);
             }
 
-            // Need enough unheard material; otherwise relax exclusion so music still plays.
-            if (candidates.Count < Math.Max(20, maxQueue / 2))
+            if (candidates.Count < maxQueue)
+            {
+                var window = hardRecentWindow <= TimeSpan.Zero
+                    ? TimeSpan.FromHours(24)
+                    : hardRecentWindow;
+                var cutoff = DateTime.UtcNow - window;
+                var older = new List<(string Uri, XElement Item, DateTime Played)>();
+                foreach (var t in tracks)
+                {
+                    var key = NormalizeTrackKey(t.Uri);
+                    if (!excludeKeys.Contains(key))
+                        continue;
+                    if (!playedAt.TryGetValue(key, out var when))
+                        when = DateTime.MinValue;
+                    if (when >= cutoff)
+                        continue;
+                    older.Add((t.Uri, t.Item, when));
+                }
+
+                older.Sort((a, b) => a.Played.CompareTo(b.Played));
+                foreach (var t in older)
+                {
+                    if (candidates.Count >= maxQueue)
+                        break;
+                    candidates.Add((t.Uri, t.Item));
+                    slidBack++;
+                }
+            }
+
+            if (candidates.Count == 0)
             {
                 candidates = tracks.ToList();
                 excluded = 0;
+                slidBack = 0;
             }
         }
 
@@ -468,7 +511,25 @@ public sealed class SonosController
         var ordered = artistSpread ? SpreadArtists(candidates) : candidates;
         if (ordered.Count > maxQueue)
             ordered = ordered.Take(maxQueue).ToList();
-        return (ordered, excluded, candidates.Count);
+        return (ordered, excluded, candidates.Count, slidBack);
+    }
+
+    private static Dictionary<string, DateTime> NormalizePlayedAt(
+        IReadOnlyDictionary<string, DateTime>? raw)
+    {
+        var map = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        if (raw is null)
+            return map;
+        foreach (var kv in raw)
+        {
+            var key = NormalizeTrackKey(kv.Key);
+            if (key.Length == 0)
+                continue;
+            if (!map.TryGetValue(key, out var existing) || kv.Value > existing)
+                map[key] = kv.Value;
+        }
+
+        return map;
     }
 
     /// <summary>

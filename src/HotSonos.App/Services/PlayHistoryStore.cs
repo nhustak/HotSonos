@@ -52,6 +52,28 @@ public sealed class PlayHistoryStore
         }
     }
 
+    /// <summary>Last played UTC per normalized key (retention window, played only).</summary>
+    public IReadOnlyDictionary<string, DateTime> GetLastPlayedUtcByKey()
+    {
+        lock (_gate)
+        {
+            PruneUnlocked();
+            var map = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in _doc.Entries)
+            {
+                if (!string.Equals(e.Kind, "played", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var key = NormalizeKey(e.Uri);
+                if (key.Length == 0)
+                    continue;
+                if (!map.TryGetValue(key, out var when) || e.Utc > when)
+                    map[key] = e.Utc;
+            }
+
+            return map;
+        }
+    }
+
     public int PlayedDistinctCount
     {
         get
