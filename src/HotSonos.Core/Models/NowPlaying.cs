@@ -232,4 +232,103 @@ public sealed record NowPlaying
         hostPart = Uri.UnescapeDataString(hostPart).Trim().TrimEnd('.');
         return string.IsNullOrWhiteSpace(hostPart) ? null : hostPart;
     }
+
+    /// <summary>
+    /// Spotify / Deezer / Amazon / Apple / Pandora identify a song by its track URI.
+    /// Radio and other streams reuse one station URI, so the title is part of the identity.
+    /// </summary>
+    public static bool UsesPerTrackUri(NowPlayingSourceKind kind) =>
+        kind is NowPlayingSourceKind.Spotify
+            or NowPlayingSourceKind.Deezer
+            or NowPlayingSourceKind.Amazon
+            or NowPlayingSourceKind.Apple
+            or NowPlayingSourceKind.Pandora;
+
+    /// <summary>
+    /// True when this snapshot is worth keeping in the "heard outside the library" list:
+    /// a named track that is not the SMB library, not an empty transport, and not a
+    /// nameless or generic line-in/TV input. Queue and service-container URIs are skipped;
+    /// the track URI that follows is the one to keep.
+    /// </summary>
+    public static bool IsHeardOutsideLibrary(string? trackUri, string? title, bool isEmpty = false)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return false;
+
+        var name = title.Trim();
+        if (IsNoiseTitle(name) || IsUriShapedTitle(name))
+            return false;
+        if (isEmpty && string.IsNullOrWhiteSpace(trackUri))
+            return false;
+        if (IsGroupQueueOrServiceContainer(trackUri))
+            return false;
+
+        var kind = ClassifySource(trackUri, isEmpty);
+        if (kind is NowPlayingSourceKind.Empty or NowPlayingSourceKind.LibrarySmb)
+            return false;
+        if (ContainsLibraryShare(trackUri))
+            return false;
+        if (kind == NowPlayingSourceKind.LineInOrTv && IsGenericLineInTitle(name))
+            return false;
+        return true;
+    }
+
+    private static bool ContainsLibraryShare(string? trackUri)
+    {
+        if (string.IsNullOrWhiteSpace(trackUri))
+            return false;
+        return trackUri.Contains("x-file-cifs", StringComparison.OrdinalIgnoreCase)
+               || trackUri.Contains("x-file-smb", StringComparison.OrdinalIgnoreCase)
+               || (trackUri.Contains("://", StringComparison.Ordinal)
+                   && trackUri.Contains("/Music/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsGroupQueueOrServiceContainer(string? trackUri)
+    {
+        if (string.IsNullOrWhiteSpace(trackUri))
+            return false;
+        var u = trackUri.Trim().ToLowerInvariant();
+        if (u.StartsWith("x-rincon-queue:", StringComparison.Ordinal)
+            || u.StartsWith("x-rincon-playlist:", StringComparison.Ordinal))
+            return true;
+
+        var isServiceContainer = u.Contains("playlist", StringComparison.Ordinal)
+                                 || u.Contains("album", StringComparison.Ordinal)
+                                 || u.Contains(":show:", StringComparison.Ordinal)
+                                 || u.Contains("%3ashow%3a", StringComparison.Ordinal);
+        var isPlayableItem = u.Contains("track", StringComparison.Ordinal)
+                             || u.Contains("episode", StringComparison.Ordinal);
+        return isServiceContainer && !isPlayableItem;
+    }
+
+    private static bool IsNoiseTitle(string title)
+    {
+        if (title.Length == 0)
+            return true;
+        return title.Equals("-", StringComparison.Ordinal)
+               || title.Equals("—", StringComparison.Ordinal)
+               || title.Equals("...", StringComparison.Ordinal)
+               || title.Equals("…", StringComparison.Ordinal)
+               || title.Equals("advertisement", StringComparison.OrdinalIgnoreCase)
+               || title.Equals("commercial", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUriShapedTitle(string title)
+    {
+        if (title.Contains("://", StringComparison.Ordinal))
+            return true;
+        return title.StartsWith("x-sonos", StringComparison.OrdinalIgnoreCase)
+               || title.StartsWith("x-rincon", StringComparison.OrdinalIgnoreCase)
+               || title.StartsWith("x-file", StringComparison.OrdinalIgnoreCase)
+               || title.StartsWith("spotify:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGenericLineInTitle(string title) =>
+        title.Equals("TV", StringComparison.OrdinalIgnoreCase)
+        || title.Equals("Line-In", StringComparison.OrdinalIgnoreCase)
+        || title.Equals("Line In", StringComparison.OrdinalIgnoreCase)
+        || title.Equals("Audio In", StringComparison.OrdinalIgnoreCase)
+        || title.Equals("RCA", StringComparison.OrdinalIgnoreCase)
+        || title.Equals("Optical", StringComparison.OrdinalIgnoreCase)
+        || title.Equals("HDMI", StringComparison.OrdinalIgnoreCase);
 }

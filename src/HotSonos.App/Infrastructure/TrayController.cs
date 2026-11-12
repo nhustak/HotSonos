@@ -33,6 +33,7 @@ public sealed class TrayController : IDisposable
         Action FailureDiagnostic,
         Action StopWake,
         Action CopyMcpEndpoint,
+        Action CopyRemoteEndpoint,
         Action DoubleClick,
         Action Exit);
 
@@ -47,6 +48,7 @@ public sealed class TrayController : IDisposable
     private readonly ToolStripMenuItem _offlineItem;
     private readonly ToolStripMenuItem _stopWakeItem;
     private readonly ToolStripMenuItem _mcpItem;
+    private readonly ToolStripMenuItem _remoteItem;
 
     public TrayController(string versionLabel, Callbacks callbacks)
     {
@@ -90,6 +92,8 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add(_stopWakeItem);
         _mcpItem = new ToolStripMenuItem("MCP: (not running)", null, (_, _) => _callbacks.CopyMcpEndpoint());
         _menu.Items.Add(_mcpItem);
+        _remoteItem = new ToolStripMenuItem("Remote: (not listening)", null, (_, _) => _callbacks.CopyRemoteEndpoint());
+        _menu.Items.Add(_remoteItem);
         _menu.Items.Add("Open log folder", null, (_, _) => _callbacks.OpenLogFolder());
         _menu.Items.Add("Copy recent log", null, (_, _) => _callbacks.CopyDiagnostics());
         _menu.Items.Add("⚡ Failure diagnostic (now)", null, (_, _) => _callbacks.FailureDiagnostic());
@@ -181,6 +185,14 @@ public sealed class TrayController : IDisposable
         _mcpItem.Text = string.IsNullOrWhiteSpace(endpoint)
             ? "MCP: (not running)"
             : $"MCP: {endpoint} (copy)";
+    }
+
+    /// <summary>Shows the phone-remote URL in the tray (click copies it).</summary>
+    public void SetRemoteEndpoint(string? endpoint)
+    {
+        _remoteItem.Text = string.IsNullOrWhiteSpace(endpoint)
+            ? "Remote: (not listening)"
+            : $"Remote: {endpoint} (copy)";
     }
 
     /// <summary>Sets the tray hover tooltip to the current track (truncated to fit).</summary>

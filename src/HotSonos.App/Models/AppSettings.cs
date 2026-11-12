@@ -1,3 +1,5 @@
+using HotSonos.Core;
+
 namespace HotSonos.App.Models;
 
 /// <summary>One of the play-source hotkey slots (Sonos favorite/playlist, tag, genre, or library folder).</summary>
@@ -64,6 +66,24 @@ public sealed class FavoriteSlot
             return FavoriteName!;
 
         return "(unset)";
+    }
+}
+
+/// <summary>A Spotify link the user pasted and named. Playback uses the account already on the speaker.</summary>
+public sealed class SavedSpotifyLink
+{
+    public string Name { get; set; } = "";
+
+    /// <summary>Canonical <c>spotify:{kind}:{id}</c>.</summary>
+    public string Reference { get; set; } = "";
+
+    public static string DefaultName(SpotifyItem item)
+    {
+        var kind = string.IsNullOrEmpty(item.Kind)
+            ? "Spotify"
+            : char.ToUpperInvariant(item.Kind[0]) + item.Kind[1..];
+        var id = item.Id.Length <= 8 ? item.Id : item.Id[..8];
+        return $"{kind} {id}";
     }
 }
 
@@ -232,9 +252,10 @@ public sealed class AppSettings
     public bool TopologyMonitorEnabled { get; set; }
 
     /// <summary>
-    /// When true, if rooms peel into extra groups while still online, auto-regroup under
-    /// the active coordinator (debounced + cooldown). Default <c>false</c> — regroup storms
-    /// delay audio; use Topology → Regroup all, or enable only when hunting flaky rooms.
+    /// Topology tab checkbox <c>Keep house grouped</c>. When true, if rooms peel into extra
+    /// groups while still online, auto-regroup under the active coordinator (8s debounce,
+    /// 60s cooldown). Default <c>false</c> — regroup storms delay audio and have crashed
+    /// the tray app. Use Topology → Regroup all for a split already on screen.
     /// </summary>
     public bool KeepHouseGrouped { get; set; }
 
@@ -296,6 +317,24 @@ public sealed class AppSettings
 
     /// <summary>Loopback port for MCP (default 42341). Endpoint: http://127.0.0.1:{port}/mcp</summary>
     public int McpPort { get; set; } = 42341;
+
+    // ---- Phone remote (LAN client of this tray app; not a second Sonos controller) ----
+
+    /// <summary>Host the phone-remote HTTP API on the house LAN address while HotSonos is running.</summary>
+    public bool RemoteEnabled { get; set; } = true;
+
+    /// <summary>TCP port for the phone remote (default 42342). MCP stays on <see cref="McpPort"/>.</summary>
+    public int RemotePort { get; set; } = 42342;
+
+    /// <summary>6-digit house PIN. The phone sends it as <c>X-HotSonos-Pin</c>. Generated once.</summary>
+    public string? RemotePin { get; set; }
+
+    /// <summary>New 6-digit PIN, including leading zeros.</summary>
+    public static string GenerateRemotePin() =>
+        System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+
+    public static bool IsValidRemotePin(string? pin) =>
+        pin is { Length: 6 } && pin.All(char.IsDigit);
 
     // ---- Music library roots (filesystem; for future scan/tags; not Sonos UPnP) ----
 
@@ -486,6 +525,9 @@ public sealed class AppSettings
     /// <summary>Exactly <see cref="FavoriteSlotCount"/> favorite slots (see <see cref="EnsureShape"/>).</summary>
     public List<FavoriteSlot> FavoriteSlots { get; set; } = [];
 
+    /// <summary>Spotify links pasted on the Control tab. The name is whatever the user typed.</summary>
+    public List<SavedSpotifyLink> SavedSpotifyLinks { get; set; } = [];
+
     public const int FavoriteSlotCount = 6;
 
     /// <summary>True when <paramref name="day"/> is selected in <see cref="WakeDaysMask"/>.</summary>
@@ -578,6 +620,9 @@ public sealed class AppSettings
         if (WakeStepIntervalMinutes < 1) WakeStepIntervalMinutes = 1;
         if (WakeStepIntervalMinutes > 120) WakeStepIntervalMinutes = 120;
         if (McpPort is < 1024 or > 65535) McpPort = 42341;
+        if (RemotePort is < 1024 or > 65535) RemotePort = 42342;
+        if (!IsValidRemotePin(RemotePin))
+            RemotePin = GenerateRemotePin();
         TrayDoubleClickAction = (TrayDoubleClickAction ?? "").Trim().ToLowerInvariant() switch
         {
             TrayDoubleClickControl => TrayDoubleClickControl,
@@ -747,7 +792,54 @@ public sealed class AppSettings
             }
         }
 
+        NormalizeSavedSpotifyLinks();
         return this;
+    }
+
+    /// <summary>Keep pasteable Spotify links, one row per canonical id, with a name.</summary>
+    private void NormalizeSavedSpotifyLinks()
+    {
+        SavedSpotifyLinks ??= [];
+        var kept = new List<SavedSpotifyLink>();
+        foreach (var row in SavedSpotifyLinks)
+        {
+            if (row is null || string.IsNullOrWhiteSpace(row.Reference))
+                continue;
+            if (!SpotifyItem.TryParse(row.Reference, out var item) || item is null)
+                continue;
+
+            var name = string.IsNullOrWhiteSpace(row.Name)
+                ? SavedSpotifyLink.DefaultName(item)
+                : row.Name.Trim();
+            var existing = kept.FindIndex(k =>
+                string.Equals(k.Reference, item.Canonical, StringComparison.OrdinalIgnoreCase));
+            var entry = new SavedSpotifyLink { Name = name, Reference = item.Canonical };
+            if (existing >= 0)
+                kept[existing] = entry;
+            else
+                kept.Add(entry);
+        }
+
+        SavedSpotifyLinks = kept;
+    }
+
+    /// <summary>Match a canonical link or a saved name. Call after <see cref="EnsureShape"/>.</summary>
+    public SavedSpotifyLink? FindSavedSpotify(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || SavedSpotifyLinks is null)
+            return null;
+
+        var trimmed = text.Trim();
+        if (SpotifyItem.TryParse(trimmed, out var item) && item is not null)
+        {
+            var byRef = SavedSpotifyLinks.FirstOrDefault(s =>
+                string.Equals(s.Reference, item.Canonical, StringComparison.OrdinalIgnoreCase));
+            if (byRef is not null)
+                return byRef;
+        }
+
+        return SavedSpotifyLinks.FirstOrDefault(s =>
+            string.Equals(s.Name, trimmed, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Normalizes the flat tag catalog; seeds starter tags when empty.</summary>

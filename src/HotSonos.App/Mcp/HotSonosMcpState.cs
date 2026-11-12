@@ -32,8 +32,14 @@ public sealed class HotSonosMcpState
     /// <summary>Persist settings after catalog edits from MCP (tag create/rename).</summary>
     public Action? PersistSettings { get; set; }
 
-    /// <summary>Play one library track (UNC or x-file-cifs); replaces queue. Toast string.</summary>
+    /// <summary>Play a library track on top of the current queue (insert next + play). Does not wipe.</summary>
     public Func<string, string?, string?, CancellationToken, Task<string>>? PlayLibraryTrackAsync { get; set; }
+
+    /// <summary>Queue a library track up-next without seeking or playing.</summary>
+    public Func<string, string?, string?, CancellationToken, Task<string>>? QueueNowAsync { get; set; }
+
+    /// <summary>Wipe the queue and play only this track. Rare — not "play X".</summary>
+    public Func<string, string?, string?, CancellationToken, Task<string>>? ReplaceQueueWithTrackAsync { get; set; }
 
     /// <summary>Start a fresh history-aware library shuffle (return from one-shot).</summary>
     public Func<CancellationToken, Task<string>>? ResumeShuffleAsync { get; set; }

@@ -260,6 +260,39 @@ public sealed class SonosController
     }
 
     /// <summary>
+    /// Plays a Spotify playlist, album, show, track, or episode on this group.
+    /// A list is expanded onto the queue. SetAVTransportURI of the container
+    /// itself returns UPnP 714 on this firmware.
+    /// </summary>
+    public async Task PlaySpotifyAsync(SpotifyItem item, int serviceType = SpotifyItem.DefaultServiceType, CancellationToken ct = default)
+    {
+        var playback = item.ToPlayback(serviceType);
+        if (!playback.IsContainer)
+        {
+            await InvokeAvTransport("SetAVTransportURI", ct,
+                ("InstanceID", "0"),
+                ("CurrentURI", playback.Uri),
+                ("CurrentURIMetaData", playback.Metadata)).ConfigureAwait(false);
+            await PlayAsync(ct).ConfigureAwait(false);
+            return;
+        }
+
+        await InvokeAvTransport("RemoveAllTracksFromQueue", ct, ("InstanceID", "0"));
+        await InvokeAvTransport("AddURIToQueue", ct,
+            ("InstanceID", "0"),
+            ("EnqueuedURI", playback.Uri),
+            ("EnqueuedURIMetaData", playback.Metadata),
+            ("DesiredFirstTrackNumberEnqueued", "0"),
+            ("EnqueueAsNext", "0")).ConfigureAwait(false);
+        await InvokeAvTransport("SetAVTransportURI", ct,
+            ("InstanceID", "0"),
+            ("CurrentURI", $"x-rincon-queue:{CoordinatorUuid}#0"),
+            ("CurrentURIMetaData", "")).ConfigureAwait(false);
+        await InvokeAvTransport("SetPlayMode", ct, ("InstanceID", "0"), ("NewPlayMode", "NORMAL")).ConfigureAwait(false);
+        await PlayAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Number of tracks sent per <c>AddMultipleURIsToQueue</c> call. Sonos'
     /// UPnP implementation silently truncates much larger batches, so this
     /// stays well under the commonly-cited safe limit.
@@ -861,11 +894,18 @@ public sealed class SonosController
     }
 
     /// <summary>
-    /// Insert one local-library URI after the current track (or at end if idle),
-    /// seek to it, and play — without clearing or rebuilding the queue.
-    /// Preserves an existing shuffle queue so the rest keeps playing afterward.
+    /// Queue index to insert after the current track (1-based). Idle/empty → 1 (top).
+    /// Never 0 — Sonos treats DesiredFirstTrackNumberEnqueued=0 as append at end.
     /// </summary>
-    public async Task InsertLibraryUriAndPlayNowAsync(
+    public static int QueueInsertIndexAfterCurrent(int currentTrackNumber) =>
+        currentTrackNumber > 0 ? currentTrackNumber + 1 : 1;
+
+    /// <summary>
+    /// Insert one local-library URI as the next queue item (after the current track,
+    /// or at the top if idle). Does not seek, play, or clear the queue.
+    /// Returns the 1-based queue index of the inserted track.
+    /// </summary>
+    public async Task<int> InsertLibraryUriNextAsync(
         string cifsUri,
         string? title = null,
         string? artist = null,
@@ -877,34 +917,47 @@ public sealed class SonosController
         var uri = cifsUri.Trim();
         var meta = BuildMinimalTrackMetadata(uri, title, artist);
 
-        // EnqueueAsNext=1 inserts after the currently playing track (Sonos "play next").
-        // DesiredFirstTrackNumberEnqueued=0 is ignored when EnqueueAsNext is set.
+        var pos = await _soap.InvokeAsync(
+            CoordinatorIp, SonosService.AvTransport, "GetPositionInfo",
+            [new("InstanceID", "0")], ct).ConfigureAwait(false);
+        var current = 0;
+        if (int.TryParse(SonosSoapClient.ReadValue(pos, "Track"), out var cur) && cur > 0)
+            current = cur;
+        var insertAt = QueueInsertIndexAfterCurrent(current);
+
+        // Explicit index — EnqueueAsNext=1 while STOPPED appends at the end, then
+        // a Play-now seek jumps there and skips the rest of the shuffle.
         var enqueue = await _soap.InvokeAsync(
             CoordinatorIp, SonosService.AvTransport, "AddURIToQueue",
             [
                 new("InstanceID", "0"),
                 new("EnqueuedURI", uri),
                 new("EnqueuedURIMetaData", meta),
-                new("DesiredFirstTrackNumberEnqueued", "0"),
-                new("EnqueueAsNext", "1"),
+                new("DesiredFirstTrackNumberEnqueued", insertAt.ToString()),
+                new("EnqueueAsNext", "0"),
             ],
             ct).ConfigureAwait(false);
 
-        var trackNr = 1;
         if (int.TryParse(SonosSoapClient.ReadValue(enqueue, "FirstTrackNumberEnqueued"), out var first)
             && first > 0)
         {
-            trackNr = first;
+            return first;
         }
-        else
-        {
-            // Fallback: current track + 1 when response omits the index.
-            var pos = await _soap.InvokeAsync(
-                CoordinatorIp, SonosService.AvTransport, "GetPositionInfo",
-                [new("InstanceID", "0")], ct).ConfigureAwait(false);
-            if (int.TryParse(SonosSoapClient.ReadValue(pos, "Track"), out var cur) && cur > 0)
-                trackNr = cur + 1;
-        }
+
+        return insertAt;
+    }
+
+    /// <summary>
+    /// Insert one local-library URI after the current track, seek to it, and play —
+    /// without clearing or rebuilding the queue (Library ⚡ Play now).
+    /// </summary>
+    public async Task InsertLibraryUriAndPlayNowAsync(
+        string cifsUri,
+        string? title = null,
+        string? artist = null,
+        CancellationToken ct = default)
+    {
+        var trackNr = await InsertLibraryUriNextAsync(cifsUri, title, artist, ct).ConfigureAwait(false);
 
         // Point at the local queue if transport is on something else (radio, stream, etc.).
         var media = await _soap.InvokeAsync(

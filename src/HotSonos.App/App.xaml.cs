@@ -40,6 +40,9 @@ public partial class App : System.Windows.Application
     private WakeMusicService? _wake;
     private HotSonosMcpHost? _mcpHost;
     private HotSonosMcpState? _mcpState;
+    private HotSonos.App.Remote.HotSonosRemoteHost? _remoteHost;
+    private readonly SemaphoreSlim _remoteBindGate = new(1, 1);
+    private int _remoteBindDirty;
     private LibraryService? _library;
     private FailureDiagnosticService? _failureDiagnostic;
     private int _failureDiagnosticRunning; // 0/1
@@ -352,6 +355,8 @@ public partial class App : System.Windows.Application
                 catch (Exception ex) { AppLog.Warn("Settings save from MCP failed", ex); }
             },
             PlayLibraryTrackAsync = McpPlayLibraryTrackAsync,
+            QueueNowAsync = McpQueueNowAsync,
+            ReplaceQueueWithTrackAsync = McpReplaceQueueWithTrackAsync,
             ResumeShuffleAsync = McpResumeShuffleAsync,
             PlayTaggedTracksAsync = McpPlayTaggedTracksAsync,
             PlayGenreTracksAsync = McpPlayGenreTracksAsync,
@@ -391,6 +396,7 @@ public partial class App : System.Windows.Application
                 FailureDiagnostic: () => _ = RunFailureDiagnosticAsync(),
                 StopWake: () => _wake?.Cancel(),
                 CopyMcpEndpoint: OnCopyMcpEndpoint,
+                CopyRemoteEndpoint: OnCopyRemoteEndpoint,
                 DoubleClick: OnTrayDoubleClick,
                 Exit: ExitApplication));
 
@@ -495,6 +501,112 @@ public partial class App : System.Windows.Application
         }
     }
 
+    /// <summary>
+    /// Binds the phone-remote host to the LAN address that shares a /24 with a speaker.
+    /// Safe to call often: a matching listen is left alone. Coalesces overlapping calls.
+    /// </summary>
+    private async Task EnsureRemoteBoundAsync()
+    {
+        if (_isExiting)
+            return;
+
+        Interlocked.Exchange(ref _remoteBindDirty, 1);
+        if (!await _remoteBindGate.WaitAsync(0).ConfigureAwait(false))
+            return;
+
+        try
+        {
+            while (Interlocked.Exchange(ref _remoteBindDirty, 0) == 1)
+            {
+                if (_isExiting)
+                    return;
+                await BindRemoteCoreAsync().ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Remote bind failed", ex);
+        }
+        finally
+        {
+            _remoteBindGate.Release();
+            if (Volatile.Read(ref _remoteBindDirty) == 1 && !_isExiting)
+                _ = EnsureRemoteBoundAsync();
+        }
+    }
+
+    private async Task BindRemoteCoreAsync()
+    {
+        if (_mcpState is null)
+            return;
+
+        var settings = _settings.EnsureShape();
+        if (!settings.RemoteEnabled)
+        {
+            await StopRemoteHostAsync().ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(() => _tray?.SetRemoteEndpoint(null));
+            return;
+        }
+
+        var ip = HotSonos.Remote.Protocol.RemoteNet.ChooseLanAddress(
+            HotSonos.App.Remote.HotSonosRemoteHost.LocalIpv4(),
+            _sonos.KnownSpeakerAddresses());
+        var port = settings.RemotePort;
+        var desired = ip is null ? null : $"http://{ip}:{port}";
+        if (desired is not null && _remoteHost?.IsRunning == true && _remoteHost.Endpoint == desired)
+            return;
+
+        await StopRemoteHostAsync().ConfigureAwait(false);
+        if (ip is null)
+        {
+            AppLog.Info("Remote not bound — no LAN address shares a subnet with a speaker");
+            await Dispatcher.InvokeAsync(() => _tray?.SetRemoteEndpoint(null));
+            return;
+        }
+
+        var host = new HotSonos.App.Remote.HotSonosRemoteHost();
+        try
+        {
+            await host.StartAsync(_mcpState, new HotSonos.App.Remote.RemoteHooks
+            {
+                IsBusy = () => _actionGate.CurrentCount == 0,
+                Version = () => AppVersion.Current,
+                SetLogicalVolumeAsync = RemoteSetVolumeAsync,
+                SampleVolumeAsync = ct => _sonos.SampleHouseVolumeAsync(ct),
+            }, ip, port).ConfigureAwait(false);
+            _remoteHost = host;
+            var endpoint = host.Endpoint;
+            await Dispatcher.InvokeAsync(() => _tray?.SetRemoteEndpoint(endpoint));
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error($"Remote failed to start on {desired}", ex);
+            try { await host.DisposeAsync().ConfigureAwait(false); } catch { /* ignore */ }
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _tray?.SetRemoteEndpoint(null);
+                _tray?.ShowBalloon("HotSonos", $"Remote failed to start on port {port}: {ex.Message}");
+            });
+        }
+    }
+
+    private Task<int> RemoteSetVolumeAsync(int percent, CancellationToken ct)
+    {
+        if (_wake?.IsActive == true)
+            _wake.Cancel();
+        return _sonos.SetHouseLogicalVolumeAsync(percent, ct);
+    }
+
+    private async Task StopRemoteHostAsync()
+    {
+        var host = _remoteHost;
+        _remoteHost = null;
+        if (host is null)
+            return;
+        try { await host.StopAsync().ConfigureAwait(false); }
+        catch (Exception ex) { AppLog.Warn("Remote stop failed", ex); }
+    }
+
     private async Task<string> McpRefreshDevicesAsync()
     {
         await _sonos.RefreshAsync(_settings.ActiveRoom).ConfigureAwait(false);
@@ -509,14 +621,50 @@ public partial class App : System.Windows.Application
         return $"OK: {_sonos.Groups.Count} group(s), active={_sonos.ActiveRoom ?? "(none)"}, offline=[{string.Join(", ", _sonos.OfflineSpeakers)}]";
     }
 
-    /// <summary>MCP control path: same gate/flyout behavior as hotkeys (marshaled to UI thread).</summary>
+    /// <summary>"Play X" — keep the current queue, put the song on top, play it.</summary>
     private async Task<string> McpPlayLibraryTrackAsync(
         string path, string? title, string? artist, CancellationToken ct)
     {
         await _actionGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            AppLog.Info($"MCP play_library_track: {path}");
+            AppLog.Info($"MCP play_library_track (keep queue, on top): {path}");
+            var toast = await _sonos.PlayLibraryTrackNowAsync(path, title, artist, ct).ConfigureAwait(false);
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
+            return toast;
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
+    private async Task<string> McpQueueNowAsync(
+        string path, string? title, string? artist, CancellationToken ct)
+    {
+        await _actionGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            AppLog.Info($"MCP queue_track: {path}");
+            var toast = await _sonos.QueueLibraryTrackNextAsync(path, title, artist, ct).ConfigureAwait(false);
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
+            return toast;
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
+    private async Task<string> McpReplaceQueueWithTrackAsync(
+        string path, string? title, string? artist, CancellationToken ct)
+    {
+        await _actionGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            AppLog.Info($"MCP replace_queue_with_track: {path}");
             var toast = await _sonos.PlayLibraryTrackAsync(path, title, artist, ct).ConfigureAwait(false);
             if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                 await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
@@ -631,8 +779,8 @@ public partial class App : System.Windows.Application
             try
             {
                 // Capture toast via Execute without duplicating gate logic: call the real path.
-                await ExecuteActionAsync(action);
-                tcs.TrySetResult($"OK:{action}");
+                var toast = await ExecuteActionAsync(action);
+                tcs.TrySetResult(toast);
             }
             catch (Exception ex)
             {
@@ -659,6 +807,23 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private void OnCopyRemoteEndpoint()
+    {
+        var ep = _remoteHost?.Endpoint ?? $"http://<this-pc>:{_settings.RemotePort} (not running)";
+        try
+        {
+            System.Windows.Clipboard.SetText(ep);
+            _tray?.ShowBalloon("HotSonos", _remoteHost?.IsRunning == true
+                ? $"Remote address copied:\n{ep}"
+                : "Remote is not listening yet — address pattern copied.");
+            AppLog.Info($"Remote endpoint copied: {ep}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Copy remote endpoint failed", ex);
+        }
+    }
+
     private void OnCopyDiagnostics()
     {
         if (AppLog.TryCopyRecentToClipboard())
@@ -679,6 +844,7 @@ public partial class App : System.Windows.Application
             await InitialDiscoveryAsync().ConfigureAwait(true);
             // MCP stays off in stability isolation (settings forced false).
             await StartMcpIfEnabledAsync().ConfigureAwait(true);
+            await EnsureRemoteBoundAsync().ConfigureAwait(true);
             if (openMainWindow)
             {
                 await Dispatcher.InvokeAsync(() =>
@@ -986,7 +1152,7 @@ public partial class App : System.Windows.Application
     private static bool IsVolumeStepAction(HotsonosAction action) =>
         action is HotsonosAction.VolumeUp or HotsonosAction.VolumeDown;
 
-    private async Task ExecuteActionAsync(HotsonosAction action)
+    private async Task<string?> ExecuteActionAsync(HotsonosAction action)
     {
         // User volume control cancels an in-progress wake ramp (they take over).
         if (IsVolumeAction(action) && _wake?.IsActive == true)
@@ -998,7 +1164,7 @@ public partial class App : System.Windows.Application
         if (IsVolumeStepAction(action))
         {
             QueueVolumeStep(action == HotsonosAction.VolumeUp ? 1 : -1);
-            return;
+            return null;
         }
 
         // Exclusive actions refuse re-entry immediately so a double hotkey cannot
@@ -1009,9 +1175,10 @@ public partial class App : System.Windows.Application
             if (!await _actionGate.WaitAsync(0))
             {
                 AppLog.Info($"Ignored concurrent exclusive action: {action}");
+                const string busy = "Busy — already re-syncing / shuffling…";
                 // Always surface — double-hit while scanning is easy to miss.
-                EnsureFlyout().ShowAction("Busy — already re-syncing / shuffling…");
-                return;
+                EnsureFlyout().ShowAction(busy);
+                return busy;
             }
         }
         else
@@ -1040,11 +1207,15 @@ public partial class App : System.Windows.Application
                         || _settings.FlyoutPinned)
                         EnsureFlyout().ShowAction(toast!);
                 }
+
+                return toast;
             }
             catch (Exception ex)
             {
                 AppLog.Error($"Action {action} failed", ex);
-                EnsureFlyout().ShowAction(FriendlyError(ex)); // errors always surface
+                var message = FriendlyError(ex);
+                EnsureFlyout().ShowAction(message); // errors always surface
+                return message;
             }
         }
         finally
@@ -1200,6 +1371,7 @@ public partial class App : System.Windows.Application
         _lastTrayTopologyRefreshUtc = now;
         Dispatcher.BeginInvoke(UpdateTrayDynamic);
         MaybeScheduleKeepHouseGrouped();
+        _ = EnsureRemoteBoundAsync();
     }
 
     /// <summary>
@@ -1214,6 +1386,9 @@ public partial class App : System.Windows.Application
             return;
         if ((DateTime.UtcNow - _keepHouseGroupedLastUtc).TotalSeconds < 60)
             return;
+
+        var split = string.Join(" | ", _sonos.Groups.Select(g => g.DisplayName));
+        AppLog.Info($"KeepHouseGrouped: schedule in 8s — {_sonos.Groups.Count} group(s) ({split})");
 
         try { _keepHouseGroupedCts?.Cancel(); } catch { /* ignore */ }
         _keepHouseGroupedCts?.Dispose();
@@ -1230,20 +1405,38 @@ public partial class App : System.Windows.Application
             if (ct.IsCancellationRequested)
                 return;
             if (!_settings.EnsureShape().KeepHouseGrouped)
+            {
+                AppLog.Info("KeepHouseGrouped: stood down — switch is off");
                 return;
+            }
             if (_sonos.Groups.Count <= 1)
+            {
+                AppLog.Info("KeepHouseGrouped: stood down — already one group");
                 return;
+            }
             if ((DateTime.UtcNow - _keepHouseGroupedLastUtc).TotalSeconds < 60)
+            {
+                AppLog.Info("KeepHouseGrouped: stood down — cooldown");
                 return;
+            }
             if (System.Threading.Interlocked.CompareExchange(ref _keepHouseGroupedInFlight, 1, 0) != 0)
+            {
+                AppLog.Info("KeepHouseGrouped: stood down — regroup already in flight");
                 return;
+            }
 
             try
             {
+                var n = _sonos.Groups.Count;
                 var split = string.Join(" | ", _sonos.Groups.Select(g => g.DisplayName));
-                AppLog.Info($"KeepHouseGrouped: {_sonos.Groups.Count} group(s) ({split}) — auto-regrouping (once)");
+                // Flushed before the call. If the tray dies inside GroupAll, last-action.txt
+                // and lifecycle.log stay on this line and there is no "returned" line.
+                AppLog.Lifecycle($"KeepHouseGrouped GroupAll start groups={n} ({split})");
+                AppLog.Before($"KeepHouseGrouped GroupAll start groups={n}");
                 _keepHouseGroupedLastUtc = DateTime.UtcNow;
                 await _sonos.GroupAllSpeakersAsync(ct).ConfigureAwait(false);
+                AppLog.Lifecycle($"KeepHouseGrouped GroupAll returned groups={_sonos.Groups.Count}");
+                AppLog.Info($"KeepHouseGrouped: GroupAll returned, groups={_sonos.Groups.Count}");
             }
             finally
             {
@@ -1252,11 +1445,12 @@ public partial class App : System.Windows.Application
         }
         catch (OperationCanceledException)
         {
-            /* debounce superseded */
+            AppLog.Info("KeepHouseGrouped: wait cancelled (another flap reset the 8s timer)");
         }
         catch (Exception ex)
         {
             System.Threading.Interlocked.Exchange(ref _keepHouseGroupedInFlight, 0);
+            AppLog.Lifecycle($"KeepHouseGrouped GroupAll failed: {ex.GetType().Name}: {ex.Message}");
             AppLog.Warn("KeepHouseGrouped auto-regroup failed", ex);
         }
     }
@@ -1444,7 +1638,9 @@ public partial class App : System.Windows.Application
         {
             _mainWindow = new MainWindow(_sonos, _store, _settings, _library, ApplyBindings, OnRoomChangedFromWindow,
                 action => ExecuteActionAsync(action),
-                mcpEndpoint: () => _mcpHost?.Endpoint ?? _mcpState?.Endpoint);
+                mcpEndpoint: () => _mcpHost?.Endpoint ?? _mcpState?.Endpoint,
+                remoteEndpoint: () => _remoteHost?.IsRunning == true ? _remoteHost.Endpoint : null,
+                onRemoteSettingsChanged: () => _ = EnsureRemoteBoundAsync());
             _mainWindow.HideToTrayRequested += (_, _) => _mainWindow?.Hide();
             _mainWindow.Closing += OnMainWindowClosing;
         }
@@ -1558,6 +1754,7 @@ public partial class App : System.Windows.Application
         _wake?.Dispose();
         try { _library?.Dispose(); } catch { /* exit */ }
         try { _mcpHost?.StopAsync().Wait(TimeSpan.FromSeconds(2)); } catch { /* exit */ }
+        try { _remoteHost?.StopAsync().Wait(TimeSpan.FromSeconds(2)); } catch { /* exit */ }
         _hotkeys?.Dispose();
 
         // Best-effort unsubscribe so speakers do not hold dead SIDs until timeout.

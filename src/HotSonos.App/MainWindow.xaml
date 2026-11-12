@@ -52,6 +52,18 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="ControlPlayColumnList" TargetType="ListBox">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+        </Style>
+        <Style x:Key="ControlPlayColumnItem" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0,1" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Focusable" Value="False" />
+        </Style>
     </Window.Resources>
 
     <Grid Margin="0">
@@ -72,13 +84,13 @@
                 <!--
                   Row0 Auto: shuffle / level / now playing
                   Row1 Auto: speakers size to content (no empty stretch, no scrollbar unless constrained)
-                  Row2 *: play list gets all leftover height; scrollbar only when items overflow
+                  Row2 Auto: Sonos favorites and saved Spotify links. Folders, tags, and genres are the Play tab.
                 -->
                 <Grid Margin="16,12,16,8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" MinHeight="120" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <Grid Grid.Row="0">
@@ -237,6 +249,61 @@
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
+                            <Border Background="#FFF4F7FA" BorderBrush="#FFD8DEE4" BorderThickness="1"
+                                    CornerRadius="6" Padding="12,10" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="Heard outside the library" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,2" />
+                                    <TextBlock Text="Spotify, radio, and other streams. Library tracks stay off this list. Copy a name when you get back."
+                                               Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="HeardOutsideLibraryEmpty"
+                                               Text="Nothing yet. Names show up here as those tracks play."
+                                               Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap" />
+                                    <ListBox x:Name="HeardOutsideLibraryList"
+                                             MaxHeight="168"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             HorizontalContentAlignment="Stretch"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             Visibility="Collapsed">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                <Setter Property="Padding" Value="0,1" />
+                                                <Setter Property="Focusable" Value="False" />
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,2" ToolTip="{Binding ToolTipText}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+                                                        <TextBlock Text="{Binding TitleLine}" FontWeight="SemiBold" FontSize="12"
+                                                                   TextWrapping="Wrap" Foreground="#FF1C2536" />
+                                                        <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="#FF60707F"
+                                                                   TextWrapping="Wrap" Margin="0,1,0,0" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Button Content="Copy" Height="24" Padding="8,0"
+                                                                Tag="{Binding CopyText}"
+                                                                ToolTip="Copy the track name"
+                                                                Click="HeardCopy_Click" />
+                                                        <Button Content="✕" Height="24" Width="24" Margin="4,0,0,0" Padding="0"
+                                                                Tag="{Binding Key}"
+                                                                ToolTip="Remove from this list"
+                                                                Click="HeardRemove_Click" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock x:Name="HeardOutsideLibraryStatus"
+                                               Text="" FontSize="11" Foreground="#FF1C8E54" Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Border>
                             <TextBlock Text="Preferred coordinator" Style="{StaticResource SectionHeader}" Margin="0,0,0,6" />
                             <TextBlock Text="Room that leads the whole-house group (pulls library, others follow). Used by Shuffle / Fresh Start."
                                        Foreground="#FF60707F" FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap" />
@@ -297,68 +364,221 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Play list: all leftover height; scrollbar only when items don't fit -->
+                    <!-- Sonos favorites and saved Spotify links. Folders, tags, and genres are the Play tab. -->
                     <Border Grid.Row="2" Margin="0,12,0,0" Background="White"
                             BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="6" Padding="12,8">
                         <DockPanel LastChildFill="True">
-                            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="Play folders, tags, genres &amp; Sonos playlists" FontSize="15" FontWeight="SemiBold"
-                                               VerticalAlignment="Center" />
-                                    <Button x:Name="ControlPlayListRefreshButton" Content="Refresh list" Height="28" Padding="12,0" Margin="12,0,0,0"
-                                            Click="ControlPlayListRefresh_Click" />
-                                </StackPanel>
-                                <TextBlock x:Name="ControlPlayListStatus"
-                                           Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
-                                           Text="" />
-                            </StackPanel>
-                            <ListBox x:Name="ControlPlayListBox"
-                                     MaxWidth="520"
-                                     HorizontalAlignment="Left"
-                                     BorderThickness="0" Background="Transparent"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                     HorizontalContentAlignment="Stretch"
-                                     VirtualizingPanel.IsVirtualizing="True"
-                                     VirtualizingPanel.VirtualizationMode="Recycling">
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem">
-                                        <Setter Property="Padding" Value="0,1" />
-                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                        <Setter Property="Focusable" Value="False" />
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <!-- One line per source — denser list, less scrolling -->
-                                        <Border Background="#FFF4F7FA" BorderBrush="#FFE0E6EC" BorderThickness="1"
-                                                CornerRadius="4" Padding="8,4" Margin="0,1">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="64" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <Border Grid.Column="0" Background="#FFE8F8EF" CornerRadius="4"
-                                                        Padding="6,1" VerticalAlignment="Center" HorizontalAlignment="Left">
-                                                    <TextBlock Text="{Binding KindLabel}" FontSize="11" FontWeight="SemiBold"
-                                                               Foreground="#FF1C8E54" />
+                            <TextBlock x:Name="ControlPlayListStatus" DockPanel.Dock="Bottom"
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
+                                       Text="" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" MinWidth="160" />
+                                    <ColumnDefinition Width="1.4*" MinWidth="240" />
+                                </Grid.ColumnDefinitions>
+
+                                <DockPanel Grid.Column="0" Margin="0,0,16,0" LastChildFill="True">
+                                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                                        <TextBlock Text="Sonos" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   Foreground="#FF1C2536" />
+                                        <Button x:Name="ControlSonosRefreshButton" Content="Refresh"
+                                                Height="22" Padding="8,0" Margin="8,0,0,0"
+                                                Click="ControlPlayListRefresh_Click"
+                                                ToolTip="Reload Sonos favorites and playlists" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="ControlSonosEmpty" DockPanel.Dock="Top"
+                                               Text="No playable Sonos favorites. The Sonos Radio tiles on the speaker cannot be started from here."
+                                               Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap" Margin="0,4,8,0" />
+                                    <ListBox x:Name="ControlSonosList" Style="{StaticResource ControlPlayColumnList}"
+                                             MaxHeight="240"
+                                             ItemContainerStyle="{StaticResource ControlPlayColumnItem}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="#FFF4F7FA" BorderBrush="#FFE0E6EC" BorderThickness="1"
+                                                        CornerRadius="4" Padding="8,4" Margin="0,1">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13"
+                                                                   VerticalAlignment="Center" Margin="0,0,8,0"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" />
+                                                        <Button Grid.Column="1" Content="▶" Height="26" MinWidth="36"
+                                                                Padding="8,0" VerticalAlignment="Center"
+                                                                Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                                                Tag="{Binding}" ToolTip="Play" Click="ControlPlayItem_Click" />
+                                                    </Grid>
                                                 </Border>
-                                                <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold"
-                                                           FontSize="13" VerticalAlignment="Center" Margin="8,0,8,0"
-                                                           TextTrimming="CharacterEllipsis"
-                                                           ToolTip="{Binding Detail}" />
-                                                <Button Grid.Column="2" Content="▶" Height="26" MinWidth="40"
-                                                        Padding="8,0" VerticalAlignment="Center"
-                                                        Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
-                                                        Tag="{Binding}"
-                                                        ToolTip="Play"
-                                                        Click="ControlPlayItem_Click" />
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+
+                                <DockPanel Grid.Column="1" LastChildFill="True"
+                                           Margin="16,0,0,0">
+                                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                                        <TextBlock Text="Spotify" FontWeight="SemiBold" Foreground="#FF1C2536" />
+                                        <TextBlock Text="Paste a link and name it. Remember keeps it. Play uses the Spotify account already on Sonos."
+                                                   Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,4" />
+                                        <TextBox x:Name="ControlSpotifyNameBox" Height="26" VerticalContentAlignment="Center"
+                                                 ToolTip="Name for this link. Leave blank and HotSonos uses a short default you can edit later." />
+                                        <TextBox x:Name="ControlSpotifyLinkBox" Height="26" Margin="0,4,0,0" VerticalContentAlignment="Center"
+                                                 ToolTip="Paste a Spotify playlist, album, or track link" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                            <Button Content="Remember" Height="26" Padding="10,0" Click="ControlSpotifyRemember_Click"
+                                                    ToolTip="Save this link under the name above. Does not change what is playing." />
+                                            <Button Content="Play" Height="26" Padding="12,0" Margin="6,0,0,0"
+                                                    Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                                    Click="ControlSpotifyPlayLink_Click"
+                                                    ToolTip="Save this link, then play it. Switches the group off the library queue." />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <ListBox x:Name="ControlSpotifyList" Style="{StaticResource ControlPlayColumnList}"
+                                             MaxHeight="240"
+                                             ItemContainerStyle="{StaticResource ControlPlayColumnItem}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="#FFF4F7FA" BorderBrush="#FFE0E6EC" BorderThickness="1"
+                                                        CornerRadius="4" Padding="6,3" Margin="0,1">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBox Text="{Binding Title, Mode=OneWay}" Height="26"
+                                                                 VerticalContentAlignment="Center"
+                                                                 LostFocus="ControlSpotifyName_LostFocus"
+                                                                 ToolTip="Edit the name, then click away to save it" />
+                                                        <Button Grid.Column="1" Content="▶" Height="26" MinWidth="36" Margin="6,0,0,0"
+                                                                Padding="8,0" VerticalAlignment="Center"
+                                                                Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                                                Tag="{Binding}" ToolTip="Play" Click="ControlPlayItem_Click" />
+                                                        <Button Grid.Column="2" Content="✕" Height="26" Width="26" Margin="4,0,0,0"
+                                                                Padding="0" VerticalAlignment="Center"
+                                                                Tag="{Binding}" ToolTip="Remove this saved link"
+                                                                Click="ControlSpotifyRemove_Click" />
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+                            </Grid>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ========== Play (library folders, tags, genres) ========== -->
+            <TabItem x:Name="LibraryPlayTab" Header="Play">
+                <Grid Margin="16,12,16,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" MinHeight="160" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Margin="0,0,0,8">
+                        <TextBlock Text="Play a library folder, tag, or genre" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Text="Play shuffles that source. A folder stays in that folder for top-up. Genres appear when “Show genres in shuffle / play lists” is on (Shuffle tab)."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Border Grid.Row="1" Background="White" BorderBrush="#FFD8DEE4" BorderThickness="1"
+                            CornerRadius="6" Padding="12,8">
+                        <DockPanel LastChildFill="True">
+                            <TextBlock x:Name="LibraryPlayStatus" DockPanel.Dock="Bottom"
+                                       Foreground="#FF60707F" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
+                                       Text="" />
+                            <Grid x:Name="LibraryPlayColumns">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" MinWidth="140" />
+                                    <ColumnDefinition Width="*" MinWidth="140" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <DockPanel Grid.Column="0" Margin="0,0,8,0" LastChildFill="True">
+                                    <TextBlock DockPanel.Dock="Top" Text="Folders" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ListBox x:Name="ControlFolderList" Style="{StaticResource ControlPlayColumnList}"
+                                             ItemContainerStyle="{StaticResource ControlPlayColumnItem}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="#FFF4F7FA" BorderBrush="#FFE0E6EC" BorderThickness="1"
+                                                        CornerRadius="4" Padding="8,4" Margin="0,1">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13"
+                                                                   VerticalAlignment="Center" Margin="0,0,8,0"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" />
+                                                        <Button Grid.Column="1" Content="▶" Height="26" MinWidth="36"
+                                                                Padding="8,0" VerticalAlignment="Center"
+                                                                Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                                                Tag="{Binding}" ToolTip="Play" Click="ControlPlayItem_Click" />
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+
+                                <DockPanel Grid.Column="1" Margin="0,0,8,0" LastChildFill="True">
+                                    <TextBlock DockPanel.Dock="Top" Text="Tags" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ListBox x:Name="ControlTagList" Style="{StaticResource ControlPlayColumnList}"
+                                             ItemContainerStyle="{StaticResource ControlPlayColumnItem}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="#FFF4F7FA" BorderBrush="#FFE0E6EC" BorderThickness="1"
+                                                        CornerRadius="4" Padding="8,4" Margin="0,1">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13"
+                                                                   VerticalAlignment="Center" Margin="0,0,8,0"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" />
+                                                        <Button Grid.Column="1" Content="▶" Height="26" MinWidth="36"
+                                                                Padding="8,0" VerticalAlignment="Center"
+                                                                Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                                                Tag="{Binding}" ToolTip="Play" Click="ControlPlayItem_Click" />
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+
+                                <DockPanel x:Name="ControlGenreColumn" Grid.Column="2" Margin="0,0,8,0" LastChildFill="True">
+                                    <TextBlock DockPanel.Dock="Top" Text="Genres" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                    <ListBox x:Name="ControlGenreList" Style="{StaticResource ControlPlayColumnList}"
+                                             ItemContainerStyle="{StaticResource ControlPlayColumnItem}"
+                                             VirtualizingPanel.IsVirtualizing="True"
+                                             VirtualizingPanel.VirtualizationMode="Recycling">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="#FFF4F7FA" BorderBrush="#FFE0E6EC" BorderThickness="1"
+                                                        CornerRadius="4" Padding="8,4" Margin="0,1">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13"
+                                                                   VerticalAlignment="Center" Margin="0,0,8,0"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" />
+                                                        <Button Grid.Column="1" Content="▶" Height="26" MinWidth="36"
+                                                                Padding="8,0" VerticalAlignment="Center"
+                                                                Background="#FF2ECC71" Foreground="White" FontWeight="SemiBold"
+                                                                Tag="{Binding}" ToolTip="Play" Click="ControlPlayItem_Click" />
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+                            </Grid>
                         </DockPanel>
                     </Border>
                 </Grid>
@@ -829,7 +1049,7 @@
                                     <DataTemplate>
                                         <Button Loaded="LibraryPlayNowButton_Loaded"
                                                 Click="LibraryPlayNowButton_Click"
-                                                ToolTip="Play now — insert next and play without clearing the shuffle queue"
+                                                ToolTip="Play now — keep the queue, put this song on top, play it. MCP play_library_track does the same. queue_track only queues."
                                                 Padding="2" Margin="1" Width="28" Height="24"
                                                 Cursor="Hand" Background="Transparent" BorderThickness="0"
                                                 Focusable="False" />
@@ -1040,6 +1260,26 @@
                         </StackPanel>
                         <TextBlock Text="http://127.0.0.1:port/mcp — loopback only."
                                    Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+                        <TextBlock Text="Phone remote" Style="{StaticResource SectionHeader}" />
+                        <CheckBox x:Name="RemoteEnabledCheckBox" Content="Enable the phone remote while HotSonos is running" Margin="0,2" />
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <TextBlock Text="Port" VerticalAlignment="Center" Width="50" />
+                            <TextBox x:Name="RemotePortBox" Width="80" Padding="6,2" VerticalContentAlignment="Center" />
+                            <TextBlock Text="(restart not required — save applies it)"
+                                       VerticalAlignment="Center" Margin="8,0,0,0" Foreground="#FF60707F" FontSize="11" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="PIN" VerticalAlignment="Center" Width="50" />
+                            <TextBox x:Name="RemotePinBox" Width="80" Padding="6,2" VerticalContentAlignment="Center" IsReadOnly="True" />
+                            <Button Content="New PIN" Margin="8,0,0,0" Padding="10,2" Click="RemoteRegeneratePin_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="RemoteEndpointText" Text="URL: (not listening yet)"
+                                   Margin="0,6,0,0" TextWrapping="Wrap" />
+                        <TextBlock Text="The phone sends the PIN. Windows Firewall must allow HotSonos on Private networks. Public stays closed."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+                        <Button Content="Allow on private networks…" HorizontalAlignment="Left" Margin="0,8,0,0"
+                                Padding="10,4" Click="RemoteFirewall_Click" />
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -1066,6 +1306,11 @@
                                           ToolTip="When OFF (default): no bonded-Sub parse, no event log spam, no map diffs on every Sonos push. Turn ON only to debug group flaps."
                                           Checked="TopologyMonitorEnabledCheck_Changed"
                                           Unchecked="TopologyMonitorEnabledCheck_Changed" />
+                                <CheckBox x:Name="KeepHouseGroupedCheck" Content="Keep house grouped"
+                                          VerticalAlignment="Center" Margin="12,0,0,0"
+                                          ToolTip="When on, rooms that peel into their own groups while still online are pulled back under the coordinator after 8 seconds, at most once a minute. Off by default. Use Regroup all for a split that is already on screen."
+                                          Checked="KeepHouseGroupedCheck_Changed"
+                                          Unchecked="KeepHouseGroupedCheck_Changed" />
                                 <CheckBox x:Name="TopologyAutoScrollCheck" Content="Auto-scroll events" IsChecked="True"
                                           VerticalAlignment="Center" Margin="12,0,0,0" />
                                 <Button Content="Refresh now" Height="28" Padding="12,0" Margin="12,0,0,0"

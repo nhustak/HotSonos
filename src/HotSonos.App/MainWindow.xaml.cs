@@ -11,6 +11,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using HotSonos.App.Infrastructure;
 using HotSonos.App.Library;
+using HotSonos.Core;
 using HotSonos.App.Mcp;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
@@ -35,6 +36,8 @@ public partial class MainWindow : Window
     private readonly Action<string> _onRoomChanged;
     private readonly Func<HotsonosAction, Task> _runAction;
     private readonly Func<string?> _mcpEndpoint;
+    private readonly Func<string?> _remoteEndpoint;
+    private readonly Action? _onRemoteSettingsChanged;
     private DispatcherTimer? _libraryStatusTimer;
     private bool _mcpUiHooked;
 
@@ -96,7 +99,9 @@ public partial class MainWindow : Window
         Func<IReadOnlyList<HotsonosAction>> applyBindings,
         Action<string> onRoomChanged,
         Func<HotsonosAction, Task> runAction,
-        Func<string?>? mcpEndpoint = null)
+        Func<string?>? mcpEndpoint = null,
+        Func<string?>? remoteEndpoint = null,
+        Action? onRemoteSettingsChanged = null)
     {
         _sonos = sonos;
         _store = store;
@@ -106,6 +111,8 @@ public partial class MainWindow : Window
         _onRoomChanged = onRoomChanged;
         _runAction = runAction;
         _mcpEndpoint = mcpEndpoint ?? (() => null);
+        _remoteEndpoint = remoteEndpoint ?? (() => null);
+        _onRemoteSettingsChanged = onRemoteSettingsChanged;
 
         _levelVolumes = Clone(_settings.LevelVolumes);
         _freshStart = Clone(_settings.FreshStart);
@@ -128,6 +135,7 @@ public partial class MainWindow : Window
         IsVisibleChanged += OnIsVisibleChanged;
         Closed += OnClosed;
         _sonos.NowPlayingChanged += OnControlNowPlayingChanged;
+        _sonos.Heard.Changed += OnHeardOutsideLibraryChanged;
     }
 
     /// <summary>Select Settings, Library, Tags, Topology, Logs, or Debug tab by name.</summary>
@@ -138,6 +146,10 @@ public partial class MainWindow : Window
         else if (string.Equals(tab, "control", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "settings", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = ControlTab;
+        else if (string.Equals(tab, "play", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "folders", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "folder", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedItem = LibraryPlayTab;
         else if (string.Equals(tab, "tags", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "tag", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = TagsTab;
@@ -155,11 +167,11 @@ public partial class MainWindow : Window
         else if (string.Equals(tab, "shuffle", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = MainTabs.Items.OfType<TabItem>()
                 .FirstOrDefault(t => string.Equals(t.Header?.ToString(), "Shuffle", StringComparison.OrdinalIgnoreCase))
-                ?? MainTabs.Items[2] as TabItem;
+                ?? MainTabs.Items[3] as TabItem;
         else if (string.Equals(tab, "hotkeys", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = MainTabs.Items.OfType<TabItem>()
                 .FirstOrDefault(t => string.Equals(t.Header?.ToString(), "Hotkeys", StringComparison.OrdinalIgnoreCase))
-                ?? MainTabs.Items[1] as TabItem;
+                ?? MainTabs.Items[2] as TabItem;
         else if (string.Equals(tab, "wake", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = MainTabs.Items.OfType<TabItem>()
                 .FirstOrDefault(t => string.Equals(t.Header?.ToString(), "Wake", StringComparison.OrdinalIgnoreCase));
@@ -275,6 +287,10 @@ public partial class MainWindow : Window
         GenaEnabledCheckBox.IsChecked = _settings.GenaEnabled;
         McpEnabledCheckBox.IsChecked = _settings.McpEnabled;
         McpPortBox.Text = _settings.McpPort.ToString();
+        RemoteEnabledCheckBox.IsChecked = _settings.RemoteEnabled;
+        RemotePortBox.Text = _settings.RemotePort.ToString();
+        RemotePinBox.Text = _settings.RemotePin ?? "";
+        RefreshRemoteEndpointText();
         ShuffleQueueTracksBox.Text = _settings.ShuffleQueueTracks.ToString();
         ShuffleTopUpTracksBox.Text = _settings.ShuffleTopUpTracks.ToString();
         ShuffleHistoryDaysBox.Text = _settings.ShuffleHistoryDays.ToString();
@@ -316,6 +332,7 @@ public partial class MainWindow : Window
         RefreshControlPlayList();
         // Seed from live cache (poll/GENA already running). Null only if truly unknown.
         ApplyControlNowPlaying(_sonos.LastNowPlaying);
+        RefreshHeardOutsideLibrary();
         _ = RefreshControlNowPlayingAsync();
         _loaded = true;
 
@@ -330,6 +347,7 @@ public partial class MainWindow : Window
     private void OnClosed(object? sender, EventArgs e)
     {
         _sonos.NowPlayingChanged -= OnControlNowPlayingChanged;
+        _sonos.Heard.Changed -= OnHeardOutsideLibraryChanged;
         if (_mcpUiHooked)
         {
             McpActivityLog.Changed -= OnMcpActivityChanged;
@@ -430,6 +448,89 @@ public partial class MainWindow : Window
         }
 
         SetControlNowPlayingArt(np.AlbumArtUri);
+    }
+
+    private void OnHeardOutsideLibraryChanged() =>
+        Dispatcher.InvokeAsync(RefreshHeardOutsideLibrary);
+
+    private void RefreshHeardOutsideLibrary()
+    {
+        if (HeardOutsideLibraryList is null || HeardOutsideLibraryEmpty is null)
+            return;
+
+        var rows = _sonos.Heard.GetRecent(200).Select(ToHeardRow).ToList();
+        HeardOutsideLibraryList.ItemsSource = rows;
+        var empty = rows.Count == 0;
+        HeardOutsideLibraryEmpty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        HeardOutsideLibraryList.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private static HeardRow ToHeardRow(HeardTrack track)
+    {
+        var title = string.IsNullOrWhiteSpace(track.Title) ? "(unknown title)" : track.Title.Trim();
+        var titleLine = string.IsNullOrWhiteSpace(track.Artist) ? title : $"{title} — {track.Artist.Trim()}";
+        var last = track.LastUtc.ToLocalTime();
+        var bits = new List<string>();
+        if (!string.IsNullOrWhiteSpace(track.Source))
+            bits.Add(track.Source.Trim());
+        if (!string.IsNullOrWhiteSpace(track.Album))
+            bits.Add(track.Album.Trim());
+        bits.Add(last.ToString("yyyy-MM-dd HH:mm"));
+        if (track.Plays > 1)
+            bits.Add($"{track.Plays} plays");
+
+        var tip = new List<string> { titleLine };
+        var first = track.FirstUtc.ToLocalTime();
+        if (first.ToString("yyyy-MM-dd HH:mm") != last.ToString("yyyy-MM-dd HH:mm"))
+            tip.Add($"First heard {first:yyyy-MM-dd HH:mm}");
+        tip.Add($"Last heard {last:yyyy-MM-dd HH:mm}");
+        if (!string.IsNullOrWhiteSpace(track.Uri))
+            tip.Add(track.Uri.Trim());
+
+        return new HeardRow
+        {
+            Key = track.Key,
+            TitleLine = titleLine,
+            Detail = string.Join(" · ", bits),
+            CopyText = titleLine,
+            ToolTipText = string.Join(Environment.NewLine, tip),
+        };
+    }
+
+    private void HeardCopy_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button || button.Tag is not string text || string.IsNullOrWhiteSpace(text))
+            return;
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+            if (HeardOutsideLibraryStatus is not null)
+                HeardOutsideLibraryStatus.Text = "Copied";
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Copy heard track failed", ex);
+            if (HeardOutsideLibraryStatus is not null)
+                HeardOutsideLibraryStatus.Text = "Copy failed";
+        }
+    }
+
+    private void HeardRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button || button.Tag is not string key)
+            return;
+        _sonos.Heard.Remove(key);
+        if (HeardOutsideLibraryStatus is not null)
+            HeardOutsideLibraryStatus.Text = "";
+    }
+
+    private sealed class HeardRow
+    {
+        public required string Key { get; init; }
+        public required string TitleLine { get; init; }
+        public required string Detail { get; init; }
+        public required string CopyText { get; init; }
+        public required string ToolTipText { get; init; }
     }
 
     /// <summary>
@@ -655,12 +756,36 @@ public partial class MainWindow : Window
         _suppressTopologyMonitorToggle = true;
         TopologyMonitorEnabledCheck.IsChecked = _settings.TopologyMonitorEnabled;
         _suppressTopologyMonitorToggle = false;
+        _suppressKeepHouseGroupedToggle = true;
+        KeepHouseGroupedCheck.IsChecked = _settings.KeepHouseGrouped;
+        _suppressKeepHouseGroupedToggle = false;
         RefreshTopologySummaryOnly();
 
         _topologyUiHooked = true;
     }
 
     private bool _suppressTopologyMonitorToggle;
+    private bool _suppressKeepHouseGroupedToggle;
+
+    private void KeepHouseGroupedCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressKeepHouseGroupedToggle || !_loaded) return;
+        var on = KeepHouseGroupedCheck.IsChecked == true;
+        _settings.KeepHouseGrouped = on;
+        try
+        {
+            _store.Save(_settings.EnsureShape());
+            AppLog.Info($"Keep house grouped {(on ? "ON" : "OFF")}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Could not save KeepHouseGrouped", ex);
+        }
+
+        SetStatus(on
+            ? "Keep house grouped ON — a split regroups after 8 seconds."
+            : "Keep house grouped OFF.", warn: false);
+    }
 
     private void TopologyMonitorEnabledCheck_Changed(object sender, RoutedEventArgs e)
     {
@@ -1813,7 +1938,7 @@ public partial class MainWindow : Window
         }
         else if (MainTabs.SelectedItem == TagsTab)
             RefreshTagsCatalogGrid();
-        else if (MainTabs.SelectedItem == ControlTab)
+        else if (MainTabs.SelectedItem == ControlTab || MainTabs.SelectedItem == LibraryPlayTab)
         {
             RefreshControlShuffleSourceCombo();
             RefreshControlPlayList();
@@ -2079,8 +2204,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Library ⚡: insert this track next and play immediately without
-    /// RemoveAllTracksFromQueue (shuffle remainder stays put).
+    /// Library ⚡ Play now: insert this track next and play immediately without
+    /// RemoveAllTracksFromQueue (shuffle remainder stays put). MCP play_library_track
+    /// does this; queue_track only queues (no seek).
     /// </summary>
     private async void LibraryPlayNowButton_Click(object sender, RoutedEventArgs e)
     {
@@ -4382,22 +4508,32 @@ public partial class MainWindow : Window
         combo.SelectedItem = select;
     }
 
-    /// <summary>Build Control-tab list: folders, tags, genres, Sonos favorites/playlists.</summary>
+    /// <summary>Fill Play-tab folders, tags, and genres, plus Control-tab Sonos and Spotify.</summary>
     private void RefreshControlPlayList()
     {
-        if (ControlPlayListBox is null)
+        if (ControlFolderList is null)
             return;
 
-        var rows = new List<ControlPlayRow>();
+        var settings = _settings.EnsureShape();
         var genres = GetPlayGenres();
-        var folders = _settings.EnsureShape().SonosLibraryRoots;
+        var showGenres = settings.ShowGenresInPlaySources;
+        if (LibraryPlayColumns is not null && LibraryPlayColumns.ColumnDefinitions.Count > 2)
+        {
+            LibraryPlayColumns.ColumnDefinitions[2].Width = showGenres
+                ? new GridLength(1, GridUnitType.Star)
+                : new GridLength(0);
+        }
 
-        foreach (var folder in folders)
+        if (ControlGenreColumn is not null)
+            ControlGenreColumn.Visibility = showGenres ? Visibility.Visible : Visibility.Collapsed;
+
+        var folders = new List<ControlPlayRow>();
+        foreach (var folder in settings.SonosLibraryRoots)
         {
             var name = System.IO.Path.GetFileName(folder.TrimEnd('\\', '/'));
             if (string.IsNullOrWhiteSpace(name)) name = folder;
             var count = _library?.CountTracksUnderFolder(folder) ?? 0;
-            rows.Add(new ControlPlayRow(
+            folders.Add(new ControlPlayRow(
                 Kind: ControlPlayKind.Folder,
                 KindLabel: "Folder",
                 Title: name,
@@ -4407,10 +4543,11 @@ public partial class MainWindow : Window
                 Payload: folder));
         }
 
-        foreach (var t in _settings.EnsureShape().Tags)
+        var tags = new List<ControlPlayRow>();
+        foreach (var t in settings.Tags)
         {
             var count = _library?.GetTracksWithTag(t.Key).Count ?? 0;
-            rows.Add(new ControlPlayRow(
+            tags.Add(new ControlPlayRow(
                 Kind: ControlPlayKind.Tag,
                 KindLabel: "Tag",
                 Title: t.Label,
@@ -4420,9 +4557,10 @@ public partial class MainWindow : Window
                 Payload: t.Key));
         }
 
+        var genreRows = new List<ControlPlayRow>();
         foreach (var (genre, count) in genres)
         {
-            rows.Add(new ControlPlayRow(
+            genreRows.Add(new ControlPlayRow(
                 Kind: ControlPlayKind.Genre,
                 KindLabel: "Genre",
                 Title: genre,
@@ -4430,59 +4568,69 @@ public partial class MainWindow : Window
                 Payload: genre));
         }
 
-        foreach (var title in _sonosPlayableTitles)
-        {
-            rows.Add(new ControlPlayRow(
-                Kind: ControlPlayKind.Sonos,
-                KindLabel: "Sonos",
-                Title: title,
-                Detail: "Sonos favorite or playlist",
-                Payload: title));
-        }
+        var sonosRows = _sonosPlayableTitles.Select(title => new ControlPlayRow(
+            Kind: ControlPlayKind.Sonos,
+            KindLabel: "Sonos",
+            Title: title,
+            Detail: "Sonos favorite or playlist",
+            Payload: title)).ToList();
 
-        ControlPlayListBox.ItemsSource = rows;
-        var genreBit = _settings.ShowGenresInPlaySources
-            ? $" · {genres.Count} genre(s)"
-            : " · genres hidden";
-        ControlPlayListStatus.Text = rows.Count == 0
-            ? "No folders, tags, or Sonos playlists yet. Discover library paths; add tags; Refresh for Sonos favorites."
-            : $"{folders.Count} folder(s) · {_settings.Tags.Count} tag(s){genreBit} · {_sonosPlayableTitles.Count} Sonos item(s)";
+        var spotifyRows = settings.SavedSpotifyLinks.Select(link => new ControlPlayRow(
+            Kind: ControlPlayKind.Spotify,
+            KindLabel: "Spotify",
+            Title: link.Name,
+            Detail: $"{link.Reference} · switches the group off the library queue",
+            Payload: link.Reference)).ToList();
+
+        ControlFolderList.ItemsSource = folders;
+        ControlTagList.ItemsSource = tags;
+        if (ControlGenreList is not null)
+            ControlGenreList.ItemsSource = genreRows;
+        if (ControlSonosList is not null)
+            ControlSonosList.ItemsSource = sonosRows;
+        if (ControlSonosEmpty is not null)
+            ControlSonosEmpty.Visibility = sonosRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (ControlSpotifyList is not null)
+            ControlSpotifyList.ItemsSource = spotifyRows;
+
+        var genreBit = showGenres ? $" · {genreRows.Count} genre(s)" : " · genres hidden";
+        if (LibraryPlayStatus is not null)
+            LibraryPlayStatus.Text = $"{folders.Count} folder(s) · {tags.Count} tag(s){genreBit}";
+        if (ControlPlayListStatus is not null)
+            ControlPlayListStatus.Text = $"{sonosRows.Count} Sonos · {spotifyRows.Count} Spotify";
+    }
+
+    private void ShowPlayStatus(ControlPlayKind kind, string text)
+    {
+        var library = kind is ControlPlayKind.Folder or ControlPlayKind.Tag or ControlPlayKind.Genre;
+        var target = library ? LibraryPlayStatus : ControlPlayListStatus;
+        if (target is not null)
+            target.Text = text;
     }
 
     private async void ControlPlayListRefresh_Click(object sender, RoutedEventArgs e)
     {
-        var btn = ControlPlayListRefreshButton ?? sender as System.Windows.Controls.Button;
+        var btn = ControlSonosRefreshButton ?? sender as System.Windows.Controls.Button;
         var prev = btn?.Content;
         if (btn is not null)
         {
             btn.IsEnabled = false;
-            btn.Content = "Refreshing…";
+            btn.Content = "…";
         }
 
-        ControlPlayListStatus.Text = "Refreshing folders, tags, genres & Sonos playlists…";
+        ControlPlayListStatus.Text = "Loading Sonos favorites…";
         ControlPlayListStatus.Foreground = new System.Windows.Media.SolidColorBrush(
             System.Windows.Media.Color.FromRgb(0x2E, 0x7D, 0x46));
-        SetStatus("Refreshing play list…", warn: false);
+        SetStatus("Refreshing Sonos favorites…", warn: false);
 
         try
         {
-            // Local lists first (instant), then Sonos favorites (network).
             RefreshControlShuffleSourceCombo();
             RefreshControlPlayList();
-            ControlPlayListStatus.Text = "Loading Sonos favorites/playlists…";
-
             await LoadFavoritesAsync().ConfigureAwait(true);
-
-            var folders = _settings.EnsureShape().SonosLibraryRoots.Count;
-            var tags = _settings.Tags.Count;
-            var genres = GetPlayGenres().Count;
-            var sonos = _sonosPlayableTitles.Count;
-            var summary =
-                $"Refreshed · {folders} folder(s) · {tags} tag(s) · {genres} genre(s) · {sonos} Sonos item(s)";
-            ControlPlayListStatus.Text = summary;
             ControlPlayListStatus.Foreground = new System.Windows.Media.SolidColorBrush(
                 System.Windows.Media.Color.FromRgb(0x2E, 0x7D, 0x46));
-            SetStatus(summary, warn: false);
+            SetStatus(ControlPlayListStatus.Text, warn: false);
         }
         catch (Exception ex)
         {
@@ -4496,7 +4644,7 @@ public partial class MainWindow : Window
             if (btn is not null)
             {
                 btn.IsEnabled = true;
-                btn.Content = prev ?? "Refresh list";
+                btn.Content = prev ?? "Refresh";
             }
         }
     }
@@ -4509,7 +4657,7 @@ public partial class MainWindow : Window
             return;
 
         _controlPlayBusy = true;
-        ControlPlayListStatus.Text = $"Starting “{row.Title}”…";
+        ShowPlayStatus(row.Kind, $"Starting “{row.Title}”…");
         SetStatus($"Playing “{row.Title}”…", warn: false);
 
         Dispatcher.BeginInvoke(new Action(async () =>
@@ -4522,7 +4670,7 @@ public partial class MainWindow : Window
                     if (_library is null)
                     {
                         SetStatus("Library service not available.", warn: true);
-                        ControlPlayListStatus.Text = "Library not available.";
+                        ShowPlayStatus(row.Kind, "Library not available.");
                         return;
                     }
 
@@ -4533,18 +4681,22 @@ public partial class MainWindow : Window
                         _ => await _sonos.PlayGenreTracksAsync(_library, row.Payload, shuffle: true),
                     };
                 }
+                else if (row.Kind == ControlPlayKind.Spotify)
+                {
+                    toast = await _sonos.PlaySpotifyAsync(row.Payload);
+                }
                 else
                 {
                     toast = await _sonos.PlaySonosFavoriteByNameAsync(row.Payload);
                 }
 
-                ControlPlayListStatus.Text = toast;
+                ShowPlayStatus(row.Kind, toast);
                 SetStatus(toast, warn: false);
             }
             catch (Exception ex)
             {
                 AppLog.Warn("Control play failed", ex);
-                ControlPlayListStatus.Text = ex.Message;
+                ShowPlayStatus(row.Kind, ex.Message);
                 SetStatus(ex.Message, warn: true);
             }
             finally
@@ -4554,12 +4706,140 @@ public partial class MainWindow : Window
         }), DispatcherPriority.Background);
     }
 
+    /// <summary>Save the name and link boxes. Returns the canonical id, or null when the boxes are not a link.</summary>
+    private string? RememberSpotifyFromBoxes(out string? error)
+    {
+        error = null;
+        var reference = ControlSpotifyLinkBox?.Text?.Trim() ?? "";
+        if (reference.Length == 0)
+        {
+            error = "Paste a Spotify link first.";
+            return null;
+        }
+
+        if (!SpotifyItem.TryParse(reference, out var item) || item is null)
+        {
+            error = "That is not a Spotify playlist, album, show, or track link.";
+            return null;
+        }
+
+        var settings = _settings.EnsureShape();
+        var existing = settings.SavedSpotifyLinks.FirstOrDefault(s =>
+            string.Equals(s.Reference, item.Canonical, StringComparison.OrdinalIgnoreCase));
+        var name = ControlSpotifyNameBox?.Text?.Trim() ?? "";
+        if (name.Length == 0)
+            name = string.IsNullOrWhiteSpace(existing?.Name)
+                ? SavedSpotifyLink.DefaultName(item)
+                : existing!.Name;
+
+        if (existing is null)
+        {
+            settings.SavedSpotifyLinks.Add(new SavedSpotifyLink
+            {
+                Name = name,
+                Reference = item.Canonical,
+            });
+        }
+        else
+        {
+            existing.Name = name;
+            existing.Reference = item.Canonical;
+        }
+
+        _store.Save(settings.EnsureShape());
+        if (ControlSpotifyNameBox is not null)
+            ControlSpotifyNameBox.Text = "";
+        if (ControlSpotifyLinkBox is not null)
+            ControlSpotifyLinkBox.Text = "";
+        RefreshControlPlayList();
+        return item.Canonical;
+    }
+
+    private void ControlSpotifyRemember_Click(object sender, RoutedEventArgs e)
+    {
+        var canonical = RememberSpotifyFromBoxes(out var error);
+        if (canonical is null)
+        {
+            SetStatus(error ?? "Paste a Spotify link first.", warn: true);
+            ControlPlayListStatus.Text = error;
+            return;
+        }
+
+        var saved = _settings.FindSavedSpotify(canonical);
+        var label = saved?.Name ?? canonical;
+        SetStatus($"Saved Spotify · {label}", warn: false);
+        ControlPlayListStatus.Text = $"Saved Spotify · {label}";
+    }
+
+    private async void ControlSpotifyPlayLink_Click(object sender, RoutedEventArgs e)
+    {
+        var canonical = RememberSpotifyFromBoxes(out var error);
+        if (canonical is null)
+        {
+            SetStatus(error ?? "Paste a Spotify link first.", warn: true);
+            ControlPlayListStatus.Text = error;
+            return;
+        }
+
+        try
+        {
+            SetStatus("Playing Spotify…", warn: false);
+            var toast = await _sonos.PlaySpotifyAsync(canonical).ConfigureAwait(true);
+            ControlPlayListStatus.Text = toast;
+            SetStatus(toast, warn: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Spotify play link failed", ex);
+            ControlPlayListStatus.Text = ex.Message;
+            SetStatus(ex.Message, warn: true);
+        }
+    }
+
+    private void ControlSpotifyName_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox box || box.DataContext is not ControlPlayRow row)
+            return;
+
+        var saved = _settings.SavedSpotifyLinks.FirstOrDefault(s =>
+            string.Equals(s.Reference, row.Payload, StringComparison.OrdinalIgnoreCase));
+        if (saved is null)
+            return;
+
+        var name = box.Text.Trim();
+        if (name.Length == 0)
+        {
+            box.Text = saved.Name;
+            return;
+        }
+
+        if (string.Equals(saved.Name, name, StringComparison.Ordinal))
+            return;
+
+        saved.Name = name;
+        _store.Save(_settings.EnsureShape());
+        SetStatus($"Renamed Spotify link to {name}.", warn: false);
+    }
+
+    private void ControlSpotifyRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: ControlPlayRow row })
+            return;
+
+        _settings.SavedSpotifyLinks.RemoveAll(s =>
+            string.Equals(s.Reference, row.Payload, StringComparison.OrdinalIgnoreCase));
+        _store.Save(_settings.EnsureShape());
+        RefreshControlPlayList();
+        SetStatus("Removed saved Spotify link.", warn: false);
+    }
+
     private enum ControlPlayKind
     {
         Folder,
         Tag,
         Genre,
         Sonos,
+        Spotify,
     }
 
     private sealed record ControlPlayRow(
@@ -4689,7 +4969,60 @@ public partial class MainWindow : Window
 
         failures = _applyBindings();
         _sonos.ApplyGenaEnabled(_settings.GenaEnabled);
+        RefreshRemoteEndpointText();
+        _onRemoteSettingsChanged?.Invoke();
         return true;
+    }
+
+    private void RefreshRemoteEndpointText()
+    {
+        var live = _remoteEndpoint();
+        RemoteEndpointText.Text = string.IsNullOrWhiteSpace(live)
+            ? $"URL: http://<this-pc>:{_settings.RemotePort}  ·  not listening yet"
+            : $"URL: {live}";
+    }
+
+    private void RemoteRegeneratePin_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.RemotePin = AppSettings.GenerateRemotePin();
+        RemotePinBox.Text = _settings.RemotePin;
+        try
+        {
+            _store.Save(_settings);
+            SetStatus("New remote PIN saved. Enter it on the phone.", warn: false);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not save the new PIN: {ex.Message}", warn: true);
+        }
+    }
+
+    private void RemoteFirewall_Click(object sender, RoutedEventArgs e)
+    {
+        var port = _settings.RemotePort;
+        if (int.TryParse(RemotePortBox.Text, out var typed) && typed is >= 1024 and <= 65535)
+            port = typed;
+
+        // One elevated prompt. Private profile only — do not open Public.
+        var args =
+            "/c netsh advfirewall firewall delete rule name=\"HotSonos Remote\" " +
+            $"& netsh advfirewall firewall add rule name=\"HotSonos Remote\" dir=in action=allow protocol=TCP localport={port} profile=private";
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = args,
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+            });
+            SetStatus($"Allow HotSonos remote TCP {port} on Private networks (approve the prompt).", warn: false);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Firewall prompt was not started: {ex.Message}", warn: true);
+        }
     }
 
     /// <summary>Copies hotkey boxes, checkboxes, and combos into the live settings object.</summary>
@@ -4714,6 +5047,8 @@ public partial class MainWindow : Window
         // Topology monitor is live-toggled on the Topology tab; keep settings in sync if present.
         if (TopologyMonitorEnabledCheck is not null)
             _settings.TopologyMonitorEnabled = TopologyMonitorEnabledCheck.IsChecked == true;
+        if (KeepHouseGroupedCheck is not null)
+            _settings.KeepHouseGrouped = KeepHouseGroupedCheck.IsChecked == true;
         _settings.ShowFlyoutOnTrackChange = FlyoutOnTrackChangeCheckBox.IsChecked == true;
         _settings.ShowFlyoutOnAction = FlyoutOnActionCheckBox.IsChecked == true;
         if (TrayDoubleClickCombo.SelectedItem is TrayDoubleClickPick pick)
@@ -4786,6 +5121,11 @@ public partial class MainWindow : Window
         _settings.McpEnabled = McpEnabledCheckBox.IsChecked == true;
         if (int.TryParse(McpPortBox.Text, out var mcpPort) && mcpPort is >= 1024 and <= 65535)
             _settings.McpPort = mcpPort;
+        _settings.RemoteEnabled = RemoteEnabledCheckBox.IsChecked == true;
+        if (int.TryParse(RemotePortBox.Text, out var remotePort) && remotePort is >= 1024 and <= 65535)
+            _settings.RemotePort = remotePort;
+        if (AppSettings.IsValidRemotePin(RemotePinBox.Text))
+            _settings.RemotePin = RemotePinBox.Text.Trim();
 
         if (int.TryParse(ShuffleQueueTracksBox.Text, out var qn) && qn is >= 20 and <= 500)
             _settings.ShuffleQueueTracks = qn;

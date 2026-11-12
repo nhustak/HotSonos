@@ -144,7 +144,8 @@ public static class McpActivityLog
             return "library";
         if (tool is "play_pause" or "next_track" or "previous_track" or "volume_up" or "volume_down"
             or "mute_toggle" or "level_volumes" or "shuffle_library" or "fresh_start"
-            or "play_favorite_slot" or "set_active_room" or "wake_now" or "wake_cancel")
+            or "play_favorite_slot" or "set_active_room" or "wake_now" or "wake_cancel"
+            or "play_spotify" or "list_spotify_playlists" or "spotify_link_begin" or "spotify_link_complete")
             return "control";
         if (tool is "refresh_devices" or "list_groups" or "list_zones" or "list_offline"
             or "get_discovery_state" or "get_speaker_volumes" or "get_now_playing" or "list_favorites")

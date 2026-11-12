@@ -57,7 +57,7 @@ public sealed class HotSonosDebugTools
                 playback = sonos.GetPlaybackSessionSnapshot(),
                 hint = groupCount == 0
                     ? "Device list empty — call refresh_devices, then list_groups / list_zones. Check get_logs if still empty."
-                    : "Device list has groups; use list_groups or list_zones for details. Play a library track with play_library_track; return via resume_shuffle.",
+                    : "Device list has groups; use list_groups or list_zones for details. Default play is play_library_track (keep the queue, song on top). queue_track = up next, no skip. replace_queue_with_track wipes.",
             };
             return JsonSerializer.Serialize(payload, JsonOptions);
         });
@@ -879,6 +879,33 @@ public sealed class HotSonosDebugTools
             }, JsonOptions);
         });
 
+    [McpServerTool(Name = "get_heard_tracks")]
+    [Description("Tracks played from Spotify, radio, and other non-library sources, newest first. Library tracks are omitted. File: %LocalAppData%\\HotSonos\\heard-outside-library.json. UI: Control tab, under Now playing. Copy the name there.")]
+    public string GetHeardTracks(
+        [Description("Max tracks to return (default 40, max 200)")] int max = 40) =>
+        McpActivityLog.Run("get_heard_tracks", new { max }, () =>
+        {
+            max = Math.Clamp(max, 1, 200);
+            var tracks = _state.Sonos.Heard.GetRecent(max);
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                file = _state.Sonos.Heard.FilePath,
+                count = tracks.Count,
+                tracks = tracks.Select(t => new
+                {
+                    lastUtc = t.LastUtc,
+                    firstUtc = t.FirstUtc,
+                    t.Title,
+                    t.Artist,
+                    t.Album,
+                    t.Source,
+                    plays = t.Plays,
+                    t.Uri,
+                }),
+            }, JsonOptions);
+        });
+
     [McpServerTool(Name = "get_topology_events")]
     [Description("Recent speaker/Sub/Port topology events: group join/leave, vanished/returned, bonded Sub appear/disappear. File: %LocalAppData%\\HotSonos\\topology-events.jsonl. UI: Topology tab.")]
     public string GetTopologyEvents(
@@ -998,22 +1025,58 @@ public sealed class HotSonosDebugTools
         McpActivityLog.RunAsync("shuffle_library", null, () => RunActionAsync(HotsonosAction.ShuffleLibrary), category: "control");
 
     [McpServerTool(Name = "play_library_track")]
-    [Description("Play one local library track on the active group (replaces the queue). Pass path from library_search. Use resume_shuffle afterward to return to library shuffle (fresh history-aware queue, not the exact prior order).")]
+    [Description("Default play: keep the current queue and put this library track on top (insert next and play it). 'Play X in Sonos' always means this. Pass path from library_search. Up-next without skipping the current song: queue_track. Wipe the queue: replace_queue_with_track.")]
     public Task<string> PlayLibraryTrack(
         [Description("Absolute UNC path or x-file-cifs URI (library_search path)")] string path,
         [Description("Optional title for Sonos display")] string? title = null,
         [Description("Optional artist for Sonos display")] string? artist = null,
         CancellationToken ct = default) =>
-        McpActivityLog.RunAsync("play_library_track", new { path, title, artist }, async () =>
+        RunKeepQueueTrackAsync("play_library_track", _state.PlayLibraryTrackAsync, path, title, artist, ct);
+
+    [McpServerTool(Name = "queue_track")]
+    [Description("Queue a song up next: keep the current queue, insert this library track after the current song. Does not skip, seek, or start playback. Use when asked to queue a song ('queue Right on Track in Sonos'). Same as queue_now.")]
+    public Task<string> QueueTrack(
+        [Description("Absolute UNC path or x-file-cifs URI (library_search path)")] string path,
+        [Description("Optional title for Sonos display")] string? title = null,
+        [Description("Optional artist for Sonos display")] string? artist = null,
+        CancellationToken ct = default) =>
+        RunKeepQueueTrackAsync("queue_track", _state.QueueNowAsync, path, title, artist, ct);
+
+    [McpServerTool(Name = "queue_now")]
+    [Description("Same as queue_track: queue a library track up next without skipping the current song or clearing shuffle.")]
+    public Task<string> QueueNow(
+        [Description("Absolute UNC path or x-file-cifs URI (library_search path)")] string path,
+        [Description("Optional title for Sonos display")] string? title = null,
+        [Description("Optional artist for Sonos display")] string? artist = null,
+        CancellationToken ct = default) =>
+        RunKeepQueueTrackAsync("queue_now", _state.QueueNowAsync, path, title, artist, ct);
+
+    [McpServerTool(Name = "replace_queue_with_track")]
+    [Description("Wipe the whole queue and play only this one library track. Rare. 'Play X' does NOT mean this — play_library_track keeps the queue and puts the song on top.")]
+    public Task<string> ReplaceQueueWithTrack(
+        [Description("Absolute UNC path or x-file-cifs URI (library_search path)")] string path,
+        [Description("Optional title for Sonos display")] string? title = null,
+        [Description("Optional artist for Sonos display")] string? artist = null,
+        CancellationToken ct = default) =>
+        RunKeepQueueTrackAsync("replace_queue_with_track", _state.ReplaceQueueWithTrackAsync, path, title, artist, ct);
+
+    private Task<string> RunKeepQueueTrackAsync(
+        string toolName,
+        Func<string, string?, string?, CancellationToken, Task<string>>? action,
+        string path,
+        string? title,
+        string? artist,
+        CancellationToken ct) =>
+        McpActivityLog.RunAsync(toolName, new { path, title, artist }, async () =>
         {
-            if (_state.PlayLibraryTrackAsync is null)
-                return JsonSerializer.Serialize(new { ok = false, error = "Play library track not wired." }, JsonOptions);
+            if (action is null)
+                return JsonSerializer.Serialize(new { ok = false, error = $"{toolName} not wired." }, JsonOptions);
             if (string.IsNullOrWhiteSpace(path))
                 return JsonSerializer.Serialize(new { ok = false, error = "path is required" }, JsonOptions);
 
             try
             {
-                var toast = await _state.PlayLibraryTrackAsync(path.Trim(), title, artist, ct).ConfigureAwait(false);
+                var toast = await action(path.Trim(), title, artist, ct).ConfigureAwait(false);
                 return JsonSerializer.Serialize(new
                 {
                     ok = true,
@@ -1025,7 +1088,7 @@ public sealed class HotSonosDebugTools
             }
             catch (Exception ex)
             {
-                AppLog.Error("MCP play_library_track failed", ex);
+                AppLog.Error($"MCP {toolName} failed", ex);
                 return JsonSerializer.Serialize(new { ok = false, error = ex.Message, path }, JsonOptions);
             }
         }, category: "control");
@@ -1192,6 +1255,102 @@ public sealed class HotSonosDebugTools
             {
                 AppLog.Error("MCP play_genre failed", ex);
                 return JsonSerializer.Serialize(new { ok = false, error = ex.Message, genre }, JsonOptions);
+            }
+        }, category: "control");
+
+    [McpServerTool(Name = "list_spotify_playlists")]
+    [Description("Saved Spotify links from the Control tab (name + canonical uri). Does not change what is playing and does not call Spotify.")]
+    public Task<string> ListSpotifyPlaylists(CancellationToken ct) =>
+        McpActivityLog.RunAsync("list_spotify_playlists", null, () =>
+        {
+            try
+            {
+                var lists = _state.Settings().EnsureShape().SavedSpotifyLinks;
+                return Task.FromResult(JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    count = lists.Count,
+                    playlists = lists.Select(p => new { name = p.Name, uri = p.Reference }),
+                }, JsonOptions));
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("MCP list_spotify_playlists failed", ex);
+                return Task.FromResult(JsonSerializer.Serialize(new { ok = false, error = ex.Message }, JsonOptions));
+            }
+        });
+
+    [McpServerTool(Name = "spotify_link_begin")]
+    [Description("Start a one-time Spotify link so HotSonos can list playlists. Returns a regUrl to open. Does not change playback.")]
+    public Task<string> SpotifyLinkBegin(CancellationToken ct) =>
+        McpActivityLog.RunAsync("spotify_link_begin", null, async () =>
+        {
+            try
+            {
+                var challenge = await _state.Sonos.BeginSpotifyLinkAsync(ct).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    regUrl = challenge.RegUrl,
+                    linkCode = challenge.LinkCode,
+                    appUrl = challenge.AppUrl,
+                    serviceType = challenge.ServiceType,
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("MCP spotify_link_begin failed", ex);
+                return JsonSerializer.Serialize(new { ok = false, error = ex.Message }, JsonOptions);
+            }
+        });
+
+    [McpServerTool(Name = "spotify_link_complete")]
+    [Description("Finish the Spotify link after the regUrl from spotify_link_begin has been approved. Does not change playback.")]
+    public Task<string> SpotifyLinkComplete(CancellationToken ct) =>
+        McpActivityLog.RunAsync("spotify_link_complete", null, async () =>
+        {
+            try
+            {
+                var linked = await _state.Sonos.CompleteSpotifyLinkAsync(ct).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new
+                {
+                    ok = linked,
+                    linked,
+                    error = linked ? null : "Spotify is not approved yet. Finish the page, then call again.",
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("MCP spotify_link_complete failed", ex);
+                return JsonSerializer.Serialize(new { ok = false, linked = false, error = ex.Message }, JsonOptions);
+            }
+        });
+
+    [McpServerTool(Name = "play_spotify")]
+    [Description("Play a Spotify link or a saved link name from the Control tab. Switches the group off the library queue onto that Spotify item.")]
+    public Task<string> PlaySpotify(
+        [Description("Spotify share link, spotify:playlist:id URI, or the name of a saved link")] string reference,
+        CancellationToken ct) =>
+        McpActivityLog.RunAsync("play_spotify", new { reference }, async () =>
+        {
+            if (string.IsNullOrWhiteSpace(reference))
+                return JsonSerializer.Serialize(new { ok = false, error = "reference is required" }, JsonOptions);
+
+            try
+            {
+                var toast = await _state.Sonos.PlaySpotifyAsync(reference.Trim(), ct).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    toast,
+                    reference = reference.Trim(),
+                    activeRoom = _state.Sonos.ActiveRoom,
+                }, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("MCP play_spotify failed", ex);
+                return JsonSerializer.Serialize(new { ok = false, error = ex.Message, reference }, JsonOptions);
             }
         }, category: "control");
 

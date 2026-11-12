@@ -118,7 +118,9 @@ Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **libra
 
 
 - Paths / rescan / force re-read tags / search under **Library**  
-- **Play now** (lightning) inserts the selected track next without clearing the shuffle queue  
+- **Play now** (lightning) inserts the selected track next and plays it immediately without clearing shuffle  
+- **MCP `play_library_track`** ("play X") keeps the queue and puts the song on top  
+- **MCP `queue_track`** / **`queue_now`** ("queue X") up-next only (no skip)  
 - DB: `%LocalAppData%\HotSonos\library.db`
 
 ### 🎴 Live Now-Playing flyout
@@ -149,6 +151,7 @@ While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery,
 - Config: `%LocalAppData%\HotSonos\settings.json`  
 - Play history (exclude set): `%LocalAppData%\HotSonos\play-history.json`  
 - Play lifecycle events (debug): `%LocalAppData%\HotSonos\play-events.jsonl` · MCP `get_play_events`  
+- Heard outside the library: `%LocalAppData%\HotSonos\heard-outside-library.json` · Control tab · MCP `get_heard_tracks`  
 
 - Logs: `%LocalAppData%\HotSonos\logs`
 
@@ -288,7 +291,10 @@ HotSonos cannot turn SonosNet off for you (no stable local API). You flip that i
 - **MCP** is not forced on at startup; Kestrel uses ManualHostLifetime + connection limits.
 - **Leftover shuffle queue:** if auto-recover hits a library queue near track 1 whose last rebuild is older than 8 hours, it **reshuffles** instead of Play.
 - **Debug** tab (was MCP Debug): MCP log + **Force auto-recover**.
-- **Library Play now** inserts next without clearing the queue.
+- **Library Play now** inserts next and plays immediately without clearing the queue.  
+- **MCP `play_library_track`** ("play X") keeps the queue and puts the song on top.  
+- **MCP `queue_track`** / **`queue_now`** inserts up-next only (no seek / no play).  
+- **MCP `replace_queue_with_track`** wipes the queue (rare).
 - **Daily mix folders** + **Daily group** speaker checklist (subset house shuffle).
 - **Regroup** pauses while joining, skips BecomeStandalone when already leader (keeps the queue).
 - Crash dumps / last-alive, keep-alive close-cancel, speaker reachability outage log.

@@ -46,6 +46,20 @@ Old master `1.0.0.60` / `1.0.0.61` (fail-fast regroup) were **not** brought onto
 
 **1.0.0.72:** when the 14-day unheard pool is short, slide in the oldest plays first; never replay a track heard in the last 24 hours while any older track exists.
 
+**1.0.0.73:** MCP **`queue_now`** first landed; 1.0.0.73 still sought and played (Play now). Wrong.
+
+**1.0.0.74:** **`queue_now`** only pushes up-next: insert after the current track, no seek, no play, no shuffle clear. Not a refresh. Library ⚡ remains **Play now** (insert + seek + play).
+
+**1.0.0.75:** **"Play X" keeps the queue.** `play_library_track` puts the song on top and plays it (does not wipe). `queue_track` (alias `queue_now`) queues up-next without skipping. Wipe is `replace_queue_with_track` only.
+
+**1.0.0.76:** That keep-queue on-top play is the **default**. `play_library_track` description leads with Default play.
+
+**Spotify lists (2026-10-11):** The Control tab stores Spotify links you paste, next to Sonos favorites. Each link has a name you can edit. **Remember** saves it and does not change playback. **Play** saves it, then switches the group onto that item. Saved rows live in `SavedSpotifyLinks` in settings. Account browse is not on this tab. Playback still uses the speaker's own Spotify account (`SA_RINCON3079`). A playlist or album is enqueued (`AddURIToQueue`) and the group queue is played; `SetAVTransportURI` of `x-rincon-cpcontainer:` returns UPnP **714**.
+
+**Play tab (2026-10-11):** Folders, tags, and genres (when `ShowGenresInPlaySources` is on) are the **Play** tab, directly after Control. Play still shuffles that source. A folder stays in that folder for top-up. Sonos favorites and saved Spotify links stay on Control. That card sizes to its content. **Refresh** sits beside the Sonos heading. Sonos Radio tiles with no play URI are not listed.
+
+**Heard outside the library (2026-10-11):** When a named track plays from Spotify, radio, or another non-library source, HotSonos keeps the title, artist, album, source, and time. Library tracks are not listed. One row per track; a repeat updates last-heard and the play count (first-heard stays). The list is on the Control tab under Now playing (newest first, Copy, remove). File: `%LocalAppData%\HotSonos\heard-outside-library.json` (500 tracks, 90 days). MCP: `get_heard_tracks`. This is separate from shuffle `play-history.json` and the debug `play-events.jsonl`. The first launch imports non-library `started` rows from `play-events.jsonl`.
+
 ### Snapshot (2026-07-28)
 
 | Item | State |
@@ -53,8 +67,8 @@ Old master `1.0.0.60` / `1.0.0.61` (fail-fast regroup) were **not** brought onto
 | **Git HEAD** | See git log |
 | **App version** | `1.0.0.70` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
-| **Main window** | Tabs: Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Debug |
-| **Play sources** | Control **From**: All / tag / genre · play list · Quick Play · slots 1–6 · MCP; genres optional (`ShowGenresInPlaySources`) |
+| **Main window** | Tabs: Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Debug |
+| **Play sources** | Control **From**: All / tag / genre · **Play** tab: folders, tags, genres · Control: Sonos favorites and **saved Spotify links** · **heard outside the library** (under Now playing) · Quick Play · slots 1–6 · MCP; genres optional (`ShowGenresInPlaySources`) |
 | **Next product slice** | **Library groups** (§5.1 / §6.2) — path modes; no group hotkeys |
 | **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** on this PC |
 | **Library DB** | `%LocalAppData%\HotSonos\library.db`; `master_path` + `custom_tags` JSON |
@@ -144,6 +158,8 @@ Match notes: content hash skipped (master often different encode/hi-res). Ambigu
 
 **Step 6** (or step 5 polish): playlist create from filter + play on Sonos; further MCP polish as needed.
 
+**Phone remote** (§6.6): LAN API is in the tray app (port 42342, house PIN, phone calls this PC). Android client is `src/HotSonos.Remote` and is not in `HotSonos.slnx`. Library groups (§6.2) stay the next product slice.
+
 ---
 
 ## 1. Overview
@@ -189,6 +205,8 @@ Sonos speakers expose a local UPnP/SOAP server on **TCP 1400**, discoverable via
 | Next / Previous | `AVTransport` `Next` / `Previous` |
 | Play Favorite | Browse `FV:2` → `SetAVTransportURI` + `Play` |
 | Play Playlist | Browse `SQ:` → `x-rincon-playlist:{uuid}#SQ:N` → queue + play |
+| Play Spotify list | A saved name or a pasted share link. Remembered in settings with a name. Containers enqueue (`AddURIToQueue`), then the group queue plays. `SetAVTransportURI` of `x-rincon-cpcontainer:` returns UPnP **714**. |
+| Heard outside the library | Control list under Now playing. Named Spotify, radio, and other non-library tracks. Copy the name. Library tracks are excluded. `%LocalAppData%\HotSonos\heard-outside-library.json`. MCP `get_heard_tracks`. |
 | Shuffle Music Library | Browse `A:TRACKS`; **short queue (~80)**; hard-exclude tracks **played or skipped** (~14d); top-up also skips **session-enqueued** tracks; **auto top-up** near queue end; artist spread; `NORMAL` |
 | Volume | Per-member `RenderingControl` (group write often 803 with fixed-volume members) |
 | Level all | Absolute `SetVolume` + unmute |
@@ -286,7 +304,7 @@ Concurrent shuffle / Fresh Start: exclusive gate + Busy feedback.
   - When OFF: light zone parse only (no bonded-Sub graph, no event JSONL spam, no map rebuild on every GENA push)  
   - When ON: full map + `topology-events.jsonl` + MCP topology tools  
 - Volume ± hotkeys never wait on the shared action gate  
-- **KeepHouseGrouped** (default off): optional auto-regroup  
+- **KeepHouseGrouped** (default off): Topology tab checkbox **Keep house grouped**. When on, rooms that peel into their own groups while still online are pulled back under the coordinator after 8 seconds, at most once a minute. Off: no auto-regroup. **Regroup all** is the button for a split already on screen. The auto-regroup writes a flushed breadcrumb (`last-action.txt` and `lifecycle.log`) the moment GroupAll starts, and a "returned" line only if that call comes back. A tray death during the regroup leaves the start line with no returned line.
 
 
 
@@ -416,6 +434,17 @@ Access model (target):
 ### 6.5 Later (not now)
 - Timed mode swap (play group A for N hours, then group B / Daily)  
 - Multi-path group editor polish if v1 is single-folder only
+
+### 6.6 Phone remote — LAN client of this PC
+
+The phone and tablet are a remote for the tray app. They do not discover speakers and they do not send UPnP. MCP stays on `127.0.0.1:42341`.
+
+- Settings: `RemoteEnabled` (default on), `RemotePort` (default **42342**), `RemotePin` (6 digits, generated once). Options shows the URL, a new-PIN button, and a one-time Private-network firewall prompt.
+- The host listens only on the PC address that shares a /24 with a known speaker. No speaker yet means it does not listen.
+- Header `X-HotSonos-Pin` on every route. Status and art read memory. Volume writes use the existing logical-volume path (room offsets, no unmute on the slider). Play, queue, shuffle, tags, genres, folders, and slots call the same delegates as MCP, including the action gate.
+- The phone can play, pause, skip, set volume, mute, level, pick the active room, play Daily / a slot / a tag / a genre / a folder, search and play or queue a track, and cancel wake.
+- The phone cannot write tags, rescan, regroup, reboot, fresh-start, or wipe the queue.
+- Android project: `src/HotSonos.Remote` (`net10.0-android`). It is not in `HotSonos.slnx` and not in the MSI. Shared DTOs: `src/HotSonos.Remote.Protocol`.
 
 ---
 
@@ -583,6 +612,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | Tags | Read + write `HOTSONOS_TEMPO` / standard fields (step 3) |
 | Master dual-write | Optional (default on) when twin matched/linked under the **mapped** master root for that Sonos path |
 | MCP | Loopback debug/ops + control + library status/search/tags/master |
+| Phone remote | LAN client of the tray app (port 42342, house PIN). Not a second Sonos controller. MCP stays loopback. |
 | Library management | Later; dry-run + confirm |
 
 ---
@@ -596,6 +626,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-07-15 | Roadmap: daily vs mood, library tags, master mirror, MCP, later backlog |
 | 2026-07-15 | Library plan step 1: configure Sonos + optional master roots (Settings + MCP) |
 | 2026-07-15 | Added §0 agent handoff (progress checklist, files, next=scanner); pre-compression snapshot |
+| 2026-10-04 | §6.6 phone remote: LAN API on the tray app, Android client is a remote only |
 | 2026-07-15 | Library plan step 2: TagLib scanner → SQLite cache; rescan UI; MCP status/search/get |
 | 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |
@@ -611,3 +642,6 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-07-28 | Discover library roots: one root per top-level folder under the SMB share (Jazz, Sonos, Seasonal…) — not collapsed share root |
 | 2026-07-28 | Daily mix folders (`DailyLibraryRoots`): All/hotkey shuffle scoped to checked library folders; multi-root defaults to …\Sonos |
 | 2026-07-28 | Folder play modes: Control From/list, Quick Play, fav slots, MCP play_folder; top-up stays in folder |
+| 2026-10-11 | Spotify lists: Control columns (folders, tags, genres, Sonos, Spotify). Pasted links are saved with a name. Playback stays on the speaker. |
+| 2026-10-11 | Heard outside the library: Control list of non-library tracks (title, artist, source, time) so a name can be copied later. |
+| 2026-10-11 | Play tab (after Control): folders, tags, and genres. Sonos favorites and saved Spotify links stay on Control. |

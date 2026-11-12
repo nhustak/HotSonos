@@ -45,10 +45,14 @@ public sealed class SonosManager
     private static readonly TimeSpan StaleReshuffleCooldown = TimeSpan.FromMinutes(12);
 
     private readonly SonosSoapClient _soap = new();
+    private readonly SpotifySmapiClient _spotify = new();
+    private readonly SpotifySessionStore _spotifySessions = new();
+    private SpotifyLinkChallenge? _spotifyLink;
     private readonly SonosDiscovery _discovery;
     private readonly SonosEventSubscriber _events = new();
     private readonly PlayHistoryStore _playHistory;
     private readonly PlayEventLog _playEvents;
+    private readonly HeardOutsideLibraryLog _heard;
     private readonly TopologyEventLog _topologyEvents;
     private readonly ShuffleQueueStateStore _shuffleQueueState;
     private readonly Func<AppSettings> _settings;
@@ -201,12 +205,14 @@ public sealed class SonosManager
         Func<AppSettings>? settings = null,
         PlayHistoryStore? playHistory = null,
         PlayEventLog? playEvents = null,
+        HeardOutsideLibraryLog? heard = null,
         TopologyEventLog? topologyEvents = null,
         ShuffleQueueStateStore? shuffleQueueState = null)
     {
         _settings = settings ?? AppSettings.CreateDefault;
         _playHistory = playHistory ?? new PlayHistoryStore(() => _settings().EnsureShape().ShuffleHistoryDays);
         _playEvents = playEvents ?? new PlayEventLog();
+        _heard = heard ?? new HeardOutsideLibraryLog();
         _topologyEvents = topologyEvents ?? new TopologyEventLog();
         _shuffleQueueState = shuffleQueueState ?? new ShuffleQueueStateStore();
         _discovery = new SonosDiscovery(_soap);
@@ -356,6 +362,9 @@ public sealed class SonosManager
 
     public PlayEventLog PlayEvents => _playEvents;
 
+    /// <summary>Spotify, radio, and other non-library tracks, so a name can be looked up later.</summary>
+    public HeardOutsideLibraryLog Heard => _heard;
+
     /// <summary>Rooms / Sub / Port group join-leave and vanish trail.</summary>
     public TopologyEventLog TopologyEvents => _topologyEvents;
 
@@ -387,10 +396,13 @@ public sealed class SonosManager
                      && _lastEventState is not SonosTransportState.Unknown)
                 _playEvents.Stopped(uri, title, artist, "gena");
 
+            var titleChanged = HeardTitleChanged(_lastEventTitle, title);
             _lastEventState = state;
             if (!string.IsNullOrWhiteSpace(title)) _lastEventTitle = title;
             if (!string.IsNullOrWhiteSpace(artist)) _lastEventArtist = artist;
             if (!string.IsNullOrWhiteSpace(uri)) _lastEventUri = uri;
+            if (IsPlayingLike(state))
+                NoteHeard(np, titleChanged);
             return;
         }
 
@@ -402,12 +414,41 @@ public sealed class SonosManager
             _playEvents.Started(uri, title, artist, "gena");
         }
 
+        if (IsPlayingLike(state))
+            NoteHeard(np, newPlay: true);
+
         _skipNextStartLog = false;
         _lastEventTrackKey = key.Length > 0 ? key : null;
         _lastEventUri = uri;
         _lastEventTitle = title;
         _lastEventArtist = artist;
         _lastEventState = state;
+    }
+
+    /// <summary>
+    /// Remember a non-library track so the name can be copied later.
+    /// <paramref name="newPlay"/> is false when only artist/album filled in on the same song.
+    /// </summary>
+    private void NoteHeard(NowPlaying np, bool newPlay)
+    {
+        try
+        {
+            if (newPlay)
+                _heard.RecordPlay(np);
+            else
+                _heard.FillIn(np);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Heard-outside-library log failed", ex);
+        }
+    }
+
+    private static bool HeardTitleChanged(string? previous, string? current)
+    {
+        if (string.IsNullOrWhiteSpace(current))
+            return false;
+        return !string.Equals(previous?.Trim(), current.Trim(), StringComparison.Ordinal);
     }
 
     private static bool IsPlayingLike(SonosTransportState s) =>
@@ -1229,6 +1270,20 @@ public sealed class SonosManager
     /// <summary>Last house logical % we set (Level all / ±). Avoids a full volume poll on every hotkey.</summary>
     private int? _houseLogicalVolume;
 
+    /// <summary>Cached house logical percent. Null until a volume write or a remote sample.</summary>
+    public int? HouseLogicalVolume => _houseLogicalVolume;
+
+    /// <summary>Last mute we set or sampled for the reference room. Null until then.</summary>
+    public bool? HouseMuted { get; private set; }
+
+    /// <summary>Distinct speaker IPs from the last discovery. Used to bind the remote and to allow art fetches.</summary>
+    public IReadOnlyList<string> KnownSpeakerAddresses() =>
+        _zones
+            .Select(z => z.IpAddress)
+            .Where(ip => !string.IsNullOrWhiteSpace(ip))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     /// <summary>
     /// Adjusts house <b>logical</b> volume by <paramref name="delta"/> and writes
     /// each speaker as logical + room offset. Returns the new logical % for toast
@@ -1242,9 +1297,20 @@ public sealed class SonosManager
             return 0;
 
         var primary = _houseLogicalVolume
-                      ?? await SampleHouseLogicalFastAsync(zones, s, ct).ConfigureAwait(false);
+                      ?? await SampleHouseLogicalFastAsync(zones, s, ct).ConfigureAwait(false)
+                      ?? 20;
         var newLogical = Math.Clamp(primary + delta, 0, 100);
+        return await WriteHouseLogicalAsync(newLogical, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Writes <paramref name="newLogical"/> to the active group. Caller has clamped it.</summary>
+    private async Task<int> WriteHouseLogicalAsync(int newLogical, CancellationToken ct)
+    {
+        var s = _settings().EnsureShape();
+        var zones = ZonesForVolumeControl();
         _houseLogicalVolume = newLogical;
+        if (zones.Count == 0)
+            return newLogical;
 
         // Prefer a normal (offset-0) room for the awaited "I heard you" write.
         var reference = zones.FirstOrDefault(z => s.GetVolumeOffset(z.RoomName) == 0)
@@ -1281,7 +1347,7 @@ public sealed class SonosManager
     /// Quick sample of offset-0 rooms only (≤350ms). Used once until Level all / ±
     /// establish <see cref="_houseLogicalVolume"/>.
     /// </summary>
-    private async Task<int> SampleHouseLogicalFastAsync(
+    private async Task<int?> SampleHouseLogicalFastAsync(
         IReadOnlyList<SonosZone> zones,
         AppSettings s,
         CancellationToken ct)
@@ -1330,7 +1396,24 @@ public sealed class SonosManager
 
         if (vols.Count > 0)
             return MedianInt(vols);
-        return 20; // safe default if nothing answered (matches typical Level all)
+        return null;
+    }
+
+    /// <summary>One GetMute. Null when the speaker does not answer in time.</summary>
+    private async Task<bool?> ReadMuteAsync(string ip, CancellationToken ct)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromMilliseconds(350));
+            var r = await _soap.InvokeAsync(ip, SonosService.RenderingControl, "GetMute",
+                [new("InstanceID", "0"), new("Channel", "Master")], cts.Token).ConfigureAwait(false);
+            return SonosSoapClient.ReadValue(r, "CurrentMute") == "1";
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>GetVolume only (no mute) — volume ± sampling.</summary>
@@ -1356,6 +1439,36 @@ public sealed class SonosManager
     /// </summary>
     public Task<int> AdjustVolumeByAsync(int delta, CancellationToken ct = default) =>
         ChangeVolumeAsync(delta, ct);
+
+    /// <summary>
+    /// Sets the active group's house logical volume (each member raw = logical + room offset).
+    /// Does not unmute. Does not touch speakers outside the active group.
+    /// </summary>
+    public Task<int> SetHouseLogicalVolumeAsync(int percent, CancellationToken ct = default) =>
+        WriteHouseLogicalAsync(Math.Clamp(percent, 0, 100), ct);
+
+    /// <summary>
+    /// One-shot read of the active group's logical volume and the reference room's mute.
+    /// Does nothing when no zone is known. A failed sample leaves the previous cache.
+    /// </summary>
+    public async Task<(int? Volume, bool? Muted)> SampleHouseVolumeAsync(CancellationToken ct = default)
+    {
+        var zones = ZonesForVolumeControl();
+        if (zones.Count == 0)
+            return (_houseLogicalVolume, HouseMuted);
+
+        var s = _settings().EnsureShape();
+        var sampled = await SampleHouseLogicalFastAsync(zones, s, ct).ConfigureAwait(false);
+        if (sampled is int vol)
+            _houseLogicalVolume = vol;
+
+        var reference = zones.FirstOrDefault(z => s.GetVolumeOffset(z.RoomName) == 0) ?? zones[0];
+        var muted = await ReadMuteAsync(reference.IpAddress, ct).ConfigureAwait(false);
+        if (muted is not null)
+            HouseMuted = muted;
+
+        return (_houseLogicalVolume, HouseMuted);
+    }
 
     /// <summary>Visible zones in the active group (else all rooms), one per IP.</summary>
     private List<SonosZone> ZonesForVolumeControl()
@@ -1647,6 +1760,7 @@ public sealed class SonosManager
         var desired = !await GetGroupMuteAsync(ct).ConfigureAwait(false);
         var members = ActiveGroupMemberIps();
         await Task.WhenAll(members.Select(ip => SetMemberMuteAsync(ip, desired, ct))).ConfigureAwait(false);
+        HouseMuted = desired;
         NotifyVolumesChanged();
         return desired;
     }
@@ -2510,9 +2624,35 @@ public sealed class SonosManager
     }
 
     /// <summary>
+    /// Push one library track up-next (after the current song) without seeking,
+    /// playing, or clearing the queue. MCP queue_track / queue_now.
+    /// </summary>
+    public async Task<string> QueueLibraryTrackNextAsync(
+        string pathOrUri,
+        string? title = null,
+        string? artist = null,
+        CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+
+        if (!SonosPath.TryToCifsUri(pathOrUri, out var cifs))
+            throw new ArgumentException("Path must be a UNC path or x-file-cifs URI under the Sonos library.", nameof(pathOrUri));
+
+        var index = await _controller.InsertLibraryUriNextAsync(cifs, title, artist, ct).ConfigureAwait(false);
+        RememberServed([cifs]);
+        var label = string.IsNullOrWhiteSpace(title)
+            ? System.IO.Path.GetFileName(pathOrUri)
+            : (string.IsNullOrWhiteSpace(artist) ? title : $"{title} — {artist}");
+        AppLog.Info($"Queue now (up next, no seek) index={index} mode={_playbackMode}: {cifs}");
+        return $"Queued next {label}";
+    }
+
+    /// <summary>
     /// Insert one library track after the current song and play it now without
     /// clearing the queue (keeps shuffle / remaining order intact). Does not
     /// switch playback mode away from shuffle/folder so auto top-up continues.
+    /// Library ⚡ Play now — this seeks; use QueueLibraryTrackNextAsync to only queue.
     /// </summary>
     public async Task<string> PlayLibraryTrackNowAsync(
         string pathOrUri,
@@ -2665,6 +2805,92 @@ public sealed class SonosManager
         _playbackMode = "sonos_fav";
         AppLog.Info($"Play Sonos favorite/playlist: {title}");
         return $"▶ {title.Trim()}";
+    }
+
+    public bool SpotifyIsLinked => _spotifySessions.TryLoad() is not null;
+
+    /// <summary>Starts a Spotify app-link. The caller shows <see cref="SpotifyLinkChallenge.RegUrl"/>.</summary>
+    public async Task<SpotifyLinkChallenge> BeginSpotifyLinkAsync(CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+
+        var challenge = await _spotify.BeginLinkAsync(_controller.CoordinatorIp, ct).ConfigureAwait(false);
+        _spotifyLink = challenge;
+        AppLog.Info("Spotify link started");
+        return challenge;
+    }
+
+    /// <summary>Finishes the link after the user approves it in the browser. Returns false while Spotify is still waiting.</summary>
+    public async Task<bool> CompleteSpotifyLinkAsync(CancellationToken ct = default)
+    {
+        if (_spotifyLink is null)
+            throw new InvalidOperationException("Click Link Spotify first.");
+
+        var session = await _spotify.TryCompleteLinkAsync(_spotifyLink, ct).ConfigureAwait(false);
+        if (session is null)
+            return false;
+
+        _spotifySessions.Save(session);
+        _spotifyLink = null;
+        AppLog.Info("Spotify link saved");
+        return true;
+    }
+
+    public async Task<IReadOnlyList<SpotifyItem>> ListSpotifyPlaylistsAsync(CancellationToken ct = default)
+    {
+        var session = _spotifySessions.TryLoad();
+        if (session is null)
+            throw new InvalidOperationException("Spotify is not linked. Use Link Spotify on the Control tab.");
+        return await _spotify.ListPlaylistsAsync(session, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Plays a Spotify link, <c>spotify:</c> URI, or a saved link name.
+    /// Switches the group off the library queue onto that Spotify item.
+    /// </summary>
+    public async Task<string> PlaySpotifyAsync(string reference, CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+        if (string.IsNullOrWhiteSpace(reference))
+            throw new ArgumentException("A Spotify link or playlist name is required.", nameof(reference));
+
+        var savedLinks = _settings().EnsureShape();
+        SpotifyItem? item = null;
+        if (SpotifyItem.TryParse(reference, out item) && item is not null)
+        {
+            var saved = savedLinks.FindSavedSpotify(item.Canonical);
+            if (saved is not null && !string.IsNullOrWhiteSpace(saved.Name))
+                item = item with { Title = saved.Name };
+        }
+        else
+        {
+            var saved = savedLinks.FindSavedSpotify(reference);
+            if (saved is not null
+                && SpotifyItem.TryParse(saved.Reference, out item)
+                && item is not null)
+            {
+                item = item with { Title = saved.Name };
+            }
+            else
+            {
+                item = null;
+            }
+        }
+
+        if (item is null)
+        {
+            throw new InvalidOperationException(
+                "Paste a Spotify playlist, album, or track link, or use a saved name.");
+        }
+
+        var serviceType = _spotifySessions.TryLoad()?.ServiceType ?? SpotifyItem.DefaultServiceType;
+        await _controller.PlaySpotifyAsync(item, serviceType, ct).ConfigureAwait(false);
+        _playbackMode = "spotify";
+        var label = string.IsNullOrWhiteSpace(item.Title) ? item.Canonical : item.Title;
+        AppLog.Info($"Play Spotify {item.Kind}: {label}");
+        return $"▶ Spotify · {label}";
     }
 
     /// <summary>
