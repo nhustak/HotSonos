@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Controls;
 using HotSonos.Activity;
 using UserControl = System.Windows.Controls.UserControl;
@@ -7,8 +8,11 @@ namespace HotSonos.App.Reports;
 
 public partial class EventLogReport : UserControl, IReportPanel
 {
+    private const int PageSize = 500;
     private readonly ActivityLog _log;
+    private readonly List<ActivityEventRow> _rows = [];
     private bool _loading = true;
+    private int _offset;
 
     public EventLogReport(ActivityLog log)
     {
@@ -18,13 +22,15 @@ public partial class EventLogReport : UserControl, IReportPanel
         _loading = false;
     }
 
-    public void RefreshReport() => Load();
+    public void RefreshReport() => Load(append: false);
 
-    private void Refresh_Click(object sender, System.Windows.RoutedEventArgs e)
+    private void Refresh_Click(object sender, RoutedEventArgs e)
     {
         ReloadKinds();
-        Load();
+        Load(append: false);
     }
+
+    private void More_Click(object sender, RoutedEventArgs e) => Load(append: true);
 
     private void Filter_Changed(object sender, SelectionChangedEventArgs e)
     {
@@ -32,7 +38,7 @@ public partial class EventLogReport : UserControl, IReportPanel
             return;
         if (sender == CategoryCombo)
             ReloadKinds();
-        Load();
+        Load(append: false);
     }
 
     private void ReloadKinds()
@@ -50,15 +56,25 @@ public partial class EventLogReport : UserControl, IReportPanel
         _loading = false;
     }
 
-    private void Load()
+    private void Load(bool append)
     {
         try
         {
-            var rows = _log.QueryEvents(SelectedCategory(), SelectedKind(), 500);
-            EventGrid.ItemsSource = rows;
-            StatusText.Text = rows.Count == 0
+            if (!append)
+            {
+                _offset = 0;
+                _rows.Clear();
+            }
+
+            var rows = _log.QueryEvents(SelectedCategory(), SelectedKind(), PageSize, _offset);
+            _rows.AddRange(rows);
+            _offset = _rows.Count;
+            EventGrid.ItemsSource = null;
+            EventGrid.ItemsSource = _rows.ToList();
+            MoreButton.Visibility = rows.Count >= PageSize ? Visibility.Visible : Visibility.Collapsed;
+            StatusText.Text = _rows.Count == 0
                 ? "No events in this filter yet."
-                : $"{rows.Count} event(s), newest first. The log keeps 180 days, up to 80,000 events.";
+                : $"{_rows.Count} event(s), newest first. The log keeps 180 days, up to 80,000 events.";
         }
         catch (Exception ex)
         {

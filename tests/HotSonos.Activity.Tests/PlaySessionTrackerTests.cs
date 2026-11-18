@@ -152,4 +152,71 @@ public class PlaySessionTrackerTests
         var closed = Assert.Single(step.Closed);
         Assert.NotEqual(PlayTriggers.HotkeyNext, closed.Trigger);
     }
+
+    [Fact]
+    public void A_stale_snapshot_does_not_replace_the_open_song()
+    {
+        var t = new PlaySessionTracker();
+        var t0 = new DateTime(2026, 11, 6, 12, 0, 0, DateTimeKind.Utc);
+        t.Apply(Snap(t0, "song-a", position: 10, duration: 200));
+        t.Apply(Snap(t0.AddSeconds(20), "song-b", position: 2, duration: 180));
+        var stale = t.Apply(Snap(t0.AddSeconds(5), "song-a", position: 15, duration: 200));
+        Assert.Empty(stale.Closed);
+        Assert.Equal("song-b", t.OpenTrackKey);
+    }
+
+    [Fact]
+    public void A_stream_title_arriving_later_stays_one_session()
+    {
+        var t = new PlaySessionTracker();
+        var t0 = new DateTime(2026, 11, 6, 13, 0, 0, DateTimeKind.Utc);
+        var bare = TrackKeys.ForPlay("x-sonosapi-stream:station", null, titleIsIdentity: true);
+        var titled = TrackKeys.ForPlay("x-sonosapi-stream:station", "Morning Show", titleIsIdentity: true);
+        t.Apply(Snap(t0, bare, position: 5, duration: 0));
+        var step = t.Apply(Snap(t0.AddSeconds(30), titled, position: 35, title: "Morning Show"));
+        Assert.Empty(step.Closed);
+        Assert.Equal(titled, t.OpenTrackKey);
+    }
+
+    [Fact]
+    public void Stop_without_a_track_key_still_records_stopped()
+    {
+        var t = new PlaySessionTracker();
+        var t0 = new DateTime(2026, 11, 6, 14, 0, 0, DateTimeKind.Utc);
+        t.Apply(Snap(t0, "song-a", position: 12, duration: 200, title: "Song A"));
+        var step = t.Apply(new PlaySnapshot
+        {
+            Utc = t0.AddSeconds(20),
+            TrackKey = "",
+            IsStopped = true,
+            Zone = "Kitchen",
+        });
+        Assert.Contains(step.Events, e => e.Kind == "transport_stopped");
+        Assert.Equal(PlayOutcomes.Stopped, Assert.Single(step.Closed).Outcome);
+    }
+
+    [Fact]
+    public void Checkpoint_keeps_a_play_that_was_still_open()
+    {
+        var t = new PlaySessionTracker();
+        var t0 = new DateTime(2026, 11, 6, 15, 0, 0, DateTimeKind.Utc);
+        t.Apply(Snap(t0, "song-a", position: 40, duration: 200));
+        var step = t.Checkpoint(t0.AddSeconds(50));
+        var closed = Assert.Single(step.Closed);
+        Assert.Equal(PlayTriggers.AppExit, closed.Trigger);
+        Assert.Equal(PlayOutcomes.Interrupted, closed.Outcome);
+        Assert.False(t.HasOpenSession);
+    }
+
+    [Fact]
+    public void Disarm_drops_a_trigger_the_command_did_not_complete()
+    {
+        var t = new PlaySessionTracker();
+        var t0 = new DateTime(2026, 11, 6, 16, 0, 0, DateTimeKind.Utc);
+        t.Apply(Snap(t0, "song-a", position: 10, duration: 200));
+        t.Arm(PlayTriggers.HotkeyNext, t0.AddSeconds(1), TimeSpan.FromSeconds(20));
+        t.Disarm(PlayTriggers.HotkeyNext);
+        var step = t.Apply(Snap(t0.AddSeconds(5), "song-b", position: 1, duration: 180));
+        Assert.NotEqual(PlayTriggers.HotkeyNext, Assert.Single(step.Closed).Trigger);
+    }
 }

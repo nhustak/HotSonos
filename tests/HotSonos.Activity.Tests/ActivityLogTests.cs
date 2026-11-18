@@ -14,11 +14,11 @@ public class ActivityLogTests : IDisposable
     public void Sessions_and_events_round_trip_through_the_reports()
     {
         using var log = Open();
-        var t0 = new DateTime(2026, 11, 10, 18, 0, 0, DateTimeKind.Utc);
+        var t0 = DateTime.UtcNow.AddSeconds(-10);
         log.Apply(Sample(t0, "nas/music/one.flac", "One", position: 5, duration: 200));
         log.NoteHotkeyNext();
-        log.Apply(Sample(t0.AddSeconds(25), "nas/music/one.flac", "One", position: 25, duration: 200));
-        log.Apply(Sample(t0.AddSeconds(26), "nas/music/two.flac", "Two", position: 1, duration: 180));
+        log.Apply(Sample(t0.AddSeconds(4), "nas/music/one.flac", "One", position: 25, duration: 200));
+        log.Apply(Sample(t0.AddSeconds(5), "nas/music/two.flac", "Two", position: 1, duration: 180));
         log.NoteVolume("House volume 22%");
         log.NoteZonePresence("Kitchen", online: false, activeCoordinator: false);
         log.NoteError("Action Next failed", "timeout");
@@ -37,7 +37,7 @@ public class ActivityLogTests : IDisposable
         Assert.Equal("3:20", play.Length);
         Assert.Equal("Living Room", play.Zone);
 
-        var music = log.QueryMusic(new DateTime(2026, 11, 1), new DateTime(2026, 11, 30), skippedOnly: true);
+        var music = log.QueryMusic(DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1), skippedOnly: true);
         Assert.Contains(music.Plays, p => p.Title == "One");
         Assert.DoesNotContain(music.Plays, p => p.Title == "Two");
         Assert.Contains(music.MostSkipped, s => s.Title == "One");
@@ -62,19 +62,21 @@ public class ActivityLogTests : IDisposable
     public void Seed_imports_history_once_and_does_not_rewrite_it()
     {
         var historyPath = Path.Combine(_dir, "play-history.json");
+        var played = DateTime.UtcNow.AddDays(-3);
+        var started = DateTime.UtcNow.AddDays(-2);
         File.WriteAllText(historyPath,
-            """
+            $$"""
             {
               "Entries": [
-                { "Uri": "x-file-cifs://nas/Music/Seeded.flac", "Utc": "2026-11-01T12:00:00Z", "Kind": "played" }
+                { "Uri": "x-file-cifs://nas/Music/Seeded.flac", "Utc": "{{played:o}}", "Kind": "played" }
               ]
             }
             """);
         var eventsPath = Path.Combine(_dir, "play-events.jsonl");
         File.WriteAllText(eventsPath,
-            """
-            {"utc":"2026-11-02T12:00:00Z","kind":"started","uri":"x-file-cifs://nas/Music/Other.flac","title":"Other","artist":"A"}
-            {"utc":"2026-11-02T12:01:00Z","kind":"stopped","uri":"x-file-cifs://nas/Music/Other.flac","title":"Other","source":"gena"}
+            $$"""
+            {"utc":"{{started:o}}","kind":"started","uri":"x-file-cifs://nas/Music/Other.flac","title":"Other","artist":"A"}
+            {"utc":"{{started.AddMinutes(1):o}}","kind":"stopped","uri":"x-file-cifs://nas/Music/Other.flac","title":"Other","source":"gena"}
             """);
         var before = File.ReadAllText(historyPath);
 
@@ -143,7 +145,7 @@ public class ActivityLogTests : IDisposable
     public void Line_in_is_left_out_of_the_music_report()
     {
         using var log = Open();
-        var t0 = new DateTime(2026, 11, 12, 12, 0, 0, DateTimeKind.Utc);
+        var t0 = DateTime.UtcNow.AddMinutes(-5);
         log.Apply(new PlaySnapshot
         {
             Utc = t0,
@@ -168,6 +170,24 @@ public class ActivityLogTests : IDisposable
         var music = log.QueryMusic(null, null, skippedOnly: false);
         Assert.DoesNotContain(music.Plays, p => p.Title == "TV");
         Assert.Contains(music.Plays, p => p.Title == "Real Song");
+    }
+
+    [Fact]
+    public void Dispose_writes_the_play_that_was_still_open()
+    {
+        var options = Options();
+        var t0 = DateTime.UtcNow.AddSeconds(-40);
+        using (var log = new ActivityLog(options))
+        {
+            log.Apply(Sample(t0, "nas/music/one.flac", "One", position: 10, duration: 200));
+            log.Apply(Sample(t0.AddSeconds(20), "nas/music/one.flac", "One", position: 30, duration: 200));
+            Assert.Empty(log.QueryMusic(null, null, skippedOnly: false).Plays);
+        }
+
+        using var again = new ActivityLog(options);
+        var play = Assert.Single(again.QueryMusic(null, null, skippedOnly: false).Plays);
+        Assert.Equal("One", play.Title);
+        Assert.Equal(PlayTriggers.AppExit, play.Trigger);
     }
 
     private ActivityLog Open() => new(Options());

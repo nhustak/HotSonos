@@ -21,6 +21,7 @@ public static class PlayTriggers
     public const string SpeakerLost = "speaker_lost";
     public const string ShuffleStart = "shuffle_start";
     public const string PlayNow = "play_now";
+    public const string AppExit = "app_exit";
     public const string TrackChanged = "track_changed";
     public const string SeedLastPlayed = "seed_last_played";
     public const string SeedPlayEvent = "seed_play_event";
@@ -53,8 +54,9 @@ public readonly record struct PlayClassification(string Outcome, string Trigger)
 /// <b>Interrupted / hotkey_previous</b> when HotSonos issued Previous.
 /// </description></item>
 /// <item><description>
-/// <b>Interrupted</b> for shuffle start, play-now, or the active speaker dropping,
-/// unless the playhead had already reached the end (then it is completed).
+/// <b>Interrupted</b> for shuffle start, play-now, the app exiting mid-song, or the
+/// active coordinator dropping, unless the playhead had already reached the end
+/// (then it is completed).
 /// </description></item>
 /// <item><description>
 /// <b>Completed / natural_end</b> when nobody issued Next and the song reached
@@ -91,7 +93,6 @@ public static class PlayOutcomeClassifier
     public const double CompletionTailSeconds = 15;
     public const double TailAppliesAtSeconds = 60;
     public const double UnknownSkipUnderSeconds = 45;
-    public const double MinimumKnownDurationSeconds = 15;
 
     public const string Summary =
         "Completed: heard at least 85% of the track, or the last 15 seconds of a track " +
@@ -99,7 +100,7 @@ public static class PlayOutcomeClassifier
         "Skipped: HotSonos Next, or the track changed well before that point " +
         "(another controller's Next when HotSonos did not issue it). " +
         "Stopped: transport stopped before the end. " +
-        "Interrupted: Previous, shuffle, play-now, or the speaker dropped. " +
+        "Interrupted: Previous, shuffle, play-now, app exit, or the speaker dropped. " +
         "Unknown: duration was not reported and the song played at least 45 seconds.";
 
     public static PlayClassification Classify(PlayEndFacts facts)
@@ -112,7 +113,8 @@ public static class PlayOutcomeClassifier
         if (trigger == PlayTriggers.HotkeyPrevious)
             return new(PlayOutcomes.Interrupted, PlayTriggers.HotkeyPrevious);
 
-        if (trigger is PlayTriggers.ShuffleStart or PlayTriggers.PlayNow or PlayTriggers.SpeakerLost)
+        if (trigger is PlayTriggers.ShuffleStart or PlayTriggers.PlayNow
+            or PlayTriggers.SpeakerLost or PlayTriggers.AppExit)
         {
             if (completed)
                 return new(PlayOutcomes.Completed, PlayTriggers.NaturalEnd);
@@ -129,7 +131,7 @@ public static class PlayOutcomeClassifier
         if (completed)
             return new(PlayOutcomes.Completed, PlayTriggers.NaturalEnd);
 
-        if (facts.TrackSeconds is >= MinimumKnownDurationSeconds)
+        if (facts.TrackSeconds is > 0)
             return new(PlayOutcomes.Skipped, PlayTriggers.ControllerNext);
 
         var heard = facts.ListenedSeconds ?? 0;
@@ -140,15 +142,16 @@ public static class PlayOutcomeClassifier
     }
 
     /// <summary>
-    /// True when the playhead reached the end of a known duration.
-    /// 85% always qualifies. The last 15 seconds also qualifies once the track
-    /// is at least a minute, so a short song is not marked complete halfway through.
+    /// True when the playhead reached the end of a known positive duration.
+    /// 85% always qualifies, including tracks shorter than a minute.
+    /// The last 15 seconds also qualifies once the track is at least a minute,
+    /// so a short song is not marked complete halfway through.
     /// </summary>
     public static bool ReachedEnd(double? listenedSeconds, double? trackSeconds)
     {
         if (listenedSeconds is not double heard || trackSeconds is not double len)
             return false;
-        if (len < MinimumKnownDurationSeconds || heard < 0 || double.IsNaN(heard) || double.IsNaN(len))
+        if (len <= 0 || heard < 0 || !double.IsFinite(heard) || !double.IsFinite(len))
             return false;
         if (heard >= len * CompletionFraction)
             return true;

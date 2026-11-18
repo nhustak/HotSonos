@@ -36,8 +36,11 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <TextBlock x:Name="PlaysHeader" Grid.Row="2" Margin="0,8,0,4" FontWeight="SemiBold"
-                   Text="Plays" />
+        <DockPanel Grid.Row="2" Margin="0,8,0,4">
+            <Button x:Name="MorePlaysButton" DockPanel.Dock="Right" Content="Load older" Height="26"
+                    Padding="10,0" Visibility="Collapsed" Click="MorePlays_Click" />
+            <TextBlock x:Name="PlaysHeader" FontWeight="SemiBold" VerticalAlignment="Center" Text="Plays" />
+        </DockPanel>
 
         <DataGrid x:Name="PlayGrid" Grid.Row="3"
                   AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"

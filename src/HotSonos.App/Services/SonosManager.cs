@@ -78,6 +78,7 @@ public sealed class SonosManager
     private bool _discoveryFailed;
     private bool _pollDown;
     private DateTime _lastPollFailLogUtc = DateTime.MinValue;
+    private DateTime _lastObservationUtc = DateTime.MinValue;
     private DateTime _lastRecoverUtc = DateTime.MinValue;
 
     /// <summary>
@@ -254,14 +255,21 @@ public sealed class SonosManager
     public NowPlaying? LastNowPlaying { get; private set; }
 
     /// <summary>Shared path for GENA or poll-based now-playing.</summary>
-    private void HandleNowPlayingSnapshot(NowPlaying np)
+    private void HandleNowPlayingSnapshot(NowPlaying np) => HandleNowPlayingSnapshot(np, observedUtc: null);
+
+    private void HandleNowPlayingSnapshot(NowPlaying np, DateTime? observedUtc)
     {
         try
         {
+            var observed = observedUtc ?? DateTime.UtcNow;
+            if (observed < _lastObservationUtc)
+                return;
+            _lastObservationUtc = observed;
+
             // Always cache for Control/flyout seed even when signature is unchanged
             // (window can open mid-track and otherwise show "Nothing playing").
             LastNowPlaying = np;
-            try { _activity.Apply(ActivitySnapshots.From(np, ActiveGroupLabel)); }
+            try { _activity.Apply(ActivitySnapshots.From(np, ActiveGroupLabel, observed)); }
             catch (Exception ex) { AppLog.Warn("Activity observe failed", ex); }
 
             var sig = GenaNowPlayingSignature(np);
@@ -342,13 +350,14 @@ public sealed class SonosManager
             if (_controller is null)
                 return;
 
+            var observed = DateTime.UtcNow;
             var np = await _controller.GetNowPlayingSnapshotAsync().ConfigureAwait(false);
             if (_pollDown)
             {
                 _pollDown = false;
                 TraceActivity(() => _activity.NoteConnection(true, "Now-playing poll recovered"));
             }
-            HandleNowPlayingSnapshot(np);
+            HandleNowPlayingSnapshot(np, observed);
         }
         catch (Exception ex)
         {
@@ -375,8 +384,9 @@ public sealed class SonosManager
             return null;
         try
         {
+            var observed = DateTime.UtcNow;
             var np = await _controller.GetNowPlayingSnapshotAsync(ct).ConfigureAwait(false);
-            HandleNowPlayingSnapshot(np);
+            HandleNowPlayingSnapshot(np, observed);
             return np;
         }
         catch (Exception ex)
@@ -950,6 +960,7 @@ public sealed class SonosManager
         try
         {
             var hadBaseline = _topologySeen;
+            var playingCoordinator = PlayingCoordinatorRoom();
             // Always: light path only (visible zones + vanished list). No full bonded parse / JSONL unless monitor on.
             var zones = SonosDiscovery.ParseZoneGroupState(stateXml);
             var groupsChanged = false;
@@ -989,7 +1000,8 @@ public sealed class SonosManager
                     offlineChanged = true;
                     try { SpeakerAvailabilityChanged?.Invoke(dropped, false); }
                     catch (Exception ex) { AppLog.Warn($"SpeakerAvailabilityChanged(offline {dropped}) failed", ex); }
-                    var active = string.Equals(dropped, ActiveRoom, StringComparison.OrdinalIgnoreCase);
+                    var active = playingCoordinator is not null
+                        && string.Equals(dropped, playingCoordinator, StringComparison.OrdinalIgnoreCase);
                     TraceActivity(() => _activity.NoteZonePresence(dropped, online: false, active));
                 }
 
@@ -1277,7 +1289,10 @@ public sealed class SonosManager
             if (!fs.IsSonos)
                 return $"Slot {slot + 1} is empty — assign a folder, tag, genre, or Sonos playlist in Hotkeys.";
 
-            await _controller.PlayFavoriteByNameAsync(fs.FavoriteName!, ct).ConfigureAwait(false);
+            await RunArmedAsync(
+                () => _activity.NotePlayNow(fs.FavoriteName),
+                PlayTriggers.PlayNow,
+                () => _controller.PlayFavoriteByNameAsync(fs.FavoriteName!, ct)).ConfigureAwait(false);
             _playbackMode = "sonos_fav";
             return $"▶ {fs.FavoriteName}";
         }
@@ -1296,16 +1311,20 @@ public sealed class SonosManager
                 // Skip = do not play again in the history window (same as finishing a track).
                 await RecordCurrentTrackAsPlayedAsync(ct).ConfigureAwait(false);
                 _playEvents.Skipped(_lastEventUri, _lastEventTitle, _lastEventArtist, "hotkey");
-                TraceActivity(() => _activity.NoteHotkeyNext());
+                await RunArmedAsync(
+                    () => _activity.NoteHotkeyNext(),
+                    PlayTriggers.HotkeyNext,
+                    () => _controller.NextAsync(ct)).ConfigureAwait(false);
                 _skipNextStartLog = false; // still log started for the next track via GENA
-                await _controller.NextAsync(ct).ConfigureAwait(false);
                 return "⏭ Next";
             }
             case HotsonosAction.Previous:
             {
                 _playEvents.Previous(_lastEventUri, _lastEventTitle, _lastEventArtist, "hotkey");
-                TraceActivity(() => _activity.NoteHotkeyPrevious());
-                await _controller.PreviousAsync(ct).ConfigureAwait(false);
+                await RunArmedAsync(
+                    () => _activity.NoteHotkeyPrevious(),
+                    PlayTriggers.HotkeyPrevious,
+                    () => _controller.PreviousAsync(ct)).ConfigureAwait(false);
                 return "⏮ Previous";
             }
             case HotsonosAction.ShuffleLibrary:
@@ -1610,9 +1629,12 @@ public sealed class SonosManager
             : (values[mid - 1] + values[mid]) / 2;
     }
 
-    private void OnGenaVolumeChanged()
+    private void OnGenaVolumeChanged(RenderingControlChange change)
     {
-        TraceActivity(() => _activity.NoteExternalVolume());
+        if (change.MuteChanged)
+            TraceActivity(() => _activity.NoteExternalMute(change.Muted));
+        if (change.VolumeChanged)
+            TraceActivity(() => _activity.NoteExternalVolume());
         NotifyVolumesChanged();
     }
 
@@ -2515,21 +2537,30 @@ public sealed class SonosManager
         if (_controller is null)
             throw new InvalidOperationException("No Sonos room is selected.");
 
-        TraceActivity(() => _activity.NoteShuffleStart());
         var s = _settings().EnsureShape();
         var (exclude, playedAt) = BuildShuffleHistory(s);
         var include = s.GetDailyShuffleIncludePrefixes();
-        var result = await _controller.ShuffleMusicLibraryAsync(
-            new ShuffleOptions
-            {
-                MaxQueueTracks = s.ShuffleQueueTracks,
-                ExcludeUris = exclude,
-                PlayedAtUtc = playedAt,
-                IncludePathPrefixes = include,
-                AppendToQueue = false,
-                ArtistSpread = s.ShuffleArtistSpread,
-            },
-            ct).ConfigureAwait(false);
+        TraceActivity(() => _activity.NoteShuffleStart());
+        ShuffleResult result;
+        try
+        {
+            result = await _controller.ShuffleMusicLibraryAsync(
+                new ShuffleOptions
+                {
+                    MaxQueueTracks = s.ShuffleQueueTracks,
+                    ExcludeUris = exclude,
+                    PlayedAtUtc = playedAt,
+                    IncludePathPrefixes = include,
+                    AppendToQueue = false,
+                    ArtistSpread = s.ShuffleArtistSpread,
+                },
+                ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            TraceActivity(() => _activity.Disarm(PlayTriggers.ShuffleStart));
+            throw;
+        }
 
         // New queue replaces the old one — restart session served set from this batch.
         ClearSessionServed();
@@ -2588,17 +2619,27 @@ public sealed class SonosManager
         var cached = library.CountTracksUnderFolder(folderPath);
 
         var (exclude, playedAt) = BuildShuffleHistory(s);
-        var result = await _controller.ShuffleMusicLibraryAsync(
-            new ShuffleOptions
-            {
-                MaxQueueTracks = s.ShuffleQueueTracks,
-                ExcludeUris = exclude,
-                PlayedAtUtc = playedAt,
-                IncludePathPrefixes = [folderPath],
-                AppendToQueue = false,
-                ArtistSpread = s.ShuffleArtistSpread,
-            },
-            ct).ConfigureAwait(false);
+        TraceActivity(() => _activity.NotePlayNow(label));
+        ShuffleResult result;
+        try
+        {
+            result = await _controller.ShuffleMusicLibraryAsync(
+                new ShuffleOptions
+                {
+                    MaxQueueTracks = s.ShuffleQueueTracks,
+                    ExcludeUris = exclude,
+                    PlayedAtUtc = playedAt,
+                    IncludePathPrefixes = [folderPath],
+                    AppendToQueue = false,
+                    ArtistSpread = s.ShuffleArtistSpread,
+                },
+                ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            TraceActivity(() => _activity.Disarm(PlayTriggers.PlayNow));
+            throw;
+        }
 
         ClearSessionServed();
         RememberServed(result.EnqueuedUris);
@@ -2701,7 +2742,10 @@ public sealed class SonosManager
         if (!SonosPath.TryToCifsUri(pathOrUri, out var cifs))
             throw new ArgumentException("Path must be a UNC path or x-file-cifs URI under the Sonos library.", nameof(pathOrUri));
 
-        await _controller.PlayLibraryUriAsync(cifs, title, artist, ct).ConfigureAwait(false);
+        await RunArmedAsync(
+            () => _activity.NotePlayNow(string.IsNullOrWhiteSpace(title) ? null : title),
+            PlayTriggers.PlayNow,
+            () => _controller.PlayLibraryUriAsync(cifs, title, artist, ct)).ConfigureAwait(false);
         _playbackMode = "special";
         RememberServed([cifs]);
         var label = string.IsNullOrWhiteSpace(title)
@@ -2754,8 +2798,10 @@ public sealed class SonosManager
         if (!SonosPath.TryToCifsUri(pathOrUri, out var cifs))
             throw new ArgumentException("Path must be a UNC path or x-file-cifs URI under the Sonos library.", nameof(pathOrUri));
 
-        TraceActivity(() => _activity.NotePlayNow(string.IsNullOrWhiteSpace(title) ? null : title));
-        await _controller.InsertLibraryUriAndPlayNowAsync(cifs, title, artist, ct).ConfigureAwait(false);
+        await RunArmedAsync(
+            () => _activity.NotePlayNow(string.IsNullOrWhiteSpace(title) ? null : title),
+            PlayTriggers.PlayNow,
+            () => _controller.InsertLibraryUriAndPlayNowAsync(cifs, title, artist, ct)).ConfigureAwait(false);
         // Session-served so top-up won't re-queue this cut immediately; keep mode.
         RememberServed([cifs]);
         try { _playHistory.RecordPlayed(cifs); }
@@ -2815,7 +2861,10 @@ public sealed class SonosManager
             }
         }
 
-        await _controller.PlayLibraryUrisAsync(items, ct).ConfigureAwait(false);
+        await RunArmedAsync(
+            () => _activity.NotePlayNow(tagLabel),
+            PlayTriggers.PlayNow,
+            () => _controller.PlayLibraryUrisAsync(items, ct)).ConfigureAwait(false);
         _playbackMode = "special";
         RememberServed(items.Select(i => i.CifsUri));
         var continueHint = s.ContinueLibraryShuffleAfterSpecialPlay
@@ -2871,7 +2920,10 @@ public sealed class SonosManager
             }
         }
 
-        await _controller.PlayLibraryUrisAsync(items, ct).ConfigureAwait(false);
+        await RunArmedAsync(
+            () => _activity.NotePlayNow(genre),
+            PlayTriggers.PlayNow,
+            () => _controller.PlayLibraryUrisAsync(items, ct)).ConfigureAwait(false);
         _playbackMode = "special";
         RememberServed(items.Select(i => i.CifsUri));
         var continueHint = s.ContinueLibraryShuffleAfterSpecialPlay
@@ -2889,7 +2941,10 @@ public sealed class SonosManager
         if (string.IsNullOrWhiteSpace(title))
             throw new ArgumentException("Title is required.", nameof(title));
 
-        await _controller.PlayFavoriteByNameAsync(title.Trim(), ct).ConfigureAwait(false);
+        await RunArmedAsync(
+            () => _activity.NotePlayNow(title.Trim()),
+            PlayTriggers.PlayNow,
+            () => _controller.PlayFavoriteByNameAsync(title.Trim(), ct)).ConfigureAwait(false);
         // Don't auto top-up into library over a Sonos playlist/favorite session.
         _playbackMode = "sonos_fav";
         AppLog.Info($"Play Sonos favorite/playlist: {title}");
@@ -2975,9 +3030,12 @@ public sealed class SonosManager
         }
 
         var serviceType = _spotifySessions.TryLoad()?.ServiceType ?? SpotifyItem.DefaultServiceType;
-        await _controller.PlaySpotifyAsync(item, serviceType, ct).ConfigureAwait(false);
-        _playbackMode = "spotify";
         var label = string.IsNullOrWhiteSpace(item.Title) ? item.Canonical : item.Title;
+        await RunArmedAsync(
+            () => _activity.NotePlayNow(label),
+            PlayTriggers.PlayNow,
+            () => _controller.PlaySpotifyAsync(item, serviceType, ct)).ConfigureAwait(false);
+        _playbackMode = "spotify";
         AppLog.Info($"Play Spotify {item.Kind}: {label}");
         return $"▶ Spotify · {label}";
     }
@@ -3207,6 +3265,35 @@ public sealed class SonosManager
         room is not null && _zones.Any(z =>
             string.Equals(z.CoordinatorUuid, group.CoordinatorUuid, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(z.RoomName, room, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Room that currently coordinates the group we send transport commands to.</summary>
+    private string? PlayingCoordinatorRoom()
+    {
+        if (_controller is null)
+            return null;
+        return _zones.FirstOrDefault(z =>
+                string.Equals(z.Uuid, _controller.CoordinatorUuid, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(z.IpAddress, _controller.CoordinatorIp, StringComparison.OrdinalIgnoreCase))
+            ?.RoomName;
+    }
+
+    /// <summary>
+    /// Arm a play-ending trigger, run the Sonos call, and drop the trigger if the call fails
+    /// so a later natural ending is not labeled with a command that never happened.
+    /// </summary>
+    private async Task RunArmedAsync(Action arm, string trigger, Func<Task> action)
+    {
+        TraceActivity(arm);
+        try
+        {
+            await action().ConfigureAwait(false);
+        }
+        catch
+        {
+            TraceActivity(() => _activity.Disarm(trigger));
+            throw;
+        }
+    }
 
     private void TraceActivity(Action action)
     {

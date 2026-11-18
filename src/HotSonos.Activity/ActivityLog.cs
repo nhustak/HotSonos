@@ -30,7 +30,9 @@ public sealed class ActivityLog : IDisposable
     private readonly PlaySessionTracker _tracker = new();
     private readonly ActivityStore? _store;
     private readonly bool _enabled;
+    private readonly TrackerStep _retained = new();
     private DateTime _lastVolumeEventUtc = DateTime.MinValue;
+    private DateTime _lastMuteEventUtc = DateTime.MinValue;
 
     public ActivityLog(ActivityLogOptions? options = null)
     {
@@ -41,6 +43,9 @@ public sealed class ActivityLog : IDisposable
         var dbPath = options.DatabasePath ?? Path.Combine(dir, "activity.db");
         DatabasePath = dbPath;
         _store = new ActivityStore(dbPath, options.RetentionDays, options.MaxEvents, options.MaxSessions);
+        // Reports record whenever the app runs. Shuffle already keeps last-played
+        // for exclusion; this database is that history for the Reports tab.
+        // Default-off would leave the page empty.
         _enabled = true;
         if (options.Seed)
             SeedOnce(options, dir);
@@ -66,7 +71,7 @@ public sealed class ActivityLog : IDisposable
         lock (_gate)
         {
             var step = _tracker.Apply(snapshot);
-            _store.Persist(step);
+            PersistStep(step);
         }
     }
 
@@ -93,9 +98,7 @@ public sealed class ActivityLog : IDisposable
         if (!_enabled || _store is null)
             return;
         lock (_gate)
-        {
-            _store.InsertEvent(SonosEvent(DateTime.UtcNow, kind, summary, zone: _tracker.OpenZone));
-        }
+            PersistStep(Single(SonosEvent(DateTime.UtcNow, kind, summary, zone: _tracker.OpenZone)));
     }
 
     public void NoteVolume(string summary)
@@ -105,7 +108,7 @@ public sealed class ActivityLog : IDisposable
         lock (_gate)
         {
             _lastVolumeEventUtc = DateTime.UtcNow;
-            _store.InsertEvent(SonosEvent(_lastVolumeEventUtc, "volume", summary, _tracker.OpenZone));
+            PersistStep(Single(SonosEvent(_lastVolumeEventUtc, "volume", summary, _tracker.OpenZone)));
         }
     }
 
@@ -115,12 +118,12 @@ public sealed class ActivityLog : IDisposable
             return;
         lock (_gate)
         {
-            _lastVolumeEventUtc = DateTime.UtcNow;
-            _store.InsertEvent(SonosEvent(_lastVolumeEventUtc, "mute", muted ? "Muted" : "Unmuted", _tracker.OpenZone));
+            _lastMuteEventUtc = DateTime.UtcNow;
+            PersistStep(Single(SonosEvent(_lastMuteEventUtc, "mute", muted ? "Muted" : "Unmuted", _tracker.OpenZone)));
         }
     }
 
-    /// <summary>GENA volume/mute with no level. Skipped when we just wrote the change ourselves.</summary>
+    /// <summary>GENA volume with no level. Skipped when we just wrote the change ourselves.</summary>
     public void NoteExternalVolume()
     {
         if (!_enabled || _store is null)
@@ -131,7 +134,28 @@ public sealed class ActivityLog : IDisposable
             if ((now - _lastVolumeEventUtc).TotalSeconds < 3)
                 return;
             _lastVolumeEventUtc = now;
-            _store.InsertEvent(SonosEvent(now, "volume", "Volume changed (speaker or another controller)", _tracker.OpenZone));
+            PersistStep(Single(SonosEvent(now, "volume", "Volume changed (speaker or another controller)", _tracker.OpenZone)));
+        }
+    }
+
+    /// <summary>GENA mute. Skipped when we just wrote the mute ourselves.</summary>
+    public void NoteExternalMute(bool? muted)
+    {
+        if (!_enabled || _store is null)
+            return;
+        lock (_gate)
+        {
+            var now = DateTime.UtcNow;
+            if ((now - _lastMuteEventUtc).TotalSeconds < 3)
+                return;
+            _lastMuteEventUtc = now;
+            var summary = muted switch
+            {
+                true => "Muted (speaker or another controller)",
+                false => "Unmuted (speaker or another controller)",
+                _ => "Mute changed (speaker or another controller)",
+            };
+            PersistStep(Single(SonosEvent(now, "mute", summary, _tracker.OpenZone)));
         }
     }
 
@@ -144,12 +168,12 @@ public sealed class ActivityLog : IDisposable
             if (!online && activeCoordinator)
             {
                 var step = _tracker.ForceClose(DateTime.UtcNow, PlayTriggers.SpeakerLost);
-                _store.Persist(step);
+                PersistStep(step);
             }
 
             var kind = online ? "zone_online" : "zone_offline";
             var summary = online ? $"{room} is back online" : $"{room} went offline";
-            _store.InsertEvent(SonosEvent(DateTime.UtcNow, kind, summary, room));
+            PersistStep(Single(SonosEvent(DateTime.UtcNow, kind, summary, room)));
         }
     }
 
@@ -162,7 +186,7 @@ public sealed class ActivityLog : IDisposable
             if (!online && isCoordinator)
             {
                 var step = _tracker.ForceClose(DateTime.UtcNow, PlayTriggers.SpeakerLost);
-                _store.Persist(step);
+                PersistStep(step);
             }
 
             var kind = online ? "speaker_recovered" : "speaker_unreachable";
@@ -170,7 +194,7 @@ public sealed class ActivityLog : IDisposable
             var summary = string.IsNullOrWhiteSpace(detail)
                 ? (online ? $"{where} is answering again" : $"{where} stopped answering")
                 : detail.Trim();
-            _store.InsertEvent(SonosEvent(DateTime.UtcNow, kind, summary, room));
+            PersistStep(Single(SonosEvent(DateTime.UtcNow, kind, summary, room)));
         }
     }
 
@@ -180,7 +204,7 @@ public sealed class ActivityLog : IDisposable
             return;
         lock (_gate)
         {
-            _store.InsertEvent(SonosEvent(DateTime.UtcNow, "group_changed", summary.Trim(), _tracker.OpenZone));
+            PersistStep(Single(SonosEvent(DateTime.UtcNow, "group_changed", summary.Trim(), _tracker.OpenZone)));
         }
     }
 
@@ -190,11 +214,11 @@ public sealed class ActivityLog : IDisposable
             return;
         lock (_gate)
         {
-            _store.InsertEvent(SonosEvent(
+            PersistStep(Single(SonosEvent(
                 DateTime.UtcNow,
                 ok ? "discovery_recovered" : "discovery_failed",
                 summary,
-                _tracker.OpenZone));
+                _tracker.OpenZone)));
         }
     }
 
@@ -204,11 +228,11 @@ public sealed class ActivityLog : IDisposable
             return;
         lock (_gate)
         {
-            _store.InsertEvent(SonosEvent(
+            PersistStep(Single(SonosEvent(
                 DateTime.UtcNow,
                 ok ? "connection_recovered" : "connection_failed",
                 summary,
-                _tracker.OpenZone));
+                _tracker.OpenZone)));
         }
     }
 
@@ -218,7 +242,7 @@ public sealed class ActivityLog : IDisposable
             return;
         lock (_gate)
         {
-            _store.InsertEvent(new ActivityEventDraft
+            PersistStep(Single(new ActivityEventDraft
             {
                 Utc = DateTime.UtcNow,
                 Category = ActivityCategories.Sonos,
@@ -226,7 +250,7 @@ public sealed class ActivityLog : IDisposable
                 Summary = summary.Trim(),
                 Detail = string.IsNullOrWhiteSpace(detail) ? null : detail.Trim(),
                 Zone = _tracker.OpenZone,
-            });
+            }));
         }
     }
 
@@ -238,30 +262,31 @@ public sealed class ActivityLog : IDisposable
             return _store.SearchSongs(query, limit);
     }
 
-    public IReadOnlyList<PlaySessionRow> PlaysForSong(string trackKey, int limit = 500)
+    public IReadOnlyList<PlaySessionRow> PlaysForSong(string trackKey, int limit = 500, int offset = 0)
     {
         if (!_enabled || _store is null || string.IsNullOrWhiteSpace(trackKey))
             return [];
         lock (_gate)
-            return _store.PlaysForSong(trackKey, limit);
+            return _store.PlaysForSong(trackKey, limit, offset);
     }
 
-    public MusicReportData QueryMusic(DateTime? fromLocal, DateTime? toLocalInclusive, bool skippedOnly, int limit = 500)
+    public MusicReportData QueryMusic(
+        DateTime? fromLocal, DateTime? toLocalInclusive, bool skippedOnly, int limit = 500, int offset = 0)
     {
         if (!_enabled || _store is null)
             return new MusicReportData();
         var fromUtc = fromLocal is DateTime f ? LocalDateStartUtc(f) : (DateTime?)null;
         var toUtc = toLocalInclusive is DateTime t ? LocalDateStartUtc(t.Date.AddDays(1)) : (DateTime?)null;
         lock (_gate)
-            return _store.QueryMusic(fromUtc, toUtc, skippedOnly, limit);
+            return _store.QueryMusic(fromUtc, toUtc, skippedOnly, limit, offset);
     }
 
-    public IReadOnlyList<ActivityEventRow> QueryEvents(string? category, string? kind, int limit = 500)
+    public IReadOnlyList<ActivityEventRow> QueryEvents(string? category, string? kind, int limit = 500, int offset = 0)
     {
         if (!_enabled || _store is null)
             return [];
         lock (_gate)
-            return _store.QueryEvents(category, kind, limit);
+            return _store.QueryEvents(category, kind, limit, offset);
     }
 
     public IReadOnlyList<string> EventKinds(string? category)
@@ -272,12 +297,32 @@ public sealed class ActivityLog : IDisposable
             return _store.EventKinds(category);
     }
 
+    /// <summary>Forget a trigger armed for a Sonos command that failed.</summary>
+    public void Disarm(string trigger)
+    {
+        if (!_enabled || _store is null || string.IsNullOrWhiteSpace(trigger))
+            return;
+        lock (_gate)
+            _tracker.Disarm(trigger);
+    }
+
     public void Dispose()
     {
         if (_store is null)
             return;
         lock (_gate)
+        {
+            try
+            {
+                PersistStep(_tracker.Checkpoint(DateTime.UtcNow));
+            }
+            catch
+            {
+                /* exit cannot retry a failed write */
+            }
+
             _store.Dispose();
+        }
     }
 
     private void NoteArmed(string trigger, TimeSpan ttl, string kind, string summary)
@@ -290,8 +335,59 @@ public sealed class ActivityLog : IDisposable
             _tracker.Arm(trigger, now, ttl);
             var label = ActivityText.TrackLabel(_tracker.OpenTitle, _tracker.OpenArtist, _tracker.OpenTrackKey);
             var text = _tracker.HasOpenSession ? $"{summary} · {label}" : summary;
-            _store.InsertEvent(SonosEvent(now, kind, text, _tracker.OpenZone));
+            PersistStep(Single(SonosEvent(now, kind, text, _tracker.OpenZone)));
         }
+    }
+
+    /// <summary>
+    /// Writes <paramref name="step"/> and anything a previous write failed to store.
+    /// On failure the batch stays in memory and the next call tries again, so a
+    /// closed session is not dropped just because SQLite threw once.
+    /// </summary>
+    private void PersistStep(TrackerStep step)
+    {
+        if (_store is null)
+            return;
+        if (_retained.Closed.Count > 0 || _retained.Events.Count > 0)
+        {
+            var merged = new TrackerStep();
+            merged.Closed.AddRange(_retained.Closed);
+            merged.Events.AddRange(_retained.Events);
+            merged.Closed.AddRange(step.Closed);
+            merged.Events.AddRange(step.Events);
+            _retained.Closed.Clear();
+            _retained.Events.Clear();
+            step = merged;
+        }
+        else if (step.Closed.Count == 0 && step.Events.Count == 0)
+        {
+            return;
+        }
+
+        const int maxSessions = 50;
+        const int maxEvents = 200;
+        if (step.Closed.Count > maxSessions)
+            step.Closed.RemoveRange(0, step.Closed.Count - maxSessions);
+        if (step.Events.Count > maxEvents)
+            step.Events.RemoveRange(0, step.Events.Count - maxEvents);
+
+        try
+        {
+            _store.Persist(step);
+        }
+        catch
+        {
+            _retained.Closed.AddRange(step.Closed);
+            _retained.Events.AddRange(step.Events);
+            throw;
+        }
+    }
+
+    private static TrackerStep Single(ActivityEventDraft draft)
+    {
+        var step = new TrackerStep();
+        step.Events.Add(draft);
+        return step;
     }
 
     private void SeedOnce(ActivityLogOptions options, string dir)
@@ -301,8 +397,8 @@ public sealed class ActivityLog : IDisposable
         var historyPath = options.PlayHistoryPath ?? Path.Combine(dir, "play-history.json");
         var eventsPath = options.PlayEventsPath ?? Path.Combine(dir, "play-events.jsonl");
         var sessions = ActivitySeed.Build(ReadHistory(historyPath), ReadPlayEvents(eventsPath));
-        _store.InsertSeedSessions(sessions);
-        _store.SetMeta("seed_v1", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+        var stamp = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        _store.InsertSeedSessions(sessions, "seed_v1", stamp);
     }
 
     internal static List<SeedHistoryEntry> ReadHistory(string path)

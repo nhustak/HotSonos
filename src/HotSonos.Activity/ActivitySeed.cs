@@ -95,7 +95,8 @@ public static class ActivitySeed
                     open = draft;
                     break;
                 case "skipped":
-                    open ??= draft;
+                    if (open is null)
+                        break;
                     sessions.Add(Finish(open, evt.Utc, PlayOutcomes.Skipped,
                         evt.Source?.Equals("hotkey", StringComparison.OrdinalIgnoreCase) == true
                             ? PlayTriggers.HotkeyNext
@@ -103,12 +104,14 @@ public static class ActivitySeed
                     open = null;
                     break;
                 case "stopped":
-                    open ??= draft;
+                    if (open is null)
+                        break;
                     sessions.Add(Finish(open, evt.Utc, PlayOutcomes.Stopped, PlayTriggers.Stop));
                     open = null;
                     break;
                 case "previous":
-                    open ??= draft;
+                    if (open is null)
+                        break;
                     sessions.Add(Finish(open, evt.Utc, PlayOutcomes.Interrupted,
                         evt.Source?.Equals("hotkey", StringComparison.OrdinalIgnoreCase) == true
                             ? PlayTriggers.HotkeyPrevious
@@ -123,9 +126,7 @@ public static class ActivitySeed
 
     private static SeededSession? Draft(SeedPlayEvent evt)
     {
-        var key = TrackKeys.Normalize(evt.Uri);
-        if (key.Length == 0 && !string.IsNullOrWhiteSpace(evt.Title))
-            key = "title:" + evt.Title.Trim().ToLowerInvariant();
+        var key = TrackKeys.ForPlay(evt.Uri, evt.Title, TrackKeys.TitleIsIdentity(evt.Uri));
         if (key.Length == 0)
             return null;
         return new SeededSession

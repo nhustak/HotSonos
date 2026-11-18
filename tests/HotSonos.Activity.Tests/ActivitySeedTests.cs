@@ -53,6 +53,49 @@ public class ActivitySeedTests
     }
 
     [Fact]
+    public void A_terminal_event_without_a_start_is_not_a_play()
+    {
+        var t0 = new DateTime(2026, 10, 2, 12, 0, 0, DateTimeKind.Utc);
+        var events = new[]
+        {
+            new SeedPlayEvent
+            {
+                Utc = t0,
+                Kind = "skipped",
+                Uri = "x-file-cifs://nas/Music/orphan.flac",
+                Title = "Orphan",
+                Source = "hotkey",
+            },
+        };
+        Assert.Empty(ActivitySeed.Build([], events));
+    }
+
+    [Fact]
+    public void Stream_seed_uses_the_same_titled_key_as_a_live_play()
+    {
+        var uri = "x-sonosapi-stream:radio";
+        var key = TrackKeys.ForPlay(uri, "Morning", titleIsIdentity: true);
+        var sessions = ActivitySeed.Build([],
+        [
+            new SeedPlayEvent
+            {
+                Utc = new DateTime(2026, 10, 3, 8, 0, 0, DateTimeKind.Utc),
+                Kind = "started",
+                Uri = uri,
+                Title = "Morning",
+            },
+            new SeedPlayEvent
+            {
+                Utc = new DateTime(2026, 10, 3, 8, 5, 0, DateTimeKind.Utc),
+                Kind = "stopped",
+                Uri = uri,
+                Title = "Morning",
+            },
+        ]);
+        Assert.Equal(key, Assert.Single(sessions).TrackKey);
+    }
+
+    [Fact]
     public void Normalize_matches_the_shuffle_key_shape()
     {
         Assert.Equal(

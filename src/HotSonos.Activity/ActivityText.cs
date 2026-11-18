@@ -32,6 +32,7 @@ public static class ActivityText
         PlayTriggers.SpeakerLost => "Speaker lost",
         PlayTriggers.ShuffleStart => "Shuffle started",
         PlayTriggers.PlayNow => "Play now",
+        PlayTriggers.AppExit => "App exited",
         PlayTriggers.TrackChanged => "Track changed",
         PlayTriggers.SeedLastPlayed => "Seeded from last played",
         PlayTriggers.SeedPlayEvent => "Seeded from play events",

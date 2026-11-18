@@ -22,6 +22,8 @@
                 <TextBlock Text="Kind" VerticalAlignment="Center" Margin="12,0,6,0" />
                 <ComboBox x:Name="KindCombo" Width="200" Height="28" SelectionChanged="Filter_Changed" />
                 <Button Content="Refresh" Height="28" Padding="14,0" Margin="12,0,0,0" Click="Refresh_Click" />
+                <Button x:Name="MoreButton" Content="Load older" Height="28" Padding="14,0" Margin="8,0,0,0"
+                        Visibility="Collapsed" Click="More_Click" />
             </StackPanel>
         </StackPanel>
 

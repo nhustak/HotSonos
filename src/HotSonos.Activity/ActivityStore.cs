@@ -34,7 +34,11 @@ public sealed class ActivityStore : IDisposable
         };
         _conn = new SqliteConnection(builder.ToString());
         _conn.Open();
-        Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
+        using (var pragma = _conn.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;";
+            pragma.ExecuteNonQuery();
+        }
         EnsureSchema();
         DatabasePath = path;
     }
@@ -49,9 +53,11 @@ public sealed class ActivityStore : IDisposable
         return cmd.ExecuteScalar() is not null;
     }
 
-    public void SetMeta(string key, string value)
+    public void SetMeta(string key, string value, SqliteTransaction? tx = null)
     {
         using var cmd = _conn.CreateCommand();
+        if (tx is not null)
+            cmd.Transaction = tx;
         cmd.CommandText =
             """
             INSERT INTO meta(key, value) VALUES ($k, $v)
@@ -62,16 +68,16 @@ public sealed class ActivityStore : IDisposable
         cmd.ExecuteNonQuery();
     }
 
-    public void InsertSeedSessions(IReadOnlyList<SeededSession> sessions)
+    public void InsertSeedSessions(IReadOnlyList<SeededSession> sessions, string metaKey, string metaValue)
     {
-        if (sessions.Count == 0)
-            return;
         using var tx = _conn.BeginTransaction();
         foreach (var s in sessions)
             InsertSession(s.TrackKey, s.Uri, s.Title, s.Artist, null, null, s.Source,
                 s.StartedUtc, s.EndedUtc, null, null, s.Outcome, s.Trigger, seeded: true, tx);
+        SetMeta(metaKey, metaValue, tx);
         tx.Commit();
-        MaybePrune(force: true);
+        if (sessions.Count > 0)
+            MaybePrune(force: true);
     }
 
     public void Persist(TrackerStep step)
@@ -149,9 +155,10 @@ public sealed class ActivityStore : IDisposable
         return rows;
     }
 
-    public IReadOnlyList<PlaySessionRow> PlaysForSong(string trackKey, int limit)
+    public IReadOnlyList<PlaySessionRow> PlaysForSong(string trackKey, int limit, int offset = 0)
     {
         limit = Math.Clamp(limit, 1, 2000);
+        offset = Math.Max(0, offset);
         using var cmd = _conn.CreateCommand();
         cmd.CommandText =
             """
@@ -160,17 +167,20 @@ public sealed class ActivityStore : IDisposable
             FROM play_sessions
             WHERE track_key = $key
             ORDER BY started_utc DESC, id DESC
-            LIMIT $limit;
+            LIMIT $limit OFFSET $offset;
             """;
         cmd.Parameters.AddWithValue("$key", trackKey);
         cmd.Parameters.AddWithValue("$limit", limit);
+        cmd.Parameters.AddWithValue("$offset", offset);
         return ReadSessions(cmd);
     }
 
-    public MusicReportData QueryMusic(DateTime? fromUtc, DateTime? toUtcExclusive, bool skippedOnly, int limit)
+    public MusicReportData QueryMusic(
+        DateTime? fromUtc, DateTime? toUtcExclusive, bool skippedOnly, int limit, int offset = 0)
     {
         limit = Math.Clamp(limit, 1, 2000);
-        var plays = QueryPlays(fromUtc, toUtcExclusive, skippedOnly, limit);
+        offset = Math.Max(0, offset);
+        var plays = QueryPlays(fromUtc, toUtcExclusive, skippedOnly, limit, offset);
         return new MusicReportData
         {
             Plays = plays,
@@ -187,9 +197,10 @@ public sealed class ActivityStore : IDisposable
         };
     }
 
-    public IReadOnlyList<ActivityEventRow> QueryEvents(string? category, string? kind, int limit)
+    public IReadOnlyList<ActivityEventRow> QueryEvents(string? category, string? kind, int limit, int offset = 0)
     {
         limit = Math.Clamp(limit, 1, 2000);
+        offset = Math.Max(0, offset);
         using var cmd = _conn.CreateCommand();
         cmd.CommandText =
             """
@@ -198,11 +209,12 @@ public sealed class ActivityStore : IDisposable
             WHERE ($cat = '' OR category = $cat)
               AND ($kind = '' OR kind = $kind)
             ORDER BY utc DESC, id DESC
-            LIMIT $limit;
+            LIMIT $limit OFFSET $offset;
             """;
         cmd.Parameters.AddWithValue("$cat", category?.Trim() ?? "");
         cmd.Parameters.AddWithValue("$kind", kind?.Trim() ?? "");
         cmd.Parameters.AddWithValue("$limit", limit);
+        cmd.Parameters.AddWithValue("$offset", offset);
         var rows = new List<ActivityEventRow>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -259,7 +271,8 @@ public sealed class ActivityStore : IDisposable
 
     public void Dispose() => _conn.Dispose();
 
-    private List<PlaySessionRow> QueryPlays(DateTime? fromUtc, DateTime? toUtcExclusive, bool skippedOnly, int limit)
+    private List<PlaySessionRow> QueryPlays(
+        DateTime? fromUtc, DateTime? toUtcExclusive, bool skippedOnly, int limit, int offset)
     {
         using var cmd = _conn.CreateCommand();
         cmd.CommandText =
@@ -273,9 +286,9 @@ public sealed class ActivityStore : IDisposable
               AND ($to = '' OR started_utc < $to)
               AND ($skipped = 0 OR outcome = 'skipped')
             ORDER BY started_utc DESC, id DESC
-            LIMIT $limit;
+            LIMIT $limit OFFSET $offset;
             """;
-        BindRange(cmd, fromUtc, toUtcExclusive, skippedOnly, limit);
+        BindRange(cmd, fromUtc, toUtcExclusive, skippedOnly, limit, offset);
         return ReadSessions(cmd);
     }
 
@@ -312,7 +325,7 @@ public sealed class ActivityStore : IDisposable
               ORDER BY c DESC, title
               LIMIT $limit;
               """;
-        BindRange(cmd, fromUtc, toUtcExclusive, skippedOnly: false, limit);
+        BindRange(cmd, fromUtc, toUtcExclusive, skippedOnly: false, limit, offset: 0);
         var rows = new List<RankedSongRow>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -334,12 +347,14 @@ public sealed class ActivityStore : IDisposable
         return rows;
     }
 
-    private static void BindRange(SqliteCommand cmd, DateTime? fromUtc, DateTime? toUtcExclusive, bool skippedOnly, int limit)
+    private static void BindRange(
+        SqliteCommand cmd, DateTime? fromUtc, DateTime? toUtcExclusive, bool skippedOnly, int limit, int offset)
     {
         cmd.Parameters.AddWithValue("$from", fromUtc is DateTime f ? Stamp(f) : "");
         cmd.Parameters.AddWithValue("$to", toUtcExclusive is DateTime t ? Stamp(t) : "");
         cmd.Parameters.AddWithValue("$skipped", skippedOnly ? 1 : 0);
         cmd.Parameters.AddWithValue("$limit", limit);
+        cmd.Parameters.AddWithValue("$offset", offset);
     }
 
     private static List<PlaySessionRow> ReadSessions(SqliteCommand cmd)
@@ -451,29 +466,50 @@ public sealed class ActivityStore : IDisposable
         {
             _writesSincePrune = 0;
             var cutoff = Stamp(DateTime.UtcNow.AddDays(-_retentionDays));
-            Exec("DELETE FROM events WHERE utc < $c;", ("$c", cutoff));
-            Exec("DELETE FROM play_sessions WHERE started_utc < $c;", ("$c", cutoff));
+            using (var deleteEvents = _conn.CreateCommand())
+            {
+                deleteEvents.CommandText = "DELETE FROM events WHERE utc < $c;";
+                deleteEvents.Parameters.AddWithValue("$c", cutoff);
+                deleteEvents.ExecuteNonQuery();
+            }
+
+            using (var deleteSessions = _conn.CreateCommand())
+            {
+                deleteSessions.CommandText = "DELETE FROM play_sessions WHERE started_utc < $c;";
+                deleteSessions.Parameters.AddWithValue("$c", cutoff);
+                deleteSessions.ExecuteNonQuery();
+            }
         }
 
-        Exec(
-            """
-            DELETE FROM events WHERE id < (
-              SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET $keep
-            );
-            """,
-            ("$keep", _maxEvents - 1));
-        Exec(
-            """
-            DELETE FROM play_sessions WHERE id < (
-              SELECT id FROM play_sessions ORDER BY id DESC LIMIT 1 OFFSET $keep
-            );
-            """,
-            ("$keep", _maxSessions - 1));
+        using (var capEvents = _conn.CreateCommand())
+        {
+            capEvents.CommandText =
+                """
+                DELETE FROM events WHERE id < (
+                  SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET $keep
+                );
+                """;
+            capEvents.Parameters.AddWithValue("$keep", _maxEvents - 1);
+            capEvents.ExecuteNonQuery();
+        }
+
+        using (var capSessions = _conn.CreateCommand())
+        {
+            capSessions.CommandText =
+                """
+                DELETE FROM play_sessions WHERE id < (
+                  SELECT id FROM play_sessions ORDER BY id DESC LIMIT 1 OFFSET $keep
+                );
+                """;
+            capSessions.Parameters.AddWithValue("$keep", _maxSessions - 1);
+            capSessions.ExecuteNonQuery();
+        }
     }
 
     private void EnsureSchema()
     {
-        Exec(
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText =
             """
             CREATE TABLE IF NOT EXISTS events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -520,15 +556,7 @@ public sealed class ActivityStore : IDisposable
               key TEXT NOT NULL PRIMARY KEY,
               value TEXT
             );
-            """);
-    }
-
-    private void Exec(string sql, params (string Name, object Value)[] args)
-    {
-        using var cmd = _conn.CreateCommand();
-        cmd.CommandText = sql;
-        foreach (var (name, value) in args)
-            cmd.Parameters.AddWithValue(name, value);
+            """;
         cmd.ExecuteNonQuery();
     }
 

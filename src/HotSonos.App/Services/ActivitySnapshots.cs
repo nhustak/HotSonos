@@ -6,9 +6,9 @@ namespace HotSonos.App.Services;
 /// <summary>Maps a now-playing snapshot into the activity tracker's input. Does not touch shuffle history.</summary>
 internal static class ActivitySnapshots
 {
-    public static PlaySnapshot From(NowPlaying np, string? zone) => new()
+    public static PlaySnapshot From(NowPlaying np, string? zone, DateTime? observedUtc = null) => new()
     {
-        Utc = DateTime.UtcNow,
+        Utc = observedUtc ?? DateTime.UtcNow,
         TrackKey = Key(np),
         Uri = np.TrackUri,
         Title = np.Title,
@@ -29,16 +29,9 @@ internal static class ActivitySnapshots
     /// </summary>
     public static string Key(NowPlaying np)
     {
-        var key = PlayHistoryStore.NormalizeKey(np.TrackUri);
-        if (np.SourceKind is NowPlayingSourceKind.LibrarySmb || NowPlaying.UsesPerTrackUri(np.SourceKind))
-            return key;
-
-        var title = (np.Title ?? "").Trim().ToLowerInvariant();
-        if (title.Length == 0)
-            return key;
-        if (key.Length == 0)
-            return "title:" + title;
-        return key + "\n" + title;
+        var titleIsIdentity = np.SourceKind is not NowPlayingSourceKind.LibrarySmb
+            && !NowPlaying.UsesPerTrackUri(np.SourceKind);
+        return TrackKeys.ForPlay(np.TrackUri, np.Title, titleIsIdentity);
     }
 
     private static string Source(NowPlaying np) => np.SourceKind switch

@@ -85,4 +85,15 @@ public class PlayOutcomeClassifierTests
         Assert.Equal(PlayOutcomes.Unknown, longer.Outcome);
         Assert.Equal(PlayTriggers.TrackChanged, longer.Trigger);
     }
+
+    [Fact]
+    public void A_short_track_played_through_is_completed()
+    {
+        var done = PlayOutcomeClassifier.Classify(Facts(9, 10));
+        Assert.Equal(PlayOutcomes.Completed, done.Outcome);
+        Assert.True(PlayOutcomeClassifier.ReachedEnd(9, 10));
+
+        var early = PlayOutcomeClassifier.Classify(Facts(4, 10));
+        Assert.Equal(PlayOutcomes.Skipped, early.Outcome);
+    }
 }

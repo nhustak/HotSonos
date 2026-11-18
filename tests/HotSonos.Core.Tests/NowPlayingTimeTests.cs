@@ -12,5 +12,9 @@ public class NowPlayingTimeTests
         Assert.Null(NowPlaying.ParseSonosTime("NOT_IMPLEMENTED"));
         Assert.Null(NowPlaying.ParseSonosTime(null));
         Assert.Null(NowPlaying.ParseSonosTime("nope"));
+        Assert.Null(NowPlaying.ParseSonosTime("0:00:NaN"));
+        Assert.Null(NowPlaying.ParseSonosTime("0:00:Infinity"));
+        Assert.Null(NowPlaying.ParseSonosTime("9999999:00:00"));
+        Assert.Equal(TimeSpan.FromSeconds(1.5), NowPlaying.ParseSonosTime("0:00:01.5"));
     }
 }

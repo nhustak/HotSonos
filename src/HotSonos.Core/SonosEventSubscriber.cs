@@ -7,6 +7,9 @@ using HotSonos.Core.Models;
 
 namespace HotSonos.Core;
 
+/// <summary>What a RenderingControl NOTIFY changed. Mute and volume can arrive together.</summary>
+public readonly record struct RenderingControlChange(bool VolumeChanged, bool MuteChanged, bool? Muted);
+
 /// <summary>
 /// Subscribes to a coordinator's AVTransport and ZoneGroupTopology GENA events
 /// and raises <see cref="NowPlayingChanged"/> / <see cref="TopologyChanged"/>
@@ -37,6 +40,8 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
     private CancellationTokenSource? _renewCts;
     private Task? _renewLoop;
     private bool _disposed;
+    private string? _trustedCoordinatorIp;
+    private string[] _trustedSids = [];
 
     /// <summary>Raised (background thread) when the coordinator pushes a track/state change.</summary>
     public event Action<NowPlaying>? NowPlayingChanged;
@@ -46,7 +51,7 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
     /// subscribed player (usually the group coordinator). Does not include per-follower
     /// volumes — app should re-read all speakers on this signal.
     /// </summary>
-    public event Action? VolumeChanged;
+    public event Action<RenderingControlChange>? VolumeChanged;
 
     /// <summary>Raised (background thread) with the decoded ZoneGroupState XML on a topology change.</summary>
     public event Action<string>? TopologyChanged;
@@ -110,12 +115,16 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
             ct.ThrowIfCancellationRequested();
             var sid = await SendSubscribeAsync(coordinatorIp, path, callback, ct).ConfigureAwait(false);
             if (sid is not null)
+            {
                 _sidByPath[path] = sid;
+                PublishTrust();
+            }
         }
 
         if (_sidByPath.Count > 0)
         {
             _coordinatorIp = coordinatorIp;
+            PublishTrust();
             if (manageRenewLoop)
                 StartRenewLoop();
         }
@@ -162,6 +171,14 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
                 var ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray();
                 await stream.WriteAsync(ok, ct).ConfigureAwait(false);
 
+                var remoteIp = (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString();
+                if (!IsTrustedNotify(
+                        request,
+                        remoteIp,
+                        Volatile.Read(ref _trustedCoordinatorIp),
+                        Volatile.Read(ref _trustedSids)))
+                    return;
+
                 // Drop excess concurrency — topology floods were stacking handlers and killing the tray.
                 if (Interlocked.Increment(ref _inflightCallbacks) > 8)
                 {
@@ -178,9 +195,10 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
                         // <LastChange>; topology uses <ZoneGroupState>.
                         if (request.Contains("<LastChange>", StringComparison.Ordinal))
                         {
-                            if (IsRenderingControlLastChange(request))
+                            var control = DescribeRenderingControl(request);
+                            if (control.VolumeChanged || control.MuteChanged)
                             {
-                                VolumeChanged?.Invoke();
+                                VolumeChanged?.Invoke(control);
                             }
                             else
                             {
@@ -247,24 +265,41 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
     }
 
     /// <summary>
-    /// True when LastChange is volume/mute (RenderingControl), not AVTransport.
-    /// Avoids treating volume NOTIFYs as empty now-playing updates.
+    /// Volume and mute from a RenderingControl LastChange. AVTransport bodies
+    /// (transport state, track URI, metadata) return an empty change.
     /// </summary>
-    internal static bool IsRenderingControlLastChange(string request)
+    internal static RenderingControlChange DescribeRenderingControl(string request)
     {
         var lastChangeMatch = LastChangeRegex().Match(request);
         if (!lastChangeMatch.Success)
-            return false;
+            return default;
         var lastChange = WebUtility.HtmlDecode(lastChangeMatch.Groups[1].Value);
         if (lastChange.Contains("TransportState", StringComparison.OrdinalIgnoreCase)
             || lastChange.Contains("CurrentTrackURI", StringComparison.OrdinalIgnoreCase)
             || lastChange.Contains("AVTransportURI", StringComparison.OrdinalIgnoreCase)
             || lastChange.Contains("CurrentTrackMetaData", StringComparison.OrdinalIgnoreCase))
-            return false;
-        return lastChange.Contains("<Volume", StringComparison.OrdinalIgnoreCase)
-               || lastChange.Contains("Volume val=", StringComparison.OrdinalIgnoreCase)
-               || lastChange.Contains("<Mute", StringComparison.OrdinalIgnoreCase)
-               || lastChange.Contains("Mute val=", StringComparison.OrdinalIgnoreCase);
+            return default;
+
+        var volume = lastChange.Contains("<Volume", StringComparison.OrdinalIgnoreCase)
+                     || lastChange.Contains("Volume val=", StringComparison.OrdinalIgnoreCase);
+        var mute = MuteValRegex().Match(lastChange);
+        var muteChanged = mute.Success
+                          || lastChange.Contains("<Mute", StringComparison.OrdinalIgnoreCase)
+                          || lastChange.Contains("Mute val=", StringComparison.OrdinalIgnoreCase);
+        if (!volume && !muteChanged)
+            return default;
+
+        bool? muted = null;
+        if (mute.Success)
+        {
+            var v = mute.Groups[1].Value.Trim();
+            if (v is "1" or "true")
+                muted = true;
+            else if (v is "0" or "false")
+                muted = false;
+        }
+
+        return new RenderingControlChange(volume, muteChanged, muted);
     }
 
     /// <summary>Extracts now-playing state from an AVTransport NOTIFY body.</summary>
@@ -412,6 +447,7 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         if (_coordinatorIp is null)
         {
             _sidByPath.Clear();
+            PublishTrust();
             return;
         }
 
@@ -431,6 +467,49 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
         _sidByPath.Clear();
         _coordinatorIp = null;
+        PublishTrust();
+    }
+
+    private void PublishTrust()
+    {
+        Volatile.Write(ref _trustedCoordinatorIp, _coordinatorIp);
+        Volatile.Write(ref _trustedSids, _sidByPath.Values.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray());
+    }
+
+    /// <summary>
+    /// A NOTIFY is accepted only when its SID is one we subscribed and the TCP
+    /// sender is the coordinator we subscribed to. Anything else is ignored so a
+    /// host on the LAN cannot invent play history.
+    /// </summary>
+    internal static bool IsTrustedNotify(
+        string request, string? remoteIp, string? coordinatorIp, IReadOnlyList<string>? sids)
+    {
+        if (string.IsNullOrWhiteSpace(request) || sids is null || sids.Count == 0)
+            return false;
+        if (string.IsNullOrWhiteSpace(remoteIp) || string.IsNullOrWhiteSpace(coordinatorIp))
+            return false;
+        var headerEnd = request.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        if (headerEnd < 0)
+            headerEnd = request.IndexOf("\n\n", StringComparison.Ordinal);
+        var headers = headerEnd >= 0 ? request[..headerEnd] : request;
+        var match = SidHeaderRegex().Match(headers);
+        if (!match.Success)
+            return false;
+        var sid = match.Groups[1].Value.Trim();
+        if (!sids.Any(s => string.Equals(s, sid, StringComparison.OrdinalIgnoreCase)))
+            return false;
+        return SameAddress(remoteIp, coordinatorIp);
+    }
+
+    private static bool SameAddress(string left, string right)
+    {
+        if (!IPAddress.TryParse(left.Trim(), out var a) || !IPAddress.TryParse(right.Trim(), out var b))
+            return string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
+        if (a.IsIPv4MappedToIPv6)
+            a = a.MapToIPv4();
+        if (b.IsIPv4MappedToIPv6)
+            b = b.MapToIPv4();
+        return a.Equals(b);
     }
 
     /// <summary>
@@ -544,6 +623,12 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex ContentLengthRegex();
+
+    [GeneratedRegex(@"(?im)^SID:\s*(\S+)", RegexOptions.None)]
+    private static partial Regex SidHeaderRegex();
+
+    [GeneratedRegex(@"<Mute\b[^>]*\bval=""(?<v>[^""]*)""", RegexOptions.IgnoreCase)]
+    private static partial Regex MuteValRegex();
 
     [GeneratedRegex(@"<LastChange>(.*?)</LastChange>", RegexOptions.Singleline)]
     private static partial Regex LastChangeRegex();

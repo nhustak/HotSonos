@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Controls;
 using HotSonos.Activity;
 using UserControl = System.Windows.Controls.UserControl;
@@ -9,7 +10,10 @@ namespace HotSonos.App.Reports;
 
 public partial class SongPlayHistoryReport : UserControl, IReportPanel
 {
+    private const int PageSize = 500;
     private readonly ActivityLog _log;
+    private readonly List<PlaySessionRow> _plays = [];
+    private int _playOffset;
 
     public SongPlayHistoryReport(ActivityLog log)
     {
@@ -20,7 +24,7 @@ public partial class SongPlayHistoryReport : UserControl, IReportPanel
 
     public void RefreshReport() => Search();
 
-    private void Search_Click(object sender, System.Windows.RoutedEventArgs e) => Search();
+    private void Search_Click(object sender, RoutedEventArgs e) => Search();
 
     private void SearchBox_KeyDown(object sender, KeyEventArgs e)
     {
@@ -43,8 +47,10 @@ public partial class SongPlayHistoryReport : UserControl, IReportPanel
                 SongGrid.SelectedIndex = 0;
             else
             {
+                _plays.Clear();
                 PlayGrid.ItemsSource = null;
                 PlaysHeader.Text = "Plays";
+                MorePlaysButton.Visibility = Visibility.Collapsed;
             }
         }
         catch (Exception ex)
@@ -57,12 +63,31 @@ public partial class SongPlayHistoryReport : UserControl, IReportPanel
     {
         if (SongGrid.SelectedItem is not SongStatRow song)
             return;
+        _playOffset = 0;
+        _plays.Clear();
+        LoadPlays(song);
+    }
+
+    private void MorePlays_Click(object sender, RoutedEventArgs e)
+    {
+        if (SongGrid.SelectedItem is SongStatRow song)
+            LoadPlays(song);
+    }
+
+    private void LoadPlays(SongStatRow song)
+    {
         try
         {
-            var plays = _log.PlaysForSong(song.TrackKey, 500);
-            PlayGrid.ItemsSource = plays;
+            var plays = _log.PlaysForSong(song.TrackKey, PageSize, _playOffset);
+            _plays.AddRange(plays);
+            _playOffset = _plays.Count;
+            PlayGrid.ItemsSource = null;
+            PlayGrid.ItemsSource = _plays.ToList();
             var who = string.IsNullOrWhiteSpace(song.Artist) ? song.Title : $"{song.Title} — {song.Artist}";
-            PlaysHeader.Text = $"{who}  ·  {song.PlayCount} plays, {song.SkipCount} skips";
+            PlaysHeader.Text = _plays.Count < song.PlayCount
+                ? $"{who}  ·  {song.PlayCount} plays, {song.SkipCount} skips  ·  showing {_plays.Count}"
+                : $"{who}  ·  {song.PlayCount} plays, {song.SkipCount} skips";
+            MorePlaysButton.Visibility = plays.Count >= PageSize ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (Exception ex)
         {

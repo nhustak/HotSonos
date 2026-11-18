@@ -67,9 +67,26 @@ public sealed record NowPlaying
         if (!double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var seconds))
             return null;
-        if (hours < 0 || minutes is < 0 or > 59 || seconds is < 0 or >= 60)
+        if (hours < 0 || minutes is < 0 or > 59)
             return null;
-        return new TimeSpan(hours, minutes, 0) + TimeSpan.FromSeconds(seconds);
+        if (!double.IsFinite(seconds) || seconds is < 0 or >= 60)
+            return null;
+        // TimeSpan rejects totals past about 10,675,199 days. A speaker clock
+        // past a few thousand hours is not a track position.
+        if (hours > 99999)
+            return null;
+        try
+        {
+            return new TimeSpan(hours, minutes, 0) + TimeSpan.FromSeconds(seconds);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
