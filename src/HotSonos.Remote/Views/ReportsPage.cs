@@ -49,6 +49,8 @@ sealed class ReportsPage : RemotePage
             _ = LoadAsync(reset: true);
     }
 
+    protected override void OnLinkChanged() => _ = LoadAsync(reset: true);
+
     Task SetMode(string mode)
     {
         _mode = mode;
@@ -58,6 +60,13 @@ sealed class ReportsPage : RemotePage
 
     async Task LoadAsync(bool reset)
     {
+        if (!AppServices.Link.OnPc)
+        {
+            _rows.Clear();
+            _status.Text = "Song play history, music, and the event log need the PC.";
+            return;
+        }
+
         if (reset)
         {
             _offset = 0;

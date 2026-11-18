@@ -54,6 +54,8 @@ sealed class OptionsPage : RemotePage
         Content = RemoteUi.Page(
             "More",
             _status,
+            RemoteUi.Muted("Link"),
+            RemoteUi.ModePicker(),
             RemoteUi.Button("Reload", LoadAsync),
             RemoteUi.Muted("Wake"),
             Labeled("Enabled", _wake),
@@ -65,8 +67,8 @@ sealed class OptionsPage : RemotePage
             _wakeStart,
             _wakeEnd,
             Labeled("Then expand to the house", _wakeExpand),
-            RemoteUi.Button("Wake now", () => Act(ct => AppServices.Client.WakeNowAsync(ct), _status)),
-            RemoteUi.Button("Cancel wake", () => Act(ct => AppServices.Client.CancelWakeAsync(ct), _status)),
+            RemoteUi.Button("Wake now", () => OnPc() ? Act(ct => AppServices.Client.WakeNowAsync(ct), _status) : Task.CompletedTask),
+            RemoteUi.Button("Cancel wake", () => OnPc() ? Act(ct => AppServices.Client.CancelWakeAsync(ct), _status) : Task.CompletedTask),
             RemoteUi.Muted("Nightly"),
             Labeled("Re-sync nightly", _nightly),
             _nightlyTime,
@@ -102,8 +104,17 @@ sealed class OptionsPage : RemotePage
         _ = LoadAsync();
     }
 
+    protected override void OnLinkChanged() => _ = LoadAsync();
+
     async Task LoadAsync()
     {
+        if (!AppServices.Link.OnPc)
+        {
+            _logs.Clear();
+            _status.Text = "Wake, nightly, and the other settings need the PC. The link above still switches modes.";
+            return;
+        }
+
         var call = await AppServices.Client.GetSettingsAsync(CancellationToken.None);
         if (call.Value is not { Ok: true } s)
         {
@@ -147,6 +158,12 @@ sealed class OptionsPage : RemotePage
 
     async Task SaveAsync()
     {
+        if (!AppServices.Link.OnPc)
+        {
+            _status.Text = "Those settings need the PC.";
+            return;
+        }
+
         if (!TryMinutes(_wakeTime.Text, out var wake) || !TryMinutes(_nightlyTime.Text, out var nightly))
         {
             _status.Text = "Times are HH:mm.";
@@ -193,9 +210,23 @@ sealed class OptionsPage : RemotePage
 
     async Task DiagnosticAsync()
     {
+        if (!AppServices.Link.OnPc)
+        {
+            _status.Text = "The failure diagnostic needs the PC.";
+            return;
+        }
+
         if (!await Confirm("Failure diagnostic", "Run the PC diagnostic and save a report on the computer?"))
             return;
         await Act(ct => AppServices.Client.FailureDiagnosticAsync(ct), _status);
+    }
+
+    bool OnPc()
+    {
+        if (AppServices.Link.OnPc)
+            return true;
+        _status.Text = "Wake and nightly need the PC.";
+        return false;
     }
 
     static View Labeled(string text, Switch toggle) => new HorizontalStackLayout

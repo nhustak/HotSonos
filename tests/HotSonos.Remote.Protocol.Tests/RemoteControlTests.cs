@@ -1,5 +1,37 @@
 namespace HotSonos.Remote.Protocol.Tests;
 
+public class PhoneLinkPolicyTests
+{
+    [Fact]
+    public void Auto_UsesThePcWhenItAnswersAndSpeakersWhenItDoesNot()
+    {
+        Assert.Equal(PhoneLinkOutcome.Pc, PhoneLinkPolicy.Choose(PhoneLinkPreference.Auto, paired: true, pcReachable: true));
+        Assert.Equal(PhoneLinkOutcome.Speakers, PhoneLinkPolicy.Choose(PhoneLinkPreference.Auto, paired: true, pcReachable: false));
+        Assert.Equal(PhoneLinkOutcome.Speakers, PhoneLinkPolicy.Choose(PhoneLinkPreference.Auto, paired: false, pcReachable: false));
+    }
+
+    [Fact]
+    public void PcOnly_StaysOnThePcWhenItIsDown()
+    {
+        Assert.Equal(PhoneLinkOutcome.PcDown, PhoneLinkPolicy.Choose(PhoneLinkPreference.Pc, paired: true, pcReachable: false));
+    }
+
+    [Fact]
+    public void Standalone_NeverAsksThePc()
+    {
+        Assert.Equal(PhoneLinkOutcome.Speakers, PhoneLinkPolicy.Choose(PhoneLinkPreference.Standalone, paired: true, pcReachable: true));
+    }
+
+    [Fact]
+    public void Banner_NamesThePcOrTheRoom()
+    {
+        Assert.Equal("PC · 192.168.1.20", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, "192.168.1.20", "Kitchen"));
+        Assert.Equal("Speakers · Kitchen", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Speakers, "192.168.1.20", "Kitchen"));
+        Assert.Equal("PC unreachable", PhoneLinkPolicy.Banner(PhoneLinkOutcome.PcDown, "192.168.1.20", "Kitchen"));
+    }
+}
+
+
 public class DailyGroupLogicTests
 {
     [Fact]

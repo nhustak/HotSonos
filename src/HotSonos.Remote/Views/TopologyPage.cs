@@ -17,6 +17,15 @@ sealed class TopologyPage : RemotePage
         {
             if (_suppressKeep)
                 return;
+            if (!AppServices.Link.OnPc)
+            {
+                _suppressKeep = true;
+                _keep.IsToggled = !e.Value;
+                _suppressKeep = false;
+                _status.Text = "Keep house grouped needs the PC.";
+                return;
+            }
+
             await Act(ct => AppServices.Client.KeepGroupedAsync(e.Value, ct), _status);
         };
 
@@ -49,8 +58,16 @@ sealed class TopologyPage : RemotePage
         _ = LoadAsync();
     }
 
+    protected override void OnLinkChanged() => _ = LoadAsync();
+
     async Task LoadAsync()
     {
+        if (!AppServices.Link.OnPc)
+        {
+            await LoadSpeakersAsync();
+            return;
+        }
+
         var topo = await AppServices.Client.GetTopologyAsync(CancellationToken.None);
         var value = topo.Value;
         if (value is null)
@@ -59,6 +76,7 @@ sealed class TopologyPage : RemotePage
             return;
         }
 
+        _keep.IsEnabled = true;
         _suppressKeep = true;
         _keep.IsToggled = value.KeepHouseGrouped;
         _suppressKeep = false;
@@ -103,8 +121,126 @@ sealed class TopologyPage : RemotePage
         }
     }
 
+    async Task LoadSpeakersAsync()
+    {
+        var house = AppServices.Link.Speakers;
+        _suppressKeep = true;
+        _keep.IsEnabled = false;
+        _suppressKeep = false;
+        _status.Text = house.Zones.Count == 0
+            ? (AppServices.Link.Problem ?? "No speakers yet.")
+            : "Keep grouped, Daily regroup, and reboot need the PC.";
+
+        _groups.Clear();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var zone in house.Zones.Where(z => z.IsCoordinator && seen.Add(z.CoordinatorUuid)))
+        {
+            var names = string.Join(" + ", house.Zones.Where(z => string.Equals(z.CoordinatorUuid, zone.CoordinatorUuid, StringComparison.OrdinalIgnoreCase)).Select(z => z.RoomName));
+            _groups.Add(RemoteUi.Muted(names));
+        }
+
+        _members.Clear();
+        foreach (var zone in house.Zones)
+        {
+            var room = zone.RoomName;
+            var label = zone.IsCoordinator ? room + " · lead" : room;
+            var row = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(new GridLength(2, GridUnitType.Star)), new ColumnDefinition(), new ColumnDefinition() } };
+            var lead = RemoteUi.Button("Lead", () => LeadAsync(room));
+            var leave = RemoteUi.Button("Leave", () => LeaveAsync(room));
+            var name = RemoteUi.Muted(label);
+            Grid.SetColumn(name, 0);
+            Grid.SetColumn(lead, 1);
+            Grid.SetColumn(leave, 2);
+            row.Add(name);
+            row.Add(lead);
+            row.Add(leave);
+            _members.Add(row);
+        }
+
+        _volumes.Clear();
+        var volumes = await house.ReadVolumesAsync(CancellationToken.None);
+        foreach (var speaker in volumes)
+        {
+            var ip = speaker.Ip;
+            var slider = new Slider { Minimum = 0, Maximum = 100, Value = speaker.Volume };
+            slider.DragCompleted += async (_, _) =>
+            {
+                try { await house.SetVolumeAsync(ip, (int)slider.Value, CancellationToken.None); _status.Text = "Done"; }
+                catch (Exception ex) { _status.Text = ex.Message; }
+            };
+            var mute = RemoteUi.Button(speaker.Muted ? "Unmute" : "Mute", async () =>
+            {
+                try { await house.SetMuteAsync(ip, !speaker.Muted, CancellationToken.None); _status.Text = "Done"; await LoadAsync(); }
+                catch (Exception ex) { _status.Text = ex.Message; }
+            });
+            _volumes.Add(RemoteUi.Card(
+                RemoteUi.Muted($"{speaker.Room} · {speaker.Volume}%{(speaker.Muted ? " muted" : "")}{(speaker.Reachable ? "" : " · offline")}"),
+                slider,
+                mute));
+        }
+    }
+
+    async Task LeadAsync(string room)
+    {
+        if (!await Confirm("Coordinator", $"Make {room} the leader of its current group?"))
+            return;
+        try
+        {
+            await AppServices.Link.Speakers.SetCoordinatorAsync(room, wholeHouse: false, CancellationToken.None);
+            _status.Text = room + " is leading its group.";
+        }
+        catch (Exception ex)
+        {
+            _status.Text = ex.Message;
+        }
+
+        await LoadAsync();
+    }
+
+    async Task LeaveAsync(string room)
+    {
+        if (!await Confirm("Leave group", $"{room} will play on its own."))
+            return;
+        try
+        {
+            await AppServices.Link.Speakers.LeaveGroupAsync(room, CancellationToken.None);
+            _status.Text = room + " left the group.";
+        }
+        catch (Exception ex)
+        {
+            _status.Text = ex.Message;
+        }
+
+        await LoadAsync();
+    }
+
     async Task RegroupAsync()
     {
+        if (!AppServices.Link.OnPc)
+        {
+            var room = AppServices.Link.Speakers.ActiveZone?.RoomName;
+            if (room is null)
+            {
+                _status.Text = "No speakers yet.";
+                return;
+            }
+
+            if (!await Confirm("Group all", $"Join every room to {room}?"))
+                return;
+            try
+            {
+                await AppServices.Link.Speakers.SetCoordinatorAsync(room, wholeHouse: true, CancellationToken.None);
+                _status.Text = "Grouped under " + room + ".";
+            }
+            catch (Exception ex)
+            {
+                _status.Text = ex.Message;
+            }
+
+            await LoadAsync();
+            return;
+        }
+
         if (!await Confirm("Regroup", "Regroup the Daily speaker group under the preferred coordinator?"))
             return;
         await Act(ct => AppServices.Client.RegroupAsync(null, ct), _status);
@@ -113,6 +249,12 @@ sealed class TopologyPage : RemotePage
 
     async Task RegroupRoomAsync(string room)
     {
+        if (!AppServices.Link.OnPc)
+        {
+            await LeadAsync(room);
+            return;
+        }
+
         if (!await Confirm("Coordinator", $"Make {room} the coordinator and regroup the Daily group?"))
             return;
         await Act(ct => AppServices.Client.RegroupAsync(room, ct), _status);
@@ -121,6 +263,12 @@ sealed class TopologyPage : RemotePage
 
     async Task RebootAsync(string? room, bool all)
     {
+        if (!AppServices.Link.OnPc)
+        {
+            _status.Text = "Reboot needs the PC.";
+            return;
+        }
+
         var message = all
             ? "Restart every speaker? Music stops for about a minute."
             : $"Restart {room}? It drops off for about a minute.";

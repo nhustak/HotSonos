@@ -1,3 +1,4 @@
+using HotSonos.Core;
 using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote.Views;
@@ -85,12 +86,56 @@ static class RemoteUi
         {
             Padding = new Thickness(16, 12, 16, 28),
             Spacing = 6,
-            Children = { Heading(title) },
+            Children = { Heading(title), ModeChip() },
         };
         foreach (var section in sections)
             stack.Add(section);
         return new ScrollView { Content = stack, BackgroundColor = Swatches.Bg };
     }
+
+    /// <summary>Top-of-page line: PC · address, Speakers · room, or PC unreachable.</summary>
+    public static Label ModeChip()
+    {
+        var chip = new Label
+        {
+            FontAttributes = FontAttributes.Bold,
+            FontSize = 14,
+            Margin = new Thickness(0, 0, 0, 6),
+        };
+        void Paint()
+        {
+            var link = AppServices.Link;
+            chip.Text = link.Banner;
+            chip.TextColor = link.OnPc ? Color.FromArgb("#7EB6FF") : Swatches.Accent;
+        }
+
+        Paint();
+        AppServices.Link.Changed += Paint;
+        return chip;
+    }
+
+    public static View ModePicker()
+    {
+        var picker = new Picker
+        {
+            Title = "Link",
+            TextColor = Swatches.Ink,
+            BackgroundColor = Swatches.Card,
+            Items = { "Auto — PC, then speakers", "PC only", "Speakers only" },
+        };
+        picker.SelectedIndex = (int)AppServices.Link.Preference;
+        picker.SelectedIndexChanged += async (_, _) =>
+        {
+            if (picker.SelectedIndex < 0)
+                return;
+            AppServices.Link.SetPreference((PhoneLinkPreference)picker.SelectedIndex);
+            await AppServices.Link.ResolveAsync(CancellationToken.None);
+        };
+        return picker;
+    }
+
+    public static Label NeedsPc(string what) =>
+        Muted(what + " needs the PC. Pair on More, or leave the link on Auto.");
 }
 
 abstract class RemotePage : ContentPage
@@ -104,19 +149,45 @@ abstract class RemotePage : ContentPage
     {
         base.OnAppearing();
         AppServices.Live.Changed += OnLive;
+        AppServices.Link.Changed += OnLink;
         OnStatus(AppServices.Live.Status);
     }
 
     protected override void OnDisappearing()
     {
         AppServices.Live.Changed -= OnLive;
+        AppServices.Link.Changed -= OnLink;
         base.OnDisappearing();
     }
 
     void OnLive() => OnStatus(AppServices.Live.Status);
 
+    void OnLink() => MainThread.BeginInvokeOnMainThread(() => OnLinkChanged());
+
+    protected virtual void OnLinkChanged()
+    {
+    }
+
     protected virtual void OnStatus(RemoteStatusResponse? status)
     {
+    }
+
+    protected SonosController RequireSpeaker() =>
+        AppServices.Link.Speakers.Controller
+        ?? throw new InvalidOperationException("No speakers yet. Pull to refresh, or check that the phone is on the same Wi-Fi.");
+
+    protected async Task Speaker(Func<SonosController, CancellationToken, Task> work, Label? status = null)
+    {
+        try
+        {
+            await work(RequireSpeaker(), CancellationToken.None).ConfigureAwait(true);
+            if (status is not null)
+                status.Text = "Done";
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlert("HotSonos", ex.Message, "OK");
+        }
     }
 
     protected Task<bool> Confirm(string title, string message) =>

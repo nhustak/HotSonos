@@ -1,3 +1,4 @@
+using HotSonos.Core.Models;
 using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote.Views;
@@ -35,8 +36,20 @@ sealed class LibraryPage : RemotePage
         _ = LoadTagsAsync();
     }
 
+    protected override void OnLinkChanged()
+    {
+        _ = SearchAsync(reset: true);
+        _ = LoadTagsAsync();
+    }
+
     async Task SearchAsync(bool reset)
     {
+        if (!AppServices.Link.OnPc)
+        {
+            await SearchSpeakersAsync(reset);
+            return;
+        }
+
         if (reset)
             _offset = 0;
         var call = await AppServices.Client.SearchAsync(_query.Text ?? "", 25, _offset, CancellationToken.None);
@@ -52,6 +65,66 @@ sealed class LibraryPage : RemotePage
         _status.Text = page.Tracks.Count == 0 ? "No more tracks." : $"{_offset} shown";
         foreach (var track in page.Tracks)
             _results.Add(TrackCard(track));
+    }
+
+    async Task SearchSpeakersAsync(bool reset)
+    {
+        if (reset)
+        {
+            _offset = 0;
+            _results.Clear();
+        }
+
+        var speaker = AppServices.Link.Speakers.Controller;
+        if (speaker is null)
+        {
+            _status.Text = AppServices.Link.Problem ?? "No speakers yet.";
+            return;
+        }
+
+        try
+        {
+            var tracks = await speaker.SearchLibraryAsync(_query.Text, _offset, 25, CancellationToken.None);
+            _offset += tracks.Count;
+            _status.Text = tracks.Count == 0
+                ? "No more tracks in the speaker library."
+                : $"{_offset} from the speaker library. Tags and rescan need the PC.";
+            foreach (var track in tracks)
+                _results.Add(SpeakerCard(track));
+        }
+        catch (Exception ex)
+        {
+            _status.Text = ex.Message;
+        }
+    }
+
+    View SpeakerCard(SonosLibraryTrack track)
+    {
+        var play = RemoteUi.Button("Play", () => Speaker((s, ct) => s.InsertLibraryUriAndPlayNowAsync(track.Uri, track.Title, track.Artist, ct), _status));
+        var queue = RemoteUi.Button("Queue", () => Speaker(async (s, ct) => { await s.InsertLibraryUriNextAsync(track.Uri, track.Title, track.Artist, ct); }, _status));
+        var wipe = RemoteUi.Button("Wipe queue", () => WipeSpeakerAsync(track), danger: true);
+        var row = new Grid
+        {
+            ColumnSpacing = 6,
+            ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() },
+        };
+        Grid.SetColumn(play, 0);
+        Grid.SetColumn(queue, 1);
+        Grid.SetColumn(wipe, 2);
+        row.Add(play);
+        row.Add(queue);
+        row.Add(wipe);
+        return RemoteUi.Card(
+            new Label { Text = track.Title, TextColor = Swatches.Ink, FontAttributes = FontAttributes.Bold },
+            RemoteUi.Muted($"{track.Artist} · {track.Album}"),
+            row);
+    }
+
+    async Task WipeSpeakerAsync(SonosLibraryTrack track)
+    {
+        if (!await Confirm("Wipe the queue", $"Replace the queue with {track.Title}? The current queue is cleared."))
+            return;
+        await Speaker((s, ct) => s.PlayLibraryUriAsync(track.Uri, track.Title, track.Artist, ct), _status);
     }
 
     View TrackCard(RemoteTrackDto track)
@@ -105,6 +178,12 @@ sealed class LibraryPage : RemotePage
 
     async Task RescanAsync(bool force)
     {
+        if (!AppServices.Link.OnPc)
+        {
+            _status.Text = "Rescan needs the PC.";
+            return;
+        }
+
         var message = force
             ? "Re-read tags for every file? This can take a long time."
             : "Rescan the library for new and changed files?";
@@ -115,6 +194,12 @@ sealed class LibraryPage : RemotePage
 
     async Task CreateTagAsync()
     {
+        if (!AppServices.Link.OnPc)
+        {
+            _status.Text = "Tags need the PC.";
+            return;
+        }
+
         await Act(ct => AppServices.Client.CreateTagAsync(_newTag.Text ?? "", ct), _status);
         _newTag.Text = "";
         await LoadTagsAsync();
@@ -122,6 +207,13 @@ sealed class LibraryPage : RemotePage
 
     async Task LoadTagsAsync()
     {
+        if (!AppServices.Link.OnPc)
+        {
+            _tags.Clear();
+            _tags.Add(RemoteUi.NeedsPc("Tags, rescan, and writing HOTSONOS_TAGS"));
+            return;
+        }
+
         var call = await AppServices.Client.GetTagsAsync(CancellationToken.None);
         _tags.Clear();
         foreach (var tag in call.Value?.Tags ?? [])

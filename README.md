@@ -19,7 +19,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 - **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Top bar: **Phone**. Tray: Phone…, Library…, Topology…, Logs…, Reports…, Debug…
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
-- **Phone:** Android app (`src/HotSonos.Remote`, .NET MAUI) is a full view of this PC over `http://<pc>:42342` with header `X-HotSonos-Pin`. The **Phone** button shows the address and PIN.
+- **Phone:** Android app (`src/HotSonos.Remote`, .NET MAUI) is a full view of this PC over `http://<pc>:42342` with header `X-HotSonos-Pin`, and it can also drive the speakers with no PC. The **Phone** button shows the address and PIN. Link: Auto, PC only, or Speakers only.
 
 **Having issues (stutter, dead zones, flaky grouping)?** Make sure **SonosNet is off** — see [Turn off SonosNet](#turn-off-sonosnet) near the bottom.
 
@@ -250,7 +250,9 @@ Release publish writes `com.hotsonos.remote-Signed.aab` (and an APK) under `src\
 
 On the PC, open HotSonos and press **Phone** (or the tray item **Phone…**). The phone's first screen takes that address, port **42342**, and the 6-digit PIN. The header on every request is `X-HotSonos-Pin`. The Android emulator on the PC reaches it as `10.0.2.2`. The listener is plain HTTP on the LAN and only binds the address that shares a network with a speaker.
 
-The phone polls now-playing every 2 seconds while it is open, and loads the other tabs when you open them. Reboot, regroup, fresh start, rescan, wiping the queue, and deleting a tag ask you to confirm first.
+The link control on Pair and More is **Auto** (try the PC, then the speakers), **PC only**, or **Speakers only**. Each screen shows which one is active. Speakers only needs no PIN: the phone discovers ZonePlayer devices on the Wi-Fi (it holds an Android multicast lock) and sends the same UPnP calls as the tray app. HotSonos shuffle, tags, Daily groups, Reports, wake, and saved Spotify links say they need the PC when the phone is on the speakers.
+
+The phone polls now-playing every 2 seconds while it is open, and loads the other tabs when you open them. It checks the PC again when the app resumes. Reboot, regroup, fresh start, rescan, wiping the queue, deleting a tag, and leaving or leading a group ask you to confirm first.
 
 ### Project layout
 | Project | Purpose |

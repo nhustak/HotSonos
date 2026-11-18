@@ -8,14 +8,25 @@ public partial class App : Application
         var connection = AppServices.Connection;
         if (connection.IsPaired)
             AppServices.Client.Apply(connection.Host, connection.Port, connection.Pin);
-        MainPage = connection.IsPaired ? new AppShell() : new NavigationPage(new Views.PairPage());
+        var open = AppServices.Link.Preference != HotSonos.Remote.Protocol.PhoneLinkPreference.Pc || connection.IsPaired;
+        MainPage = open ? new AppShell() : new NavigationPage(new Views.PairPage());
+    }
+
+    protected override Window CreateWindow(IActivationState? activationState)
+    {
+        var window = base.CreateWindow(activationState);
+        window.Created += (_, _) => _ = AppServices.Link.ResolveAsync(CancellationToken.None);
+        window.Resumed += (_, _) => _ = AppServices.Link.ResolveAsync(CancellationToken.None);
+        return window;
     }
 
     public static void EnterApp()
     {
         var connection = AppServices.Connection;
-        AppServices.Client.Apply(connection.Host, connection.Port, connection.Pin);
+        if (connection.IsPaired)
+            AppServices.Client.Apply(connection.Host, connection.Port, connection.Pin);
         Current!.MainPage = new AppShell();
+        _ = AppServices.Link.ResolveAsync(CancellationToken.None);
     }
 
     public static void LeaveToPair()

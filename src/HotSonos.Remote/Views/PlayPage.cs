@@ -29,8 +29,20 @@ sealed class PlayPage : RemotePage
         _ = LoadAsync();
     }
 
+    protected override void OnLinkChanged() => _ = LoadAsync();
+
     async Task LoadAsync()
     {
+        if (!AppServices.Link.OnPc)
+        {
+            _tags.Clear();
+            _genres.Clear();
+            _folders.Clear();
+            _tags.Add(RemoteUi.NeedsPc("Tags, genres, and library folders"));
+            _status.Text = "Those play sources are the PC library. Sonos favorites are on Now.";
+            return;
+        }
+
         var call = await AppServices.Client.GetSourcesAsync(CancellationToken.None);
         _tags.Clear();
         _genres.Clear();

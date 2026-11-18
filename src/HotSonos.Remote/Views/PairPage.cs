@@ -22,12 +22,15 @@ sealed class PairPage : ContentPage
         Content = RemoteUi.Page(
             "Pair with the PC",
             _status,
-            RemoteUi.Muted("On the PC, open HotSonos and tap Phone. The emulator on that PC is 10.0.2.2."),
+            RemoteUi.Muted("Link"),
+            RemoteUi.ModePicker(),
+            RemoteUi.Muted("On the PC, open HotSonos and tap Phone. The emulator on that PC is 10.0.2.2. Speakers only skips the PC."),
             _host,
             _port,
             _pin,
             RemoteUi.Button("Test connection", TestAsync),
-            RemoteUi.Button("Save and open", SaveAsync));
+            RemoteUi.Button("Save and open", SaveAsync),
+            RemoteUi.Button("Use speakers without the PC", SpeakersAsync));
     }
 
     async Task TestAsync()
@@ -64,6 +67,13 @@ sealed class PairPage : ContentPage
         connection.Save();
         App.EnterApp();
         await Task.CompletedTask;
+    }
+
+    Task SpeakersAsync()
+    {
+        AppServices.Link.SetPreference(PhoneLinkPreference.Standalone);
+        App.EnterApp();
+        return Task.CompletedTask;
     }
 
     bool TryRead(out string host, out int port, out string pin, out string? error)

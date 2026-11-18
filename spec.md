@@ -162,7 +162,7 @@ Match notes: content hash skipped (master often different encode/hi-res). Ambigu
 
 **Step 6** (or step 5 polish): playlist create from filter + play on Sonos; further MCP polish as needed.
 
-**Phone remote** (§6.6, shipped): the Android app is a full view of this PC. LAN API stays on port **42342** with the 6-digit PIN. Top-bar **Phone** shows the address and PIN. Client is `src/HotSonos.Remote` (.NET MAUI, not in `HotSonos.slnx`). Library groups (§6.2) stay the next product slice.
+**Phone remote** (§6.6, shipped): the Android app is a full view of this PC when the PC answers, and it can also drive the speakers directly. LAN API stays on port **42342** with the 6-digit PIN. Link modes: Auto (PC first), PC only, Speakers only. Client is `src/HotSonos.Remote` (.NET MAUI, not in `HotSonos.slnx`). Library groups (§6.2) stay the next product slice.
 
 ---
 
@@ -469,7 +469,13 @@ Reboot, wipe queue, rescan, regroup, fresh start, and tag delete ask for confirm
 
 **Live state.** While the shell is open the phone polls `GET /api/status` every 2 seconds. That route reads memory (now playing, house volume, groups, wake, busy). Album art is fetched only when its revision changes. Sources, topology, reports, and settings load when that tab appears and on refresh. A push socket would be a second long-lived connection for the same small JSON, and it dies when the phone sleeps. Two seconds is prompt enough for a remote and matches HotList's pull-on-open model plus a timer, because playback changes when nobody touches the phone.
 
-**Android app.** `src/HotSonos.Remote` is a .NET MAUI app (`net10.0-android` only, minSdk 24, package `com.hotsonos.remote`). Tabs: Now, Play, Library, Rooms, Reports, More. It is not in `HotSonos.slnx` and not in the MSI, so the Windows build does not need the Android workload. Shared DTOs: `src/HotSonos.Remote.Protocol`. Release publish signs with `%USERPROFILE%\.android-keys\hotsonos\` when that upload key exists, and with the debug key otherwise (`HOTSONOS_UPLOAD_KEY_DIR` overrides the folder).
+**Android app.** `src/HotSonos.Remote` is a .NET MAUI app (`net10.0-android` only, minSdk 24, package `com.hotsonos.remote`). Tabs: Now, Play, Library, Rooms, Reports, More. It is not in `HotSonos.slnx` and not in the MSI, so the Windows build does not need the Android workload. Shared DTOs: `src/HotSonos.Remote.Protocol`. The speaker client is `HotSonos.Core` (already `net10.0`, no Windows APIs): SSDP, SOAP, transport, favorites, and the speaker Music Library. Volume and grouping for the phone live in `SonosDirect` in that same library. Release publish signs with `%USERPROFILE%\.android-keys\hotsonos\` when that upload key exists, and with the debug key otherwise (`HOTSONOS_UPLOAD_KEY_DIR` overrides the folder).
+
+**Standalone.** The phone can run with no PC. Link (Pair and More): **Auto** (default) tries the paired PC for 2 seconds and uses the speakers when it does not answer; **PC only** never falls back; **Speakers only** never calls the PC. The choice is rechecked when the app resumes. A line at the top of each screen says `PC · address`, `Speakers · room`, or `PC unreachable`.
+
+Standalone uses SSDP M-SEARCH for ZonePlayer (`239.255.255.250:1900`) while holding a WifiManager multicast lock (`CHANGE_WIFI_MULTICAST_STATE`), then the same SOAP services as the tray app: ZoneGroupTopology, AVTransport, RenderingControl, ContentDirectory. It does now playing (title, artist, album, art), play/pause/next/previous/seek, house and per-room volume and mute, group/ungroup and set coordinator, Sonos favorites and Sonos playlists, a short queue list, search/browse of the speaker's indexed Music Library (`A:`), play/queue from that, and a random sample from it. That sample is not HotSonos shuffle: no last-played history and no top-up.
+
+HotSonos shuffle, tags, Daily speaker presets, Reports, wake/nightly, and saved Spotify links stay labeled **needs the PC** in speaker mode. PC mode, the PIN, and the LAN-only bind are unchanged. MCP stays on `127.0.0.1:42341`.
 
 **Not on the phone.** Hotkey capture, Quick Tag / Quick Play overlays, tray double-click, flyout, and Start with Windows are PC shell. Master-root browse and library-path editing need the PC file dialog. Bass/treble EQ is not on this surface. Playlist-from-filter is not shipped on the desktop either.
 
@@ -639,7 +645,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | Tags | Read + write `HOTSONOS_TEMPO` / standard fields (step 3) |
 | Master dual-write | Optional (default on) when twin matched/linked under the **mapped** master root for that Sonos path |
 | MCP | Loopback debug/ops + control + library status/search/tags/master |
-| Phone remote | Full-control LAN client of the tray app (port 42342, 6-digit PIN, .NET MAUI). Not a second Sonos controller. MCP stays loopback. |
+| Phone remote | Full-control LAN client of the tray app (port 42342, 6-digit PIN, .NET MAUI) and a standalone speaker client (Auto / PC only / Speakers only). MCP stays loopback. |
 | Library management | Later; dry-run + confirm |
 
 ---
@@ -655,6 +661,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-07-15 | Added §0 agent handoff (progress checklist, files, next=scanner); pre-compression snapshot |
 | 2026-10-04 | §6.6 phone remote: LAN API on the tray app, Android client is a remote only |
 | 2026-11-18 | §6.6 phone is a full view: MAUI tabs, Phone pairing screen, restrictions removed. PIN and port 42342 kept |
+| 2026-11-18 | §6.6 phone also runs standalone on the speakers (Auto / PC only / Speakers only). PIN and port 42342 unchanged |
 | 2026-07-15 | Library plan step 2: TagLib scanner → SQLite cache; rescan UI; MCP status/search/get |
 | 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |

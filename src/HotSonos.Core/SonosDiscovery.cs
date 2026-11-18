@@ -253,9 +253,11 @@ public sealed class SonosDiscovery
     private static async Task<IReadOnlyList<string>> SearchAsync(TimeSpan timeout, CancellationToken ct)
     {
         var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var localAddresses = GetLocalIPv4Addresses();
+        var localAddresses = GetLocalIPv4Addresses().ToList();
+        // Phones sometimes hide interface addresses from NetworkInterface. Any still
+        // sends the M-SEARCH on the default route once a multicast lock is held.
         if (localAddresses.Count == 0)
-            return [];
+            localAddresses.Add(IPAddress.Any);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
@@ -283,9 +285,12 @@ public sealed class SonosDiscovery
             using var udp = new UdpClient(AddressFamily.InterNetwork);
             udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             udp.Client.Bind(new IPEndPoint(localAddress, 0));
-            // Pin multicast egress to this interface.
-            udp.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface,
-                localAddress.GetAddressBytes());
+            // Pin multicast egress to this interface. Any uses the default route.
+            if (!localAddress.Equals(IPAddress.Any))
+            {
+                udp.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface,
+                    localAddress.GetAddressBytes());
+            }
 
             // Fire three probes spaced over the window to tolerate UDP loss.
             var sender = Task.Run(async () =>

@@ -15,7 +15,7 @@
     <!-- Existing package. Kept so a sideloaded build replaces the previous remote. -->
     <ApplicationId>com.hotsonos.remote</ApplicationId>
     <ApplicationDisplayVersion>$(Version)</ApplicationDisplayVersion>
-    <ApplicationVersion>2</ApplicationVersion>
+    <ApplicationVersion>3</ApplicationVersion>
     <SupportedOSPlatformVersion>24.0</SupportedOSPlatformVersion>
 
     <!-- Debug APK keeps the assemblies inside so adb install works without Fast Deployment. -->
@@ -49,6 +49,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\HotSonos.Core\HotSonos.Core.csproj" />
     <ProjectReference Include="..\HotSonos.Remote.Protocol\HotSonos.Remote.Protocol.csproj" />
   </ItemGroup>
 
