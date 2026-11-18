@@ -60,6 +60,8 @@ Old master `1.0.0.60` / `1.0.0.61` (fail-fast regroup) were **not** brought onto
 
 **Heard outside the library (2026-10-11):** When a named track plays from Spotify, radio, or another non-library source, HotSonos keeps the title, artist, album, source, and time. Library tracks are not listed. One row per track; a repeat updates last-heard and the play count (first-heard stays). The list is on the Control tab under Now playing (newest first, Copy, remove). File: `%LocalAppData%\HotSonos\heard-outside-library.json` (500 tracks, 90 days). MCP: `get_heard_tracks`. This is separate from shuffle `play-history.json` and the debug `play-events.jsonl`. The first launch imports non-library `started` rows from `play-events.jsonl`.
 
+**Reports (activity log):** The Reports tab hosts a list of reports (add one by adding a UserControl and a `ReportCatalog` entry). Shipped reports: **Song Play History** (search a song; every play with zone, listened vs length, outcome, trigger; play count, skip count, last played), **Music** (chronological songs, date range, skipped-only, most played / most skipped / recently played), **Event Log** (Music vs Sonos/system). Store: `%LocalAppData%\HotSonos\activity.db` (SQLite). Shuffle exclusion is still only `play-history.json` — the activity log does not write that file and does not change who gets excluded. First open seeds sessions from `play-history.json` (one last-played row per track, outcome unknown) and from `play-events.jsonl` (started/skipped/stopped/previous). Retention: 180 days, 80,000 events, 40,000 sessions. Outcome heuristic: see `PlayOutcomeClassifier` (HotSonos Next is always a skip; another controller's early track change is a skip; ~85% or the last 15s of a longer track with no Next is completed).
+
 ### Snapshot (2026-07-28)
 
 | Item | State |
@@ -67,7 +69,7 @@ Old master `1.0.0.60` / `1.0.0.61` (fail-fast regroup) were **not** brought onto
 | **Git HEAD** | See git log |
 | **App version** | `1.0.0.70` |
 | **MCP endpoint** | `http://127.0.0.1:42341/mcp` (tray app must be running; enabled by default) |
-| **Main window** | Tabs: Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Debug |
+| **Main window** | Tabs: Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug |
 | **Play sources** | Control **From**: All / tag / genre · **Play** tab: folders, tags, genres · Control: Sonos favorites and **saved Spotify links** · **heard outside the library** (under Now playing) · Quick Play · slots 1–6 · MCP; genres optional (`ShowGenresInPlaySources`) |
 | **Next product slice** | **Library groups** (§5.1 / §6.2) — path modes; no group hotkeys |
 | **User paths** | Prefer **Discover from Sonos**; tag write needs SMB **write** on this PC |
@@ -230,9 +232,11 @@ Sonos speakers expose a local UPnP/SOAP server on **TCP 1400**, discoverable via
 | Project | Role |
 |---------|------|
 | `src/HotSonos.Core` | Platform-agnostic UPnP client (discovery, control, favorites, GENA) |
-| `src/HotSonos.App` | WPF tray app: hotkeys, settings, flyout, wake, nightly |
+| `src/HotSonos.Activity` | Play-session tracker, outcome heuristic, SQLite activity log for Reports |
+| `src/HotSonos.App` | WPF tray app: hotkeys, settings, flyout, wake, nightly, Reports |
 | `src/HotSonos.Harness` | Console harness against live speakers |
 | `tests/HotSonos.Core.Tests` | Offline unit tests (parsers / playability) |
+| `tests/HotSonos.Activity.Tests` | Play outcome, session tracker, activity database |
 
 ### Core
 - **`SonosDiscovery`** — SSDP per usable IPv4 interface; topology via `GetZoneGroupState`  
@@ -248,6 +252,8 @@ Sonos speakers expose a local UPnP/SOAP server on **TCP 1400**, discoverable via
 
 ### Config & packaging
 - Settings: `%LocalAppData%\HotSonos\settings.json`  
+- Play history (shuffle exclude only): `%LocalAppData%\HotSonos\play-history.json`  
+- Activity / Reports: `%LocalAppData%\HotSonos\activity.db`  
 - Logs: `%LocalAppData%\HotSonos\logs\hotsonos-yyyyMMdd.log` (7-day retention)  
 - Version: `Directory.Build.props` (CI/release tags override)  
 - MSI: per-user, self-contained win-x64, WiX  

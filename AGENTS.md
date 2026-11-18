@@ -36,6 +36,7 @@
 - **Tags**: flat catalog (auto key + label); files store `HOTSONOS_TAGS=key1;key2`; rename label without rewrite. Quick-tag Ctrl+Alt+T; Library chips + keys 1–9; context menu Toggle tag.
 - **Genre play**: standard file Genre metadata from SQLite cache; Play tab / Quick Play / favorite slots / MCP `list_genres` + `play_genre` (not a HotSonos catalog). Toggle `ShowGenresInPlaySources` (Shuffle tab) to hide genres from UI pickers.
 - **Control shuffle From**: `ControlShuffleSource` = `all` | `folder:{path}` | `tag:{key}` | `genre:{name}` for Start shuffle button; hotkey shuffle stays Daily mix.
-- **UI**: Main window tabs — Control / Play (folders, tags, genres) / Hotkeys / Shuffle / Library / Tags / Wake / Options / Topology / Logs / Debug. Sonos favorites and saved Spotify links stay on Control. Tray: Library…, Topology…, Logs…, Debug…
+- **UI**: Main window tabs — Control / Play (folders, tags, genres) / Hotkeys / Shuffle / Library / Tags / Wake / Options / Topology / Reports / Logs / Debug. Sonos favorites and saved Spotify links stay on Control. Tray: Library…, Topology…, Logs…, Reports…, Debug…  
+- **Reports**: `%LocalAppData%\HotSonos\activity.db` (SQLite). Song Play History, Music, and Event Log. Shuffle last-played stays in `play-history.json` and is not rewritten by the activity log. Add a report via `ReportCatalog` plus a UserControl.
 - Register in `C:\Project\_mcp\mcp-servers.json` as `hotsonos`, then run `sync-mcp.ps1`
 - Product roadmap / live checklist: `spec.md` §0 (next: playlist create from filter / step 6)

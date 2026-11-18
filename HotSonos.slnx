@@ -2,11 +2,13 @@
   <Folder Name="/src/">
     <Project Path="src/HotSonos.App/HotSonos.App.csproj" />
     <Project Path="src/HotSonos.Core/HotSonos.Core.csproj" />
+    <Project Path="src/HotSonos.Activity/HotSonos.Activity.csproj" />
     <Project Path="src/HotSonos.Harness/HotSonos.Harness.csproj" />
     <Project Path="src/HotSonos.Remote.Protocol/HotSonos.Remote.Protocol.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/HotSonos.Core.Tests/HotSonos.Core.Tests.csproj" />
+    <Project Path="tests/HotSonos.Activity.Tests/HotSonos.Activity.Tests.csproj" />
     <Project Path="tests/HotSonos.Remote.Protocol.Tests/HotSonos.Remote.Protocol.Tests.csproj" />
   </Folder>
 </Solution>

@@ -1,0 +1,69 @@
+<UserControl x:Class="HotSonos.App.Reports.MusicReportView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="130" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,8">
+            <TextBlock Text="Music" FontSize="15" FontWeight="SemiBold" Foreground="#FF1C2536" />
+            <TextBlock Text="Songs only — line-in and TV are left out. Times are local."
+                       FontSize="11" Foreground="#FF60707F" Margin="0,2,0,0" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="From" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <DatePicker x:Name="FromDate" Width="130" />
+            <TextBlock Text="To" VerticalAlignment="Center" Margin="12,0,6,0" />
+            <DatePicker x:Name="ToDate" Width="130" />
+            <CheckBox x:Name="SkippedOnly" Content="Skipped only" VerticalAlignment="Center" Margin="12,0,0,0" />
+            <Button Content="Apply" Height="28" Padding="14,0" Margin="12,0,0,0" Click="Apply_Click" />
+        </StackPanel>
+
+        <Grid Grid.Row="2" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <DockPanel Grid.Column="0">
+                <TextBlock DockPanel.Dock="Top" Text="Most played" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <ListBox x:Name="MostPlayedList" DisplayMemberPath="Label" BorderBrush="#FFD8DEE4" />
+            </DockPanel>
+            <DockPanel Grid.Column="2">
+                <TextBlock DockPanel.Dock="Top" Text="Most skipped" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <ListBox x:Name="MostSkippedList" DisplayMemberPath="Label" BorderBrush="#FFD8DEE4" />
+            </DockPanel>
+            <DockPanel Grid.Column="4">
+                <TextBlock DockPanel.Dock="Top" Text="Recently played" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <ListBox x:Name="RecentList" DisplayMemberPath="Label" BorderBrush="#FFD8DEE4" />
+            </DockPanel>
+        </Grid>
+
+        <DataGrid x:Name="PlayGrid" Grid.Row="3"
+                  AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                  AlternatingRowBackground="#FFF0F4F8" Background="White"
+                  BorderBrush="#FFD8DEE4" BorderThickness="1" FontSize="12">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="When" Binding="{Binding WhenLocal}" Width="130" />
+                <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*" />
+                <DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="*" />
+                <DataGridTextColumn Header="Outcome" Binding="{Binding OutcomeLabel}" Width="100" />
+                <DataGridTextColumn Header="Listened" Binding="{Binding Listened}" Width="80" />
+                <DataGridTextColumn Header="Length" Binding="{Binding Length}" Width="70" />
+                <DataGridTextColumn Header="Zone" Binding="{Binding Zone}" Width="110" />
+                <DataGridTextColumn Header="Trigger" Binding="{Binding TriggerLabel}" Width="160" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <TextBlock x:Name="StatusText" Grid.Row="4" Margin="0,6,0,0" FontSize="11" Foreground="#FF60707F" TextWrapping="Wrap" />
+    </Grid>
+</UserControl>

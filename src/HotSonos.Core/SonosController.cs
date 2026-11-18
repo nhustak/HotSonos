@@ -93,6 +93,8 @@ public sealed class SonosController
         var uri = SonosSoapClient.ReadValue(pos, "TrackURI");
         if (!string.IsNullOrWhiteSpace(uri))
             uri = uri.Trim();
+        var position = NowPlaying.ParseSonosTime(SonosSoapClient.ReadValue(pos, "RelTime"));
+        var duration = NowPlaying.ParseSonosTime(SonosSoapClient.ReadValue(pos, "TrackDuration"));
 
         int? currentTrack = null;
         if (int.TryParse(SonosSoapClient.ReadValue(pos, "Track"), out var t) && t > 0)
@@ -140,6 +142,8 @@ public sealed class SonosController
             Album = album,
             AlbumArtUri = art,
             CurrentTrack = currentTrack,
+            Position = position,
+            Duration = duration,
         };
     }
 

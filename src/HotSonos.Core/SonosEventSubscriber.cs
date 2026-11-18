@@ -290,6 +290,9 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
         if (int.TryParse(AttrVal(lastChange, "NumberOfTracks"), out var nt) && nt > 0)
             numberOfTracks = nt;
 
+        var position = NowPlaying.ParseSonosTime(AttrVal(lastChange, "RelTime"));
+        var duration = NowPlaying.ParseSonosTime(AttrVal(lastChange, "CurrentTrackDuration"));
+
         var metaEscaped = AttrVal(lastChange, "CurrentTrackMetaData");
         if (string.IsNullOrEmpty(metaEscaped))
         {
@@ -300,6 +303,8 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
                 TransportStatus = transportStatus,
                 CurrentTrack = currentTrack,
                 NumberOfTracks = numberOfTracks,
+                Position = position,
+                Duration = duration,
             };
         }
 
@@ -333,6 +338,8 @@ public sealed partial class SonosEventSubscriber : IAsyncDisposable
             CurrentTrack = currentTrack,
             NumberOfTracks = numberOfTracks,
             State = state,
+            Position = position,
+            Duration = duration,
         };
     }
 

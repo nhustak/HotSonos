@@ -16,6 +16,7 @@ public sealed class TrayController : IDisposable
         Action OpenLibrary,
         Action OpenTopology,
         Action OpenLogs,
+        Action OpenReports,
         Action Refresh,
         Action FreshStart,
         Action ShuffleLibrary,
@@ -62,6 +63,7 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add("Library…", null, (_, _) => _callbacks.OpenLibrary());
         _menu.Items.Add("Topology monitor…", null, (_, _) => _callbacks.OpenTopology());
         _menu.Items.Add("Logs…", null, (_, _) => _callbacks.OpenLogs());
+        _menu.Items.Add("Reports…", null, (_, _) => _callbacks.OpenReports());
         _menu.Items.Add("Debug…", null, (_, _) => _callbacks.OpenMcpDebug());
         _menu.Items.Add("Refresh devices", null, (_, _) => _callbacks.Refresh());
         _menu.Items.Add(new ToolStripSeparator());

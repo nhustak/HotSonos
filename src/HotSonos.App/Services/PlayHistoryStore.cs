@@ -2,6 +2,8 @@ using System.IO;
 using System.Text.Json;
 using HotSonos.App.Infrastructure;
 
+using HotSonos.Activity;
+
 namespace HotSonos.App.Services;
 
 /// <summary>
@@ -167,19 +169,11 @@ public sealed class PlayHistoryStore
         });
     }
 
-    public static string NormalizeKey(string? uri)
-    {
-        if (string.IsNullOrWhiteSpace(uri)) return "";
-        var s = uri.Trim();
-        try { s = Uri.UnescapeDataString(s); } catch { /* keep */ }
-        s = s.Replace('\\', '/');
-        const string prefix = "x-file-cifs://";
-        if (s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            s = s[prefix.Length..];
-        var q = s.IndexOf('?', StringComparison.Ordinal);
-        if (q >= 0) s = s[..q];
-        return s.Trim().ToLowerInvariant();
-    }
+    /// <summary>
+    /// Normalized library key. Same function as <see cref="TrackKeys.Normalize"/> —
+    /// shuffle exclusion and the activity log must agree on identity.
+    /// </summary>
+    public static string NormalizeKey(string? uri) => TrackKeys.Normalize(uri);
 
     private void Load()
     {

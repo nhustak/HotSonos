@@ -1,0 +1,59 @@
+<UserControl x:Class="HotSonos.App.Reports.SongPlayHistoryReport"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="2*" MinHeight="120" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="3*" MinHeight="140" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,8">
+            <TextBlock Text="Song Play History" FontSize="15" FontWeight="SemiBold" Foreground="#FF1C2536" />
+            <TextBlock x:Name="HintText" TextWrapping="Wrap" FontSize="11" Foreground="#FF60707F" Margin="0,2,0,8" />
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Search" Height="28" Padding="14,0" Margin="8,0,0,0"
+                        Click="Search_Click" />
+                <TextBox x:Name="SearchBox" Height="28" VerticalContentAlignment="Center" Padding="6,0"
+                         KeyDown="SearchBox_KeyDown" />
+            </DockPanel>
+        </StackPanel>
+
+        <DataGrid x:Name="SongGrid" Grid.Row="1"
+                  AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                  AlternatingRowBackground="#FFF0F4F8" Background="White"
+                  BorderBrush="#FFD8DEE4" BorderThickness="1" FontSize="12"
+                  SelectionChanged="SongGrid_SelectionChanged">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*" />
+                <DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="*" />
+                <DataGridTextColumn Header="Plays" Binding="{Binding PlayCount}" Width="70" />
+                <DataGridTextColumn Header="Skips" Binding="{Binding SkipCount}" Width="70" />
+                <DataGridTextColumn Header="Last played" Binding="{Binding LastPlayedLocal}" Width="130" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <TextBlock x:Name="PlaysHeader" Grid.Row="2" Margin="0,8,0,4" FontWeight="SemiBold"
+                   Text="Plays" />
+
+        <DataGrid x:Name="PlayGrid" Grid.Row="3"
+                  AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                  AlternatingRowBackground="#FFF0F4F8" Background="White"
+                  BorderBrush="#FFD8DEE4" BorderThickness="1" FontSize="12">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="When" Binding="{Binding WhenLocal}" Width="130" />
+                <DataGridTextColumn Header="Zone" Binding="{Binding Zone}" Width="120" />
+                <DataGridTextColumn Header="Listened" Binding="{Binding Listened}" Width="80" />
+                <DataGridTextColumn Header="Length" Binding="{Binding Length}" Width="80" />
+                <DataGridTextColumn Header="Outcome" Binding="{Binding OutcomeLabel}" Width="100" />
+                <DataGridTextColumn Header="Trigger" Binding="{Binding TriggerLabel}" Width="*" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <TextBlock x:Name="StatusText" Grid.Row="4" Margin="0,6,0,0" FontSize="11" Foreground="#FF60707F" />
+    </Grid>
+</UserControl>
