@@ -1094,6 +1094,138 @@ public sealed class SonosController
             ("CurrentURIMetaData", ""));
     }
 
+    /// <summary>Seek the playhead. Sonos wants REL_TIME as H:MM:SS.</summary>
+    public Task SeekToTimeAsync(TimeSpan position, CancellationToken ct = default) =>
+        InvokeAvTransport("Seek", ct,
+            ("InstanceID", "0"),
+            ("Unit", "REL_TIME"),
+            ("Target", SonosLibraryQuery.FormatRelTime(position)));
+
+    /// <summary>First page of the coordinator queue (Q:0).</summary>
+    public async Task<IReadOnlyList<SonosQueueTrack>> GetQueueAsync(int limit = 40, CancellationToken ct = default)
+    {
+        limit = Math.Clamp(limit, 1, 100);
+        var response = await _soap.InvokeAsync(
+            CoordinatorIp, SonosService.ContentDirectory, "Browse",
+            [
+                new("ObjectID", "Q:0"),
+                new("BrowseFlag", "BrowseDirectChildren"),
+                new("Filter", "*"),
+                new("StartingIndex", "0"),
+                new("RequestedCount", limit.ToString()),
+                new("SortCriteria", ""),
+            ], ct).ConfigureAwait(false);
+        var didl = SonosSoapClient.ReadValue(response, "Result");
+        return string.IsNullOrWhiteSpace(didl) ? [] : ParseQueue(didl);
+    }
+
+    /// <summary>
+    /// Search the speaker's indexed Music Library, or return one browse window of A:TRACKS
+    /// when <paramref name="query"/> is blank.
+    /// </summary>
+    public async Task<IReadOnlyList<SonosLibraryTrack>> SearchLibraryAsync(
+        string? query, int start, int limit, CancellationToken ct = default)
+    {
+        limit = Math.Clamp(limit, 1, 100);
+        start = Math.Max(0, start);
+        var text = query?.Trim() ?? "";
+        if (text.Length == 0)
+        {
+            var (tracks, _) = await ReadTrackWindowAsync(start, limit, ct).ConfigureAwait(false);
+            return tracks;
+        }
+
+        try
+        {
+            var response = await _soap.InvokeAsync(
+                CoordinatorIp, SonosService.ContentDirectory, "Search",
+                [
+                    new("ContainerID", "A:TRACKS"),
+                    new("SearchCriteria", SonosLibraryQuery.Criteria(text)),
+                    new("Filter", "*"),
+                    new("StartingIndex", start.ToString()),
+                    new("RequestedCount", limit.ToString()),
+                    new("SortCriteria", ""),
+                ], ct).ConfigureAwait(false);
+            var didl = SonosSoapClient.ReadValue(response, "Result");
+            return string.IsNullOrWhiteSpace(didl) ? [] : ParseLibraryTracks(didl);
+        }
+        catch (SonosSoapException) when (start == 0)
+        {
+            var (tracks, _) = await ReadTrackWindowAsync(0, 200, ct).ConfigureAwait(false);
+            return tracks.Where(t =>
+                    t.Title.Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || t.Artist.Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || t.Album.Contains(text, StringComparison.OrdinalIgnoreCase))
+                .Take(limit)
+                .ToList();
+        }
+    }
+
+    /// <summary>
+    /// Play a random sample from the speaker's Music Library. This is not HotSonos shuffle:
+    /// there is no last-played history and no top-up. A library of a few hundred tracks is
+    /// read whole; a larger one is sampled from a handful of browse windows.
+    /// </summary>
+    public async Task PlayRandomLibrarySampleAsync(int count = 40, CancellationToken ct = default)
+    {
+        count = Math.Clamp(count, 1, 80);
+        var (_, total) = await ReadTrackWindowAsync(0, 1, ct).ConfigureAwait(false);
+        if (total <= 0)
+            throw new InvalidOperationException("No tracks in the speaker Music Library.");
+
+        var pool = new List<SonosLibraryTrack>();
+        if (total <= 400)
+        {
+            var start = 0;
+            while (start < total)
+            {
+                var (page, _) = await ReadTrackWindowAsync(start, 200, ct).ConfigureAwait(false);
+                if (page.Count == 0)
+                    break;
+                pool.AddRange(page);
+                start += page.Count;
+            }
+        }
+        else
+        {
+            foreach (var start in SonosLibraryQuery.SampleStarts(total, 25, 6, Random.Shared))
+            {
+                var (page, _) = await ReadTrackWindowAsync(start, 25, ct).ConfigureAwait(false);
+                pool.AddRange(page);
+            }
+        }
+
+        if (pool.Count == 0)
+            throw new InvalidOperationException("No tracks in the speaker Music Library.");
+
+        Shuffle(pool);
+        var take = pool
+            .Take(count)
+            .Select(t => (t.Uri, (string?)t.Title, (string?)t.Artist))
+            .ToList();
+        await PlayLibraryUrisAsync(take, ct).ConfigureAwait(false);
+    }
+
+    private async Task<(IReadOnlyList<SonosLibraryTrack> Tracks, int Total)> ReadTrackWindowAsync(
+        int start, int count, CancellationToken ct)
+    {
+        var response = await _soap.InvokeAsync(
+            CoordinatorIp, SonosService.ContentDirectory, "Browse",
+            [
+                new("ObjectID", "A:TRACKS"),
+                new("BrowseFlag", "BrowseDirectChildren"),
+                new("Filter", "*"),
+                new("StartingIndex", Math.Max(0, start).ToString()),
+                new("RequestedCount", Math.Clamp(count, 1, 200).ToString()),
+                new("SortCriteria", ""),
+            ], ct).ConfigureAwait(false);
+        var total = int.TryParse(SonosSoapClient.ReadValue(response, "TotalMatches"), out var n) ? n : 0;
+        var didl = SonosSoapClient.ReadValue(response, "Result");
+        var tracks = string.IsNullOrWhiteSpace(didl) ? [] : ParseLibraryTracks(didl);
+        return (tracks, total);
+    }
+
     // ---- Internals ---------------------------------------------------------
 
     private Task InvokeAvTransport(string action, CancellationToken ct, params (string Name, string Value)[] args) =>
@@ -1131,6 +1263,42 @@ public sealed class SonosController
         }
 
         return favorites;
+    }
+
+    internal static IReadOnlyList<SonosLibraryTrack> ParseLibraryTracks(string didl)
+    {
+        var doc = XDocument.Parse(didl);
+        var tracks = new List<SonosLibraryTrack>();
+        foreach (var item in doc.Descendants().Where(e => e.Name.LocalName == "item"))
+        {
+            var uri = ChildValue(item, "res");
+            if (string.IsNullOrWhiteSpace(uri))
+                continue;
+            tracks.Add(new SonosLibraryTrack(
+                ChildValue(item, "title") ?? "Track",
+                ChildValue(item, "creator") ?? "",
+                ChildValue(item, "album") ?? "",
+                uri));
+        }
+
+        return tracks;
+    }
+
+    internal static IReadOnlyList<SonosQueueTrack> ParseQueue(string didl)
+    {
+        var doc = XDocument.Parse(didl);
+        var tracks = new List<SonosQueueTrack>();
+        var number = 1;
+        foreach (var item in doc.Descendants().Where(e => e.Name.LocalName == "item"))
+        {
+            tracks.Add(new SonosQueueTrack(
+                number,
+                ChildValue(item, "title") ?? "Track",
+                ChildValue(item, "creator") ?? ""));
+            number++;
+        }
+
+        return tracks;
     }
 
     private static string? ChildValue(XElement parent, string localName) =>

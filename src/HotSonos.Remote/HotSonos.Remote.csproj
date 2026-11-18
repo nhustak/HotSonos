@@ -1,21 +1,55 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <!-- HotSonos phone. Android only; no iOS, Mac Catalyst, or Windows targets. -->
     <TargetFramework>net10.0-android</TargetFramework>
     <OutputType>Exe</OutputType>
-    <SupportedOSPlatformVersion>26</SupportedOSPlatformVersion>
-    <!-- Debug build is sideloaded. Keep the assemblies in the APK. -->
-    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>HotSonos.Remote</RootNamespace>
-    <ApplicationId>com.hotsonos.remote</ApplicationId>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <MauiXamlInflator>SourceGen</MauiXamlInflator>
+
     <ApplicationTitle>HotSonos</ApplicationTitle>
-    <ApplicationVersion>1</ApplicationVersion>
-    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <!-- Existing package. Kept so a sideloaded build replaces the previous remote. -->
+    <ApplicationId>com.hotsonos.remote</ApplicationId>
+    <ApplicationDisplayVersion>$(Version)</ApplicationDisplayVersion>
+    <ApplicationVersion>3</ApplicationVersion>
+    <SupportedOSPlatformVersion>24.0</SupportedOSPlatformVersion>
+
+    <!-- Debug APK keeps the assemblies inside so adb install works without Fast Deployment. -->
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+  </PropertyGroup>
+
+  <!-- Play upload signing (Release only). Keystore lives outside the repo,
+       by default in %USERPROFILE%\.android-keys\hotsonos (override with HOTSONOS_UPLOAD_KEY_DIR).
+       When the keystore is missing, Release falls back to the Android debug key. -->
+  <PropertyGroup>
+    <HotSonosUploadKeyDir Condition="'$(HOTSONOS_UPLOAD_KEY_DIR)' != ''">$(HOTSONOS_UPLOAD_KEY_DIR)</HotSonosUploadKeyDir>
+    <HotSonosUploadKeyDir Condition="'$(HotSonosUploadKeyDir)' == ''">$(USERPROFILE)\.android-keys\hotsonos</HotSonosUploadKeyDir>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' And Exists('$(HotSonosUploadKeyDir)\hotsonos-upload.keystore') And Exists('$(HotSonosUploadKeyDir)\hotsonos-upload.password')">
+    <AndroidKeyStore>true</AndroidKeyStore>
+    <AndroidSigningKeyStore>$(HotSonosUploadKeyDir)\hotsonos-upload.keystore</AndroidSigningKeyStore>
+    <AndroidSigningKeyAlias>hotsonos-upload</AndroidSigningKeyAlias>
+    <AndroidSigningStorePass>file:$(HotSonosUploadKeyDir)\hotsonos-upload.password</AndroidSigningStorePass>
+    <AndroidSigningKeyPass>file:$(HotSonosUploadKeyDir)\hotsonos-upload.password</AndroidSigningKeyPass>
   </PropertyGroup>
 
   <ItemGroup>
+    <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" ForegroundScale="0.5" Color="#1E232C" />
+    <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#1E232C" BaseSize="192,192" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HotSonos.Core\HotSonos.Core.csproj" />
     <ProjectReference Include="..\HotSonos.Remote.Protocol\HotSonos.Remote.Protocol.csproj" />
   </ItemGroup>
 

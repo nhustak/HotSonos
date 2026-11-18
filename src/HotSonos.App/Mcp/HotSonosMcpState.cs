@@ -32,6 +32,12 @@ public sealed class HotSonosMcpState
     /// <summary>Persist settings after catalog edits from MCP (tag create/rename).</summary>
     public Action? PersistSettings { get; set; }
 
+    /// <summary>
+    /// Reschedule wake/nightly and refresh the open window after the phone changes settings.
+    /// Runs on the UI thread.
+    /// </summary>
+    public Action? AfterSettingsChanged { get; set; }
+
     /// <summary>Play a library track on top of the current queue (insert next + play). Does not wipe.</summary>
     public Func<string, string?, string?, CancellationToken, Task<string>>? PlayLibraryTrackAsync { get; set; }
 

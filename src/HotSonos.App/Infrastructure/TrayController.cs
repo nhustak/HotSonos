@@ -36,6 +36,7 @@ public sealed class TrayController : IDisposable
         Action CopyMcpEndpoint,
         Action CopyRemoteEndpoint,
         Action DoubleClick,
+        Action OpenPhone,
         Action Exit);
 
     private readonly NotifyIcon _notifyIcon;
@@ -60,6 +61,7 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add(new ToolStripMenuItem(versionLabel) { Enabled = false });
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Open HotSonos", null, (_, _) => _callbacks.OpenSettings());
+        _menu.Items.Add("Phone…", null, (_, _) => _callbacks.OpenPhone());
         _menu.Items.Add("Library…", null, (_, _) => _callbacks.OpenLibrary());
         _menu.Items.Add("Topology monitor…", null, (_, _) => _callbacks.OpenTopology());
         _menu.Items.Add("Logs…", null, (_, _) => _callbacks.OpenLogs());

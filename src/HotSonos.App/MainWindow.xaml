@@ -69,11 +69,21 @@
 
     <Grid Margin="0">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TabControl x:Name="MainTabs" Grid.Row="0"
+        <Border Grid.Row="0" Background="#FFEEF2F7" BorderBrush="#FFD8DEE4" BorderThickness="0,0,0,1" Padding="12,8">
+            <DockPanel LastChildFill="False">
+                <Button DockPanel.Dock="Right" Content="Phone" Click="PhoneButton_Click"
+                        Padding="16,4" Background="#FF1C8E54" Foreground="White" FontWeight="SemiBold"
+                        BorderThickness="0" ToolTip="Show the address and PIN for the Android app" />
+                <TextBlock Text="Android remote" VerticalAlignment="Center" Foreground="#FF60707F" />
+            </DockPanel>
+        </Border>
+
+        <TabControl x:Name="MainTabs" Grid.Row="1"
                     TabStripPlacement="Left"
                     Background="Transparent"
                     BorderThickness="0"
@@ -1504,7 +1514,7 @@
         </TabControl>
 
         <!-- Footer -->
-        <Border Grid.Row="1" Background="#FFEEF2F7" BorderBrush="#FFD8DEE4" BorderThickness="0,1,0,0" Padding="14,10">
+        <Border Grid.Row="2" Background="#FFEEF2F7" BorderBrush="#FFD8DEE4" BorderThickness="0,1,0,0" Padding="14,10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />

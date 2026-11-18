@@ -110,6 +110,137 @@ sealed class RemoteClient : IDisposable
     public Task<RemoteCall<RemoteCommandResponse>> QueueTrackAsync(string path, string? title, string? artist, CancellationToken ct) =>
         PostAsync("api/tracks/queue", new RemoteTrackBody { Path = path, Title = title, Artist = artist }, RemoteJsonContext.Default.RemoteTrackBody, Slow, ct);
 
+    public Task<RemoteCall<RemoteCommandResponse>> ReplaceTrackAsync(string path, string? title, string? artist, CancellationToken ct) =>
+        PostAsync("api/tracks/replace", new RemoteTrackBody { Path = path, Title = title, Artist = artist }, RemoteJsonContext.Default.RemoteTrackBody, Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> FreshStartAsync(CancellationToken ct) =>
+        EmptyAsync("api/transport/fresh-start", Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> ResumeShuffleAsync(CancellationToken ct) =>
+        EmptyAsync("api/shuffle/resume", Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> StartShuffleAsync(CancellationToken ct) =>
+        EmptyAsync("api/shuffle/start", Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> SetShuffleSourceAsync(string token, CancellationToken ct) =>
+        PostAsync("api/shuffle/source", new RemoteNameBody { Name = token }, RemoteJsonContext.Default.RemoteNameBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteVolumesResponse>> GetVolumesAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/volumes", null, Fast, RemoteJsonContext.Default.RemoteVolumesResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> SetRoomVolumeAsync(string? room, string? ip, int? percent, bool? muted, CancellationToken ct) =>
+        PostAsync("api/volumes/room", new RemoteRoomVolumeBody { Room = room, Ip = ip, Percent = percent, Muted = muted }, RemoteJsonContext.Default.RemoteRoomVolumeBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteFavoritesResponse>> GetFavoritesAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/favorites", null, Fast, RemoteJsonContext.Default.RemoteFavoritesResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> PlayFavoriteAsync(string name, CancellationToken ct) =>
+        PostAsync("api/favorites/play", new RemoteNameBody { Name = name }, RemoteJsonContext.Default.RemoteNameBody, Slow, ct);
+
+    public Task<RemoteCall<RemoteSpotifyListResponse>> GetSpotifyAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/spotify", null, Fast, RemoteJsonContext.Default.RemoteSpotifyListResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> PlaySpotifyAsync(string reference, CancellationToken ct) =>
+        PostAsync("api/spotify/play", new RemoteSpotifyBody { Reference = reference }, RemoteJsonContext.Default.RemoteSpotifyBody, Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> SaveSpotifyAsync(string? name, string reference, CancellationToken ct) =>
+        PostAsync("api/spotify/save", new RemoteSpotifyBody { Name = name, Reference = reference }, RemoteJsonContext.Default.RemoteSpotifyBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> RemoveSpotifyAsync(string reference, CancellationToken ct) =>
+        PostAsync("api/spotify/remove", new RemoteSpotifyBody { Reference = reference }, RemoteJsonContext.Default.RemoteSpotifyBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteTopologyResponse>> GetTopologyAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/topology", null, Fast, RemoteJsonContext.Default.RemoteTopologyResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> RefreshTopologyAsync(CancellationToken ct) =>
+        EmptyAsync("api/topology/refresh", Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> RegroupAsync(string? room, CancellationToken ct) =>
+        PostAsync("api/topology/regroup", new RemoteRoomBody { Room = room }, RemoteJsonContext.Default.RemoteRoomBody, Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> RebootAsync(string? room, string? ip, bool all, CancellationToken ct) =>
+        PostAsync("api/topology/reboot", new RemoteRebootBody { Room = room, Ip = ip, All = all }, RemoteJsonContext.Default.RemoteRebootBody, Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> KeepGroupedAsync(bool enabled, CancellationToken ct) =>
+        PostAsync("api/house/keep-grouped", new RemoteFlagBody { Enabled = enabled }, RemoteJsonContext.Default.RemoteFlagBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteDailyGroupsResponse>> GetDailyGroupsAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/daily-groups", null, Fast, RemoteJsonContext.Default.RemoteDailyGroupsResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> SelectDailyAsync(RemoteDailySelectBody body, CancellationToken ct) =>
+        PostAsync("api/daily-groups/select", body, RemoteJsonContext.Default.RemoteDailySelectBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> SaveDailyAsync(string name, IReadOnlyList<string> rooms, CancellationToken ct) =>
+        PostAsync("api/daily-groups", new RemoteDailySaveBody { Name = name, Rooms = rooms.ToList() }, RemoteJsonContext.Default.RemoteDailySaveBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> RemoveDailyAsync(string name, CancellationToken ct) =>
+        PostAsync("api/daily-groups/remove", new RemoteNameBody { Name = name }, RemoteJsonContext.Default.RemoteNameBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteLibraryStatusResponse>> GetLibraryStatusAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/library/status", null, Fast, RemoteJsonContext.Default.RemoteLibraryStatusResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> RescanAsync(bool forceAll, CancellationToken ct) =>
+        PostAsync("api/library/rescan", new RemoteRescanBody { ForceAll = forceAll }, RemoteJsonContext.Default.RemoteRescanBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteTagsResponse>> GetTagsAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/tags", null, Fast, RemoteJsonContext.Default.RemoteTagsResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> CreateTagAsync(string label, CancellationToken ct) =>
+        PostAsync("api/tags", new RemoteTagCreateBody { Label = label }, RemoteJsonContext.Default.RemoteTagCreateBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> RenameTagAsync(string key, string label, CancellationToken ct) =>
+        PostAsync("api/tags/rename", new RemoteTagRenameBody { Key = key, Label = label }, RemoteJsonContext.Default.RemoteTagRenameBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> DeleteTagAsync(string key, CancellationToken ct) =>
+        PostAsync("api/tags/delete", new RemoteKeyBody { Key = key }, RemoteJsonContext.Default.RemoteKeyBody, Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> ToggleTagAsync(string path, string key, CancellationToken ct) =>
+        PostAsync("api/tracks/tags", new RemoteTagToggleBody { Path = path, Key = key }, RemoteJsonContext.Default.RemoteTagToggleBody, Slow, ct);
+
+    public Task<RemoteCall<RemoteSongsResponse>> GetSongsAsync(string? query, int limit, int offset, CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/reports/songs?q=" + Uri.EscapeDataString(query ?? "") + "&limit=" + limit + "&offset=" + offset, null, Fast, RemoteJsonContext.Default.RemoteSongsResponse, ct);
+
+    public Task<RemoteCall<RemotePlaysResponse>> GetPlaysAsync(string trackKey, int limit, int offset, CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/reports/plays?trackKey=" + Uri.EscapeDataString(trackKey) + "&limit=" + limit + "&offset=" + offset, null, Fast, RemoteJsonContext.Default.RemotePlaysResponse, ct);
+
+    public Task<RemoteCall<RemoteMusicResponse>> GetMusicAsync(string? from, string? to, bool skippedOnly, int limit, int offset, CancellationToken ct)
+    {
+        var path = "api/reports/music?limit=" + limit + "&offset=" + offset + "&skippedOnly=" + (skippedOnly ? "true" : "false");
+        if (!string.IsNullOrWhiteSpace(from))
+            path += "&from=" + Uri.EscapeDataString(from);
+        if (!string.IsNullOrWhiteSpace(to))
+            path += "&to=" + Uri.EscapeDataString(to);
+        return SendAsync(HttpMethod.Get, path, null, Fast, RemoteJsonContext.Default.RemoteMusicResponse, ct);
+    }
+
+    public Task<RemoteCall<RemoteEventsResponse>> GetEventsAsync(string? category, string? kind, int limit, int offset, CancellationToken ct)
+    {
+        var path = "api/reports/events?limit=" + limit + "&offset=" + offset;
+        if (!string.IsNullOrWhiteSpace(category))
+            path += "&category=" + Uri.EscapeDataString(category);
+        if (!string.IsNullOrWhiteSpace(kind))
+            path += "&kind=" + Uri.EscapeDataString(kind);
+        return SendAsync(HttpMethod.Get, path, null, Fast, RemoteJsonContext.Default.RemoteEventsResponse, ct);
+    }
+
+    public Task<RemoteCall<RemoteHeardResponse>> GetHeardAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/heard", null, Fast, RemoteJsonContext.Default.RemoteHeardResponse, ct);
+
+    public Task<RemoteCall<RemoteLogsResponse>> GetLogsAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/logs?max=60", null, Fast, RemoteJsonContext.Default.RemoteLogsResponse, ct);
+
+    public Task<RemoteCall<RemoteSettingsResponse>> GetSettingsAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/settings", null, Fast, RemoteJsonContext.Default.RemoteSettingsResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> SaveSettingsAsync(RemoteSettingsBody body, CancellationToken ct) =>
+        PostAsync("api/settings", body, RemoteJsonContext.Default.RemoteSettingsBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> WakeNowAsync(CancellationToken ct) =>
+        EmptyAsync("api/wake/now", Slow, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> FailureDiagnosticAsync(CancellationToken ct) =>
+        EmptyAsync("api/diagnostics/failure", Slow, ct);
+
     public async Task<RemoteCall<byte[]>> GetArtAsync(CancellationToken ct)
     {
         try

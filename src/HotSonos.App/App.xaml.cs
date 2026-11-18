@@ -354,6 +354,26 @@ public partial class App : System.Windows.Application
                 try { _store.Save(_settings); }
                 catch (Exception ex) { AppLog.Warn("Settings save from MCP failed", ex); }
             },
+            AfterSettingsChanged = () =>
+            {
+                var app = System.Windows.Application.Current;
+                if (app is null)
+                    return;
+                app.Dispatcher.BeginInvoke(() =>
+                {
+                    try
+                    {
+                        ScheduleNightlyReset();
+                        _wake?.Schedule();
+                        _sonos.ApplyGenaEnabled(_settings.GenaEnabled);
+                        _mainWindow?.RefreshFromSharedSettings();
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Warn("Phone settings refresh failed", ex);
+                    }
+                });
+            },
             PlayLibraryTrackAsync = McpPlayLibraryTrackAsync,
             QueueNowAsync = McpQueueNowAsync,
             ReplaceQueueWithTrackAsync = McpReplaceQueueWithTrackAsync,
@@ -399,6 +419,11 @@ public partial class App : System.Windows.Application
                 CopyMcpEndpoint: OnCopyMcpEndpoint,
                 CopyRemoteEndpoint: OnCopyRemoteEndpoint,
                 DoubleClick: OnTrayDoubleClick,
+                OpenPhone: () =>
+                {
+                    ShowMainWindow();
+                    _mainWindow?.ShowPhonePairing();
+                },
                 Exit: ExitApplication));
 
         var failures = ApplyBindings();

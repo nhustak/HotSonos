@@ -29,7 +29,7 @@ public sealed class RemoteHooks
 /// LAN HTTP API for the phone remote. Same process and same action gate as the tray.
 /// MCP stays on loopback. Faults here are logged and answered; they do not stop the tray.
 /// </summary>
-public sealed class HotSonosRemoteHost : IAsyncDisposable
+public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 {
     private static readonly HttpClient ArtHttp = new() { Timeout = TimeSpan.FromSeconds(5) };
 
@@ -406,14 +406,19 @@ public sealed class HotSonosRemoteHost : IAsyncDisposable
                     daily.Any(d => string.Equals(d.Trim().TrimEnd('\\', '/'), trimmed, StringComparison.OrdinalIgnoreCase)));
             }).ToList();
 
+            var source = (settings.ControlShuffleSource ?? "all").Trim();
             return Results.Json(new RemoteSourcesResponse(
                 true,
                 new RemoteDailyDto("Daily"),
                 slots,
                 tags,
                 genres,
-                folders), RemoteApi.Json);
+                folders,
+                source,
+                DescribeShuffleSource(settings, source)), RemoteApi.Json);
         });
+
+        MapMoreRoutes(app, state, hooks);
 
         app.MapGet("/api/library/search", (HttpContext ctx) =>
         {
