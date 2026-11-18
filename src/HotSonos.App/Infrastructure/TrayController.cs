@@ -67,7 +67,7 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add("Debug…", null, (_, _) => _callbacks.OpenMcpDebug());
         _menu.Items.Add("Refresh devices", null, (_, _) => _callbacks.Refresh());
         _menu.Items.Add(new ToolStripSeparator());
-        _menu.Items.Add("🔄 Restart fresh (re-sync all + shuffle)", null, (_, _) => _callbacks.FreshStart());
+        _menu.Items.Add("🔄 Restart fresh (Daily group + shuffle)", null, (_, _) => _callbacks.FreshStart());
         _menu.Items.Add("🔀 Shuffle Music Library", null, (_, _) => _callbacks.ShuffleLibrary());
         _menu.Items.Add("Play / Pause", null, (_, _) => _callbacks.PlayPause());
         _menu.Items.Add("Next", null, (_, _) => _callbacks.Next());

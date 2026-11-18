@@ -127,14 +127,18 @@
                                     <!-- Daily house group: which speakers join on shuffle / Fresh Start / house regroup -->
                                     <TextBlock Text="Speakers in Daily group" FontWeight="SemiBold" Margin="0,12,0,2"
                                                Foreground="#FF1C2536" />
-                                    <TextBlock Text="All = whole house. Uncheck All to pick rooms (e.g. leave upstairs off while guests sleep)."
+                                    <TextBlock Text="All = whole house. A saved group on this line uses just those rooms. Uncheck All to pick rooms by hand."
                                                Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4" />
-                                    <CheckBox x:Name="ControlDailyAllSpeakersCheck"
-                                              Content="All speakers"
-                                              FontWeight="SemiBold"
-                                              Margin="0,2,0,2"
-                                              Checked="ControlDailyAllSpeakersCheck_Changed"
-                                              Unchecked="ControlDailyAllSpeakersCheck_Changed" />
+                                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,2">
+                                        <CheckBox x:Name="ControlDailyAllSpeakersCheck"
+                                                  Content="All speakers"
+                                                  FontWeight="SemiBold"
+                                                  Margin="0,2,16,2"
+                                                  VerticalAlignment="Center"
+                                                  Checked="ControlDailyAllSpeakersCheck_Changed"
+                                                  Unchecked="ControlDailyAllSpeakersCheck_Changed" />
+                                        <WrapPanel x:Name="ControlDailyPresetHost" Orientation="Horizontal" VerticalAlignment="Center" />
+                                    </WrapPanel>
                                     <Expander x:Name="ControlDailySpeakersExpander"
                                               Header="Choose speakers…"
                                               Margin="0,2,0,0"
@@ -152,6 +156,12 @@
                                                             Click="ControlDailySpeakersCheckAll_Click" />
                                                     <Button Content="Uncheck all" Height="26" Padding="10,0"
                                                             Click="ControlDailySpeakersUncheckAll_Click" />
+                                                    <TextBox x:Name="ControlDailyPresetNameBox" Width="120" Height="26"
+                                                             Margin="12,0,6,0" VerticalContentAlignment="Center"
+                                                             ToolTip="Name for the rooms that are checked" />
+                                                    <Button Content="Save group" Height="26" Padding="10,0"
+                                                            Click="ControlDailyPresetSave_Click"
+                                                            ToolTip="Save the checked rooms. The name shows up next to All speakers." />
                                                 </StackPanel>
                                                 <StackPanel x:Name="ControlDailySpeakersPanel" />
                                             </StackPanel>
@@ -160,7 +170,8 @@
 
                                     <Separator Margin="0,12,0,10" Background="#FF2ECC71" Opacity="0.4" />
                                     <TextBlock Text="🔄 Restart fresh" FontSize="15" FontWeight="SemiBold" Foreground="#FF1C2536" />
-                                    <TextBlock Text="Re-discover, regroup all speakers, and start a new shuffle."
+                                    <TextBlock x:Name="ControlFreshStartHint"
+                                               Text="Re-discover, regroup the selected Daily group, and start a new shuffle."
                                                Foreground="#FF60707F" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap" />
                                     <StackPanel Orientation="Horizontal">
                                         <Button x:Name="ControlFreshStartButton"

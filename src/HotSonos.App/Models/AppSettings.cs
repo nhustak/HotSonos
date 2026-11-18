@@ -69,6 +69,14 @@ public sealed class FavoriteSlot
     }
 }
 
+/// <summary>Named set of rooms used as the Daily group when its checkbox is on.</summary>
+public sealed class DailySpeakerPreset
+{
+    public string Name { get; set; } = "";
+
+    public List<string> Rooms { get; set; } = [];
+}
+
 /// <summary>A Spotify link the user pasted and named. Playback uses the account already on the speaker.</summary>
 public sealed class SavedSpotifyLink
 {
@@ -112,6 +120,12 @@ public sealed class AppSettings
     /// Empty while not-all is treated as all (safe fallback). Prefer keeping the preferred coordinator checked.
     /// </summary>
     public List<string> DailyGroupRooms { get; set; } = [];
+
+    /// <summary>
+    /// Named speaker sets shown as checkboxes on the same line as All speakers.
+    /// Checking one turns off All speakers and uses that set as the Daily group.
+    /// </summary>
+    public List<DailySpeakerPreset> DailySpeakerPresets { get; set; } = [];
 
     /// <summary>
     /// Rooms allowed in the Daily group, or null when every speaker should join.
@@ -610,6 +624,24 @@ public sealed class AppSettings
         // Not-all with zero rooms → treat as all (avoid empty house by accident).
         if (!DailyGroupAllSpeakers && DailyGroupRooms.Count == 0)
             DailyGroupAllSpeakers = true;
+        DailySpeakerPresets ??= [];
+        DailySpeakerPresets = DailySpeakerPresets
+            .Where(p => p is not null && !string.IsNullOrWhiteSpace(p.Name))
+            .Select(p => new DailySpeakerPreset
+            {
+                Name = p.Name.Trim(),
+                Rooms = (p.Rooms ?? [])
+                    .Where(r => !string.IsNullOrWhiteSpace(r))
+                    .Select(r => r.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+            })
+            .Where(p => p.Rooms.Count > 0)
+            .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last())
+            .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (NightlyResetMinutes is < 0 or > 1439) NightlyResetMinutes = 180;
         if (WakeMinutes is < 0 or > 1439) WakeMinutes = 7 * 60;
         if (WakeDaysMask is < 0 or > 0b1111111) WakeDaysMask = DefaultWakeDaysMask;
