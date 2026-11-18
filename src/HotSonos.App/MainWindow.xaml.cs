@@ -4148,13 +4148,53 @@ public partial class MainWindow : Window
                     selected.Add(seed.Trim());
             }
 
+            var activePreset = !all
+                ? _settings.DailySpeakerPresets.FirstOrDefault(p => SameDailyRooms(p.Rooms, selected))
+                : null;
+
             if (ControlDailySpeakersHint is not null)
             {
                 ControlDailySpeakersHint.Text = all
                     ? "All speakers join Daily shuffle / Fresh Start / house regroup."
-                    : selected.Count == 0
-                        ? "Check at least one room (or turn All speakers back on)."
-                        : $"{selected.Count} room(s) selected · unchecked rooms leave the Daily group on shuffle.";
+                    : activePreset is not null
+                        ? $"{activePreset.Name} · {selected.Count} room(s) · unchecked rooms leave the Daily group on shuffle."
+                        : selected.Count == 0
+                            ? "Check at least one room (or turn All speakers back on)."
+                            : $"{selected.Count} room(s) selected · unchecked rooms leave the Daily group on shuffle.";
+            }
+
+            if (ControlFreshStartHint is not null)
+            {
+                ControlFreshStartHint.Text = all
+                    ? "Re-discover, regroup every speaker, and start a new shuffle."
+                    : activePreset is not null
+                        ? $"Re-discover, regroup {activePreset.Name} ({selected.Count} rooms), and start a new shuffle."
+                        : $"Re-discover, regroup the {selected.Count} checked room(s), and start a new shuffle.";
+            }
+
+            if (ControlDailyPresetHost is not null)
+            {
+                ControlDailyPresetHost.Children.Clear();
+                foreach (var preset in _settings.DailySpeakerPresets)
+                {
+                    var name = preset.Name;
+                    var presetBox = new System.Windows.Controls.CheckBox
+                    {
+                        Content = name,
+                        IsChecked = activePreset is not null
+                            && string.Equals(activePreset.Name, name, StringComparison.OrdinalIgnoreCase),
+                        Margin = new Thickness(0, 2, 14, 2),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Tag = name,
+                        ToolTip = string.Join(", ", preset.Rooms) + "\nRight-click to remove this group.",
+                    };
+                    var remove = new MenuItem { Header = "Remove group", Tag = name };
+                    remove.Click += ControlDailyPresetRemove_Click;
+                    presetBox.ContextMenu = new ContextMenu { Items = { remove } };
+                    presetBox.Checked += ControlDailyPresetCheck_Changed;
+                    presetBox.Unchecked += ControlDailyPresetCheck_Changed;
+                    ControlDailyPresetHost.Children.Add(presetBox);
+                }
             }
 
             foreach (var room in rooms)
@@ -4301,6 +4341,112 @@ public partial class MainWindow : Window
                 ? "Check at least one room (or turn All speakers back on)."
                 : $"{selected.Count} room(s) selected · unchecked rooms leave the Daily group on shuffle.";
         }
+
+        RefreshControlDailySpeakersUi();
+    }
+
+    private void ControlDailyPresetSave_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded || ControlDailyPresetNameBox is null)
+            return;
+
+        var name = ControlDailyPresetNameBox.Text.Trim();
+        if (name.Length == 0)
+        {
+            SetStatus("Type a name for the speaker group.", warn: true);
+            return;
+        }
+
+        var rooms = CheckedDailySpeakerRooms();
+        if (rooms.Count == 0)
+        {
+            SetStatus("Check at least one room before saving a group.", warn: true);
+            return;
+        }
+
+        var presets = _settings.EnsureShape().DailySpeakerPresets
+            .Where(p => !string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        presets.Add(new DailySpeakerPreset { Name = name, Rooms = rooms });
+        _settings.DailySpeakerPresets = presets;
+
+        try { _store.Save(_settings.EnsureShape()); }
+        catch (Exception ex) { AppLog.Warn("Save Daily speaker group failed", ex); }
+
+        ControlDailyPresetNameBox.Clear();
+        AppLog.Info($"Daily speaker group saved: {name} ({rooms.Count} rooms)");
+        SetStatus($"Saved group {name} ({rooms.Count} rooms). It is on the All speakers line.", warn: false);
+        RefreshControlDailySpeakersUi();
+    }
+
+    private void ControlDailyPresetCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressDailySpeakerUi || !_loaded)
+            return;
+        if (sender is not System.Windows.Controls.CheckBox box || box.Tag is not string name)
+            return;
+
+        if (box.IsChecked != true)
+        {
+            _settings.DailyGroupAllSpeakers = true;
+            try { _store.Save(_settings.EnsureShape()); }
+            catch (Exception ex) { AppLog.Warn("Save Daily speakers (preset off) failed", ex); }
+            AppLog.Info($"Daily speaker group off: {name} — All speakers");
+            RefreshControlDailySpeakersUi();
+            return;
+        }
+
+        var preset = _settings.EnsureShape().DailySpeakerPresets
+            .FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (preset is null || preset.Rooms.Count == 0)
+            return;
+
+        _settings.DailyGroupAllSpeakers = false;
+        _settings.DailyGroupRooms = preset.Rooms.ToList();
+        try { _store.Save(_settings.EnsureShape()); }
+        catch (Exception ex) { AppLog.Warn("Save Daily speaker group pick failed", ex); }
+        AppLog.Info($"Daily speaker group on: {preset.Name} ({string.Join(", ", preset.Rooms)})");
+        SetStatus($"Daily group: {preset.Name} ({preset.Rooms.Count} rooms). Next shuffle uses these rooms.", warn: false);
+        RefreshControlDailySpeakersUi();
+    }
+
+    private void ControlDailyPresetRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded || sender is not MenuItem item || item.Tag is not string name)
+            return;
+
+        _settings.DailySpeakerPresets = _settings.EnsureShape().DailySpeakerPresets
+            .Where(p => !string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        try { _store.Save(_settings.EnsureShape()); }
+        catch (Exception ex) { AppLog.Warn("Remove Daily speaker group failed", ex); }
+        AppLog.Info($"Daily speaker group removed: {name}");
+        SetStatus($"Removed group {name}.", warn: false);
+        RefreshControlDailySpeakersUi();
+    }
+
+    private List<string> CheckedDailySpeakerRooms()
+    {
+        if (ControlDailySpeakersPanel is null)
+            return [];
+
+        return ControlDailySpeakersPanel.Children
+            .OfType<System.Windows.Controls.CheckBox>()
+            .Where(c => c.IsChecked == true && c.Tag is string)
+            .Select(c => ((string)c.Tag!).Trim())
+            .Where(r => r.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool SameDailyRooms(IEnumerable<string> left, IEnumerable<string> right)
+    {
+        var a = left.Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var b = right.Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return a.SetEquals(b);
     }
 
     private void RefreshControlShuffleSourceCombo()

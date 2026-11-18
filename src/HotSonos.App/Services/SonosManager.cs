@@ -1249,10 +1249,12 @@ public sealed class SonosManager
             await RefreshAsync(ActiveRoom, ct).ConfigureAwait(false);
             if (_controller is null)
                 throw new InvalidOperationException("No Sonos speakers found. Check the speakers are powered on and on the network.");
+            var freshScope = DailyGroupScopeLabel();
+            AppLog.Info($"Fresh start regroup: {freshScope}");
             await GroupAllSpeakersAsync(ct, resumeAfter: false).ConfigureAwait(false);
             var fresh = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
             _playbackMode = "shuffle";
-            return $"🔄 Fresh start: re-synced + shuffle ({fresh})";
+            return $"🔄 Fresh start: {freshScope} + shuffle ({fresh})";
         }
 
         if (_controller is null)
@@ -1328,11 +1330,13 @@ public sealed class SonosManager
                 return "⏮ Previous";
             }
             case HotsonosAction.ShuffleLibrary:
+                var shuffleScope = DailyGroupScopeLabel();
+                AppLog.Info($"Shuffle regroup: {shuffleScope}");
                 TraceActivity(() => _activity.NoteHotkey("hotkey_shuffle", "Hotkey: shuffle library"));
                 await GroupAllSpeakersAsync(ct, resumeAfter: false).ConfigureAwait(false);
                 var shuffleSummary = await ShuffleWithHistoryAsync(ct).ConfigureAwait(false);
                 _playbackMode = "shuffle";
-                return $"🔀 Shuffling library → all speakers ({shuffleSummary})";
+                return $"🔀 Shuffling library → {shuffleScope} ({shuffleSummary})";
             case HotsonosAction.VolumeUp:
                 return $"🔊 Volume {await ChangeVolumeAsync(settings.VolumeStep, ct).ConfigureAwait(false)}%";
             case HotsonosAction.VolumeDown:
@@ -1999,6 +2003,31 @@ public sealed class SonosManager
             })
             .OrderBy(c => c.RoomName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// "all speakers", a saved group name, or the checked room list.
+    /// This is the set <see cref="GroupAllSpeakersAsync"/> actually joins.
+    /// </summary>
+    private string DailyGroupScopeLabel()
+    {
+        var settings = _settings().EnsureShape();
+        var allow = settings.GetDailyGroupRoomAllowList();
+        if (allow is null)
+            return "all speakers";
+
+        var preset = settings.DailySpeakerPresets.FirstOrDefault(p =>
+        {
+            var rooms = p.Rooms
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .Select(r => r.Trim())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return rooms.SetEquals(allow);
+        });
+        var names = string.Join("+", allow.OrderBy(r => r, StringComparer.OrdinalIgnoreCase));
+        return preset is not null
+            ? $"{preset.Name} ({names})"
+            : $"selected ({names})";
     }
 
     /// <summary>
