@@ -45,6 +45,50 @@ public sealed record NowPlaying
 
     public SonosTransportState State { get; init; } = SonosTransportState.Unknown;
 
+    /// <summary>Playhead (UPnP RelTime) when the speaker reported one.</summary>
+    public TimeSpan? Position { get; init; }
+
+    /// <summary>Track length (TrackDuration / CurrentTrackDuration) when the speaker reported one.</summary>
+    public TimeSpan? Duration { get; init; }
+
+    /// <summary>Parses Sonos clock text (<c>h:mm:ss</c>). <c>NOT_IMPLEMENTED</c> and junk become null.</summary>
+    public static TimeSpan? ParseSonosTime(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        var text = value.Trim();
+        if (text.Equals("NOT_IMPLEMENTED", StringComparison.OrdinalIgnoreCase))
+            return null;
+        var parts = text.Split(':');
+        if (parts.Length != 3)
+            return null;
+        if (!int.TryParse(parts[0], out var hours) || !int.TryParse(parts[1], out var minutes))
+            return null;
+        if (!double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+            return null;
+        if (hours < 0 || minutes is < 0 or > 59)
+            return null;
+        if (!double.IsFinite(seconds) || seconds is < 0 or >= 60)
+            return null;
+        // TimeSpan rejects totals past about 10,675,199 days. A speaker clock
+        // past a few thousand hours is not a track position.
+        if (hours > 99999)
+            return null;
+        try
+        {
+            return new TimeSpan(hours, minutes, 0) + TimeSpan.FromSeconds(seconds);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// True when this many tracks or fewer remain after the current one
     /// (time to top-up). Default 4 matches the previous hard-coded behavior.

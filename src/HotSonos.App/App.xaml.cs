@@ -379,6 +379,7 @@ public partial class App : System.Windows.Application
                 OpenLibrary: () => ShowMainWindowTab("library"),
                 OpenTopology: () => ShowMainWindowTab("topology"),
                 OpenLogs: () => ShowMainWindowTab("logs"),
+                OpenReports: () => ShowMainWindowTab("reports"),
                 Refresh: OnTrayRefresh,
                 FreshStart: () => _ = ExecuteActionAsync(HotsonosAction.FreshStart),
                 ShuffleLibrary: () => _ = ExecuteActionAsync(HotsonosAction.ShuffleLibrary),
@@ -1213,6 +1214,8 @@ public partial class App : System.Windows.Application
             catch (Exception ex)
             {
                 AppLog.Error($"Action {action} failed", ex);
+                try { _sonos.Activity.NoteError($"Action {action} failed", ex.Message); }
+                catch { /* the report log must not hide the failure */ }
                 var message = FriendlyError(ex);
                 EnsureFlyout().ShowAction(message); // errors always surface
                 return message;
@@ -1236,6 +1239,20 @@ public partial class App : System.Windows.Application
     /// </summary>
     private void OnSpeakerOutageRecorded(SpeakerOutageEvent ev)
     {
+        try
+        {
+            _sonos.Activity.NoteReachability(
+                ev.Room,
+                ev.Ip,
+                online: !string.Equals(ev.Kind, "down", StringComparison.OrdinalIgnoreCase),
+                isCoordinator: ev.IsCoordinator,
+                detail: ev.Describe());
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Activity reachability log failed", ex);
+        }
+
         Dispatcher.InvokeAsync(() =>
         {
             try
@@ -1771,6 +1788,9 @@ public partial class App : System.Windows.Application
             {
                 AppLog.Warn("Event dispose on exit failed", ex);
             }
+
+            try { _sonos.Activity.Dispose(); }
+            catch { /* exit */ }
         }
 
         _flyout?.HardClose();

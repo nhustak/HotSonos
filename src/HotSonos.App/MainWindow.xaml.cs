@@ -130,6 +130,7 @@ public partial class MainWindow : Window
 
         InitializeComponent();
         Title = AppVersion.DisplayName;
+        ReportsHostControl.Bind(_sonos.Activity);
         RestoreWindowGeometry();
         Loaded += OnLoaded;
         IsVisibleChanged += OnIsVisibleChanged;
@@ -138,7 +139,7 @@ public partial class MainWindow : Window
         _sonos.Heard.Changed += OnHeardOutsideLibraryChanged;
     }
 
-    /// <summary>Select Settings, Library, Tags, Topology, Logs, or Debug tab by name.</summary>
+    /// <summary>Select a main-window tab by name, including Reports.</summary>
     public void SelectTab(string tab)
     {
         if (string.Equals(tab, "library", StringComparison.OrdinalIgnoreCase))
@@ -157,6 +158,10 @@ public partial class MainWindow : Window
                  || string.Equals(tab, "topo", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "speakers", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = TopologyTab;
+        else if (string.Equals(tab, "reports", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "report", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(tab, "history", StringComparison.OrdinalIgnoreCase))
+            MainTabs.SelectedItem = ReportsTab;
         else if (string.Equals(tab, "logs", StringComparison.OrdinalIgnoreCase)
                  || string.Equals(tab, "log", StringComparison.OrdinalIgnoreCase))
             MainTabs.SelectedItem = LogsTab;
@@ -1924,6 +1929,8 @@ public partial class MainWindow : Window
             RefreshMcpEndpointUi();
             RefreshMcpActivityList(scrollToEnd: false);
         }
+        else if (MainTabs.SelectedItem == ReportsTab)
+            ReportsHostControl.RefreshActive();
         else if (MainTabs.SelectedItem == LogsTab)
         {
             if (LogsAutoRefreshCheck?.IsChecked != false)

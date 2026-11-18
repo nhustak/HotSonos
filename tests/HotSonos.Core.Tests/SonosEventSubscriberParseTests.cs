@@ -1,3 +1,4 @@
+using HotSonos.Core;
 using HotSonos.Core.Models;
 
 namespace HotSonos.Core.Tests;
@@ -67,5 +68,34 @@ public class SonosEventSubscriberParseTests
 
         Assert.NotNull(xml);
         Assert.Contains("ZoneGroups", xml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Trusted_notify_requires_the_subscription_id_and_the_coordinator()
+    {
+        const string request = "NOTIFY /notify HTTP/1.1\r\nSID: uuid:abc\r\n\r\n<body/>";
+        Assert.True(SonosEventSubscriber.IsTrustedNotify(request, "192.168.1.20", "192.168.1.20", ["uuid:abc"]));
+        Assert.False(SonosEventSubscriber.IsTrustedNotify(request, "192.168.1.21", "192.168.1.20", ["uuid:abc"]));
+        Assert.False(SonosEventSubscriber.IsTrustedNotify(request, "192.168.1.20", "192.168.1.20", ["uuid:other"]));
+        Assert.False(SonosEventSubscriber.IsTrustedNotify("NOTIFY /notify HTTP/1.1\r\n\r\n", "192.168.1.20", "192.168.1.20", ["uuid:abc"]));
+    }
+
+    [Fact]
+    public void Rendering_control_splits_mute_from_volume()
+    {
+        const string mute = """
+            <LastChange>&lt;Event&gt;&lt;InstanceID val=&quot;0&quot;&gt;&lt;Mute channel=&quot;Master&quot; val=&quot;1&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;</LastChange>
+            """;
+        var muted = SonosEventSubscriber.DescribeRenderingControl(mute);
+        Assert.True(muted.MuteChanged);
+        Assert.False(muted.VolumeChanged);
+        Assert.True(muted.Muted);
+
+        const string volume = """
+            <LastChange>&lt;Event&gt;&lt;InstanceID val=&quot;0&quot;&gt;&lt;Volume channel=&quot;Master&quot; val=&quot;12&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;</LastChange>
+            """;
+        var level = SonosEventSubscriber.DescribeRenderingControl(volume);
+        Assert.True(level.VolumeChanged);
+        Assert.False(level.MuteChanged);
     }
 }

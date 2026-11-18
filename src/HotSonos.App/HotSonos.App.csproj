@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HotSonos.Core\HotSonos.Core.csproj" />
+    <ProjectReference Include="..\HotSonos.Activity\HotSonos.Activity.csproj" />
     <ProjectReference Include="..\HotSonos.Remote.Protocol\HotSonos.Remote.Protocol.csproj" />
   </ItemGroup>
 

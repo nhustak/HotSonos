@@ -1,6 +1,7 @@
 <Window x:Class="HotSonos.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:reports="clr-namespace:HotSonos.App.Reports"
         Title="HotSonos"
         Width="1000" Height="700"
         MinWidth="820" MinHeight="520"
@@ -1385,6 +1386,11 @@
                                  Background="Transparent" />
                     </GroupBox>
                 </Grid>
+            </TabItem>
+
+            <!-- ========== Reports ========== -->
+            <TabItem x:Name="ReportsTab" Header="Reports">
+                <reports:ReportsHost x:Name="ReportsHostControl" />
             </TabItem>
 
             <!-- ========== App Logs (diagnostics) ========== -->

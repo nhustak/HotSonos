@@ -16,7 +16,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 
 ### Product direction
 - **Today:** history-aware shuffle (**All**, **folder**, **tag**, or **genre** from Control), transport/volume hotkeys, favorite slots (Sonos / tag / genre / folder), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play, optional **hide genres**, loopback MCP for agents.
-- **Settings UI:** tabs — **Control · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Logs · Debug**. Tray: Library…, Topology…, Logs…, Debug…
+- **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Tray: Library…, Topology…, Logs…, Reports…, Debug…
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
 
@@ -126,6 +126,19 @@ Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **libra
 ### 🎴 Live Now-Playing flyout
 Album art, title, artist, state. Draggable, pinnable; toggles under **Options**. Updates from speaker **GENA** when enabled (Options; default on for new installs), otherwise a 5s SOAP poll.
 
+### 📊 Reports
+The **Reports** tab (tray **Reports…**) is a list of reports, so another one is a new view plus one catalog entry.
+
+| Report | What it shows |
+|---|---|
+| **Song Play History** | Search or pick a song. Every play: when, zone, how long it played vs the track length, outcome, and the trigger when we know it (HotSonos next/previous, next from another controller, stop, shuffle, play now, speaker lost, app exit). Per song: play count, skip count, last played. **Load older** fetches the next 500 plays. |
+| **Music** | Songs only, newest first. Date range and a skipped-only filter. Most played, most skipped, and recently played for that range. **Load older** continues past the first 500 rows. |
+| **Event Log** | Music events (track start/end/skip) and Sonos/system events (speaker or zone offline/online, group changes, discovery and poll failures and recoveries, volume, mute, hotkeys, shuffle starts, errors). Filter by category and kind. **Load older** continues past the first 500 events. |
+
+Outcomes: **Completed** (about 85% of a known track, including short tracks, or the last 15 seconds of a track that is a minute or longer, and HotSonos did not send Next), **Skipped** (HotSonos Next, or the track changed well before the end — counted as another controller when HotSonos did not issue Next), **Stopped** (transport stopped before the end), **Interrupted** (Previous, shuffle, play now, the active coordinator dropping, or the app exiting mid-song), **Unknown** (no duration was reported and the song was heard for at least 45 seconds). A command that fails does not keep its label. GENA callbacks are accepted only when the subscription id and the sender match the coordinator HotSonos subscribed to.
+
+Shuffle's "don't play this again" list is unchanged. It still reads and writes only `%LocalAppData%\HotSonos\play-history.json`. Reports read `%LocalAppData%\HotSonos\activity.db` (SQLite, 180 days, up to 80,000 events and 40,000 plays). Recording is on while the app runs, same as shuffle's last-played list; the database is created on first launch. The first time that database is created it copies last-played rows and the debug play-event trail in (a skipped or stopped line with no matching start is not a play); it does not write `play-history.json`. An open song is written when the app exits. A failed database write is retried on the next event.
+
 ### 🛠️ Debug
 **Debug** tab: MCP command log plus **Force auto-recover** (marks the shuffle leftover, seeks track 1, Stops, then runs leftover-queue reshuffle). Tray **Debug…**.
 
@@ -149,7 +162,8 @@ While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery,
 - Single-instance tray app; second launch activates the running window  
 - Optional **Start with Windows**; nightly silent re-sync  
 - Config: `%LocalAppData%\HotSonos\settings.json`  
-- Play history (exclude set): `%LocalAppData%\HotSonos\play-history.json`  
+- Play history (shuffle exclude set): `%LocalAppData%\HotSonos\play-history.json`  
+- Reports / activity log: `%LocalAppData%\HotSonos\activity.db`  
 - Play lifecycle events (debug): `%LocalAppData%\HotSonos\play-events.jsonl` · MCP `get_play_events`  
 - Heard outside the library: `%LocalAppData%\HotSonos\heard-outside-library.json` · Control tab · MCP `get_heard_tracks`  
 
