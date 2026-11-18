@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy — HotSonos</title>
+<meta name="description" content="How HotSonos handles your data: it runs on your PC, stores data locally, and talks to your speakers on your local network.">
+<link rel="canonical" href="https://hotsonos.com/privacy.html">
+<meta name="theme-color" content="#16181d">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="HotSonos">
+<meta property="og:title" content="Privacy — HotSonos">
+<meta property="og:description" content="How HotSonos handles your data: it runs on your PC, stores data locally, and talks to your speakers on your local network.">
+<meta property="og:url" content="https://hotsonos.com/privacy.html">
+<meta property="og:image" content="https://hotsonos.com/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Privacy — HotSonos">
+<meta name="twitter:description" content="How HotSonos handles your data: it runs on your PC, stores data locally, and talks to your speakers on your local network.">
+<meta name="twitter:image" content="https://hotsonos.com/assets/og-image.png">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="/"><img src="/assets/logo.png" alt="" width="34" height="34">HotSonos</a>
+<nav><a class="hide-sm" href="/#features">Features</a><a class="hide-sm" href="/#faq">FAQ</a><a href="/#download">Download</a><a href="/privacy.html">Privacy</a></nav>
+</div></header>
+
+<main class="doc">
+<h1>Privacy</h1>
+<p class="small">Last updated November 18, 2026</p>
+<p>HotSonos is a Windows tray app that runs on your own PC. It has no HotSonos account, no HotSonos server, no analytics, no ads, and no telemetry. The developer never receives your data.</p>
+
+<h2>What stays on your PC</h2>
+<p>HotSonos keeps its data in <code>%LocalAppData%\HotSonos</code> on your computer, including:</p>
+<ul>
+<li>Settings (<code>settings.json</code>), including hotkeys, speaker groups, and saved Spotify links you paste in</li>
+<li>Shuffle play history (<code>play-history.json</code>) so recent songs aren't repeated</li>
+<li>Reports and activity log (<code>activity.db</code>) — song plays, skips, and speaker events, kept up to 180 days</li>
+<li>A cache of your music library's metadata (<code>library.db</code>) and tracks heard outside your library</li>
+<li>Log files (<code>logs</code>)</li>
+</ul>
+<p>Uninstalling HotSonos and deleting that folder removes all of it.</p>
+
+<h2>Who HotSonos talks to</h2>
+<ul>
+<li><strong>Your Sonos speakers, on your local network.</strong> HotSonos discovers and controls them directly over the LAN. Album art is loaded from the address your speaker reports for the current track.</li>
+<li><strong>Your music share.</strong> To build the library cache and write tags into your music files, HotSonos reads (and, for tagging, writes) the network share your Sonos system already indexes.</li>
+<li><strong>Your music services, only through your speakers.</strong> Music from Spotify, radio, and other services is played by your speakers using the accounts already linked in the Sonos app. HotSonos does not ask for those passwords.</li>
+<li><strong>Optional Spotify playlist link (developer/debug tool).</strong> If you use HotSonos's debug tool to link Spotify for playlist browsing, HotSonos talks to the Spotify music-service address your Sonos speaker reports, and stores the resulting session token locally on your PC. This is off unless you start it.</li>
+</ul>
+
+<h2>Local MCP server (optional)</h2>
+<p>When turned on, the MCP endpoint for AI assistants listens only on this PC's loopback address (<code>127.0.0.1</code>). Other devices on your network can't reach it. Any AI assistant you connect to it is governed by that assistant's own privacy policy.</p>
+
+<h2>Phone remote (Android, in progress)</h2>
+<p>The Android remote is a remote control for the HotSonos app on your PC; it does not talk to your speakers or to the internet. It connects to your PC's local network address and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only.</p>
+
+<h2>This website</h2>
+<p>hotsonos.com is a static site with no cookies, trackers, or analytics. Like any web server, it may keep standard access logs (such as IP address and pages requested) for security and troubleshooting. Download links go to GitHub, which has its own privacy policy.</p>
+
+<h2>Contact</h2>
+<p>Questions? Open an issue on <a href="https://github.com/nhustak/HotSonos/issues">GitHub</a>.</p>
+</main>
+<footer><div class="wrap">
+<div class="row"><a class="brand" href="/"><img src="/assets/logo.png" alt="" width="28" height="28">HotSonos</a>
+<div><a href="https://github.com/nhustak/HotSonos">GitHub</a> · <a href="https://github.com/nhustak/HotSonos/releases/latest">Releases</a> · <a href="/privacy.html">Privacy</a> · <a href="https://github.com/nhustak/HotSonos/blob/master/LICENSE">MIT License</a></div></div>
+<p>Open source, maintained by <a href="https://github.com/nhustak">Nick Hustak</a>. © 2026 Nick Hustak.</p>
+<p class="legal">HotSonos is an independent project and is not affiliated with or endorsed by Sonos, Inc. Sonos is a trademark of Sonos, Inc.</p>
+</div></footer>
+</body>
+</html>
