@@ -172,7 +172,7 @@ Match notes: content hash skipped (master often different encode/hi-res). Ambigu
 |--|--|
 | **Platform** | Windows 10/11 x64 only |
 | **Runtime** | .NET 10+ (WPF + WinForms tray) |
-| **Site / brand** | [hotsonos.com](https://hotsonos.com) (domain registered; site TBD) |
+| **Site / brand** | [hotsonos.com](https://hotsonos.com) — static landing + privacy page, source in `site/` (served from docker1 clover-dev nginx) |
 | **Source** | https://github.com/nhustak/HotSonos (MIT) |
 
 ### Purpose
@@ -439,7 +439,7 @@ Access model (target):
 - Later: wake source = Daily or a named group  
 
 ### 6.4 Spec/docs site
-- Optional static site on **hotsonos.com** (download MSI, features, GitHub link)  
+- Static site on **hotsonos.com** (download MSI, features, GitHub link) — live; source in `site/`  
 
 ### 6.5 Later (not now)
 - Timed mode swap (play group A for N hours, then group B / Daily)  

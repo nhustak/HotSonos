@@ -43,7 +43,9 @@
 <li>Settings (<code>settings.json</code>), including hotkeys, speaker groups, and saved Spotify links you paste in</li>
 <li>Shuffle play history (<code>play-history.json</code>) so recent songs aren't repeated</li>
 <li>Reports and activity log (<code>activity.db</code>) — song plays, skips, and speaker events, kept up to 180 days</li>
-<li>A cache of your music library's metadata (<code>library.db</code>) and tracks heard outside your library</li>
+<li>A cache of your music library's metadata (<code>library.db</code>)</li>
+<li>Tracks heard from Spotify, radio, or other non-library sources (<code>heard-outside-library.json</code>, up to 500 tracks / 90 days)</li>
+<li>A play lifecycle trail used for troubleshooting (<code>play-events.jsonl</code>)</li>
 <li>Log files (<code>logs</code>)</li>
 </ul>
 <p>Uninstalling HotSonos and deleting that folder removes all of it.</p>
@@ -53,7 +55,8 @@
 <li><strong>Your Sonos speakers, on your local network.</strong> HotSonos discovers and controls them directly over the LAN. Album art is loaded from the address your speaker reports for the current track.</li>
 <li><strong>Your music share.</strong> To build the library cache and write tags into your music files, HotSonos reads (and, for tagging, writes) the network share your Sonos system already indexes.</li>
 <li><strong>Your music services, only through your speakers.</strong> Music from Spotify, radio, and other services is played by your speakers using the accounts already linked in the Sonos app. HotSonos does not ask for those passwords.</li>
-<li><strong>Optional Spotify playlist link (developer/debug tool).</strong> If you use HotSonos's debug tool to link Spotify for playlist browsing, HotSonos talks to the Spotify music-service address your Sonos speaker reports, and stores the resulting session token locally on your PC. This is off unless you start it.</li>
+<li><strong>Saved Spotify links.</strong> Spotify share links you paste on the Control tab are stored in your settings. Playing one tells your speaker to play it with the Spotify account already linked in the Sonos app; HotSonos does not contact Spotify for this.</li>
+<li><strong>Optional Spotify account link (debug tool).</strong> If you use HotSonos's debug tool to link Spotify for playlist browsing, HotSonos talks to the Spotify music-service address your Sonos speaker reports, and stores the resulting session token locally on your PC. This is off unless you start it.</li>
 </ul>
 
 <h2>Local MCP server (optional)</h2>
