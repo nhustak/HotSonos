@@ -209,7 +209,9 @@ public sealed record RemoteSourcesResponse(
     IReadOnlyList<RemoteSlotDto> Slots,
     IReadOnlyList<RemoteTagDto> Tags,
     IReadOnlyList<RemoteGenreDto> Genres,
-    IReadOnlyList<RemoteFolderDto> Folders);
+    IReadOnlyList<RemoteFolderDto> Folders,
+    string ControlSource,
+    string ControlSourceLabel);
 
 public sealed record RemoteDailyDto(string Label);
 

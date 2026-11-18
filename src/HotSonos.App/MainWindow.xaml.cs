@@ -15,6 +15,7 @@ using HotSonos.Core;
 using HotSonos.App.Mcp;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
+using HotSonos.Remote.Protocol;
 using TextBox = System.Windows.Controls.TextBox;
 using ComboBox = System.Windows.Controls.ComboBox;
 using MenuItem = System.Windows.Controls.MenuItem;
@@ -4149,7 +4150,7 @@ public partial class MainWindow : Window
             }
 
             var activePreset = !all
-                ? _settings.DailySpeakerPresets.FirstOrDefault(p => SameDailyRooms(p.Rooms, selected))
+                ? _settings.DailySpeakerPresets.FirstOrDefault(p => DailyGroupLogic.SameRooms(p.Rooms, selected))
                 : null;
 
             if (ControlDailySpeakersHint is not null)
@@ -4228,23 +4229,12 @@ public partial class MainWindow : Window
             return;
 
         var all = ControlDailyAllSpeakersCheck.IsChecked == true;
-        _settings.DailyGroupAllSpeakers = all;
-        if (all)
-        {
-            // Keep DailyGroupRooms as last custom set for next uncheck.
-        }
-        else
-        {
-            // Expand and ensure preferred/active is in the list.
-            if (_settings.DailyGroupRooms.Count == 0)
-            {
-                var seed = _settings.PreferredHouseCoordinatorRoom
-                           ?? _settings.ActiveRoom
-                           ?? _sonos.ActiveRoom;
-                if (!string.IsNullOrWhiteSpace(seed))
-                    _settings.DailyGroupRooms = [seed.Trim()];
-            }
-        }
+        var model = SnapshotDaily();
+        var seed = _settings.PreferredHouseCoordinatorRoom
+                   ?? _settings.ActiveRoom
+                   ?? _sonos.ActiveRoom;
+        DailyGroupLogic.SetAll(model, all, seed);
+        StoreDaily(model);
 
         try { _store.Save(_settings.EnsureShape()); }
         catch (Exception ex) { AppLog.Warn("Save Daily speakers (All) failed", ex); }
@@ -4358,17 +4348,15 @@ public partial class MainWindow : Window
         }
 
         var rooms = CheckedDailySpeakerRooms();
-        if (rooms.Count == 0)
+        var model = SnapshotDaily();
+        var error = DailyGroupLogic.SavePreset(model, name, rooms);
+        if (error is not null)
         {
-            SetStatus("Check at least one room before saving a group.", warn: true);
+            SetStatus(error, warn: true);
             return;
         }
 
-        var presets = _settings.EnsureShape().DailySpeakerPresets
-            .Where(p => !string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        presets.Add(new DailySpeakerPreset { Name = name, Rooms = rooms });
-        _settings.DailySpeakerPresets = presets;
+        StoreDaily(model);
 
         try { _store.Save(_settings.EnsureShape()); }
         catch (Exception ex) { AppLog.Warn("Save Daily speaker group failed", ex); }
@@ -4386,27 +4374,28 @@ public partial class MainWindow : Window
         if (sender is not System.Windows.Controls.CheckBox box || box.Tag is not string name)
             return;
 
+        var model = SnapshotDaily();
+        var presetError = DailyGroupLogic.SelectPreset(model, name, box.IsChecked == true);
+        if (presetError is not null)
+        {
+            SetStatus(presetError, warn: true);
+            RefreshControlDailySpeakersUi();
+            return;
+        }
+
+        StoreDaily(model);
         if (box.IsChecked != true)
         {
-            _settings.DailyGroupAllSpeakers = true;
             try { _store.Save(_settings.EnsureShape()); }
             catch (Exception ex) { AppLog.Warn("Save Daily speakers (preset off) failed", ex); }
             AppLog.Info($"Daily speaker group off: {name} — All speakers");
             RefreshControlDailySpeakersUi();
             return;
         }
-
-        var preset = _settings.EnsureShape().DailySpeakerPresets
-            .FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
-        if (preset is null || preset.Rooms.Count == 0)
-            return;
-
-        _settings.DailyGroupAllSpeakers = false;
-        _settings.DailyGroupRooms = preset.Rooms.ToList();
         try { _store.Save(_settings.EnsureShape()); }
         catch (Exception ex) { AppLog.Warn("Save Daily speaker group pick failed", ex); }
-        AppLog.Info($"Daily speaker group on: {preset.Name} ({string.Join(", ", preset.Rooms)})");
-        SetStatus($"Daily group: {preset.Name} ({preset.Rooms.Count} rooms). Next shuffle uses these rooms.", warn: false);
+        AppLog.Info($"Daily speaker group on: {name} ({string.Join(", ", model.Rooms)})");
+        SetStatus($"Daily group: {name} ({model.Rooms.Count} rooms). Next shuffle uses these rooms.", warn: false);
         RefreshControlDailySpeakersUi();
     }
 
@@ -4415,9 +4404,15 @@ public partial class MainWindow : Window
         if (!_loaded || sender is not MenuItem item || item.Tag is not string name)
             return;
 
-        _settings.DailySpeakerPresets = _settings.EnsureShape().DailySpeakerPresets
-            .Where(p => !string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        var removeModel = SnapshotDaily();
+        var removeError = DailyGroupLogic.RemovePreset(removeModel, name);
+        if (removeError is not null)
+        {
+            SetStatus(removeError, warn: true);
+            return;
+        }
+
+        StoreDaily(removeModel);
         try { _store.Save(_settings.EnsureShape()); }
         catch (Exception ex) { AppLog.Warn("Remove Daily speaker group failed", ex); }
         AppLog.Info($"Daily speaker group removed: {name}");
@@ -4440,13 +4435,22 @@ public partial class MainWindow : Window
             .ToList();
     }
 
-    private static bool SameDailyRooms(IEnumerable<string> left, IEnumerable<string> right)
+    private DailyGroupModel SnapshotDaily() => new()
     {
-        var a = left.Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r.Trim())
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var b = right.Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r.Trim())
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return a.SetEquals(b);
+        AllSpeakers = _settings.DailyGroupAllSpeakers,
+        Rooms = _settings.DailyGroupRooms?.ToList() ?? [],
+        Presets = (_settings.DailySpeakerPresets ?? [])
+            .Select(p => new DailyPresetModel { Name = p.Name, Rooms = p.Rooms?.ToList() ?? [] })
+            .ToList(),
+    };
+
+    private void StoreDaily(DailyGroupModel model)
+    {
+        _settings.DailyGroupAllSpeakers = model.AllSpeakers;
+        _settings.DailyGroupRooms = model.Rooms.ToList();
+        _settings.DailySpeakerPresets = model.Presets
+            .Select(p => new DailySpeakerPreset { Name = p.Name, Rooms = p.Rooms.ToList() })
+            .ToList();
     }
 
     private void RefreshControlShuffleSourceCombo()
@@ -5135,7 +5139,67 @@ public partial class MainWindow : Window
             : $"URL: {live}";
     }
 
-    private void RemoteRegeneratePin_Click(object sender, RoutedEventArgs e)
+    private void RemoteRegeneratePin_Click(object sender, RoutedEventArgs e) =>
+        RegenerateRemotePin();
+
+    private PhonePairingWindow? _phoneWindow;
+
+    private void PhoneButton_Click(object sender, RoutedEventArgs e) => ShowPhonePairing();
+
+    public void ShowPhonePairing()
+    {
+        if (_phoneWindow is { IsVisible: true })
+        {
+            _phoneWindow.Refresh();
+            _phoneWindow.Activate();
+            return;
+        }
+
+        _phoneWindow = new PhonePairingWindow(_settings, _remoteEndpoint, RegenerateRemotePin, PromptRemoteFirewall);
+        _phoneWindow.Owner = this;
+        _phoneWindow.Closed += (_, _) => _phoneWindow = null;
+        _phoneWindow.Show();
+    }
+
+    /// <summary>Push phone-edited settings into the open form so Save does not write the old boxes back.</summary>
+    public void RefreshFromSharedSettings()
+    {
+        if (!_loaded)
+            return;
+
+        _suppressKeepHouseGroupedToggle = true;
+        try
+        {
+            if (KeepHouseGroupedCheck is not null)
+                KeepHouseGroupedCheck.IsChecked = _settings.KeepHouseGrouped;
+            VolumeStepBox.Text = _settings.VolumeStep.ToString();
+            LevelPercentBox.Text = _settings.LevelVolumePercent.ToString();
+            NightlyResetCheckBox.IsChecked = _settings.NightlyResetEnabled;
+            NightlyResetTimeBox.Text = MinutesToHhmm(_settings.NightlyResetMinutes);
+            NightlyResetReshuffleCheckBox.IsChecked = _settings.NightlyResetReshuffle;
+            GenaEnabledCheckBox.IsChecked = _settings.GenaEnabled;
+            ShuffleQueueTracksBox.Text = _settings.ShuffleQueueTracks.ToString();
+            ShuffleTopUpTracksBox.Text = _settings.ShuffleTopUpTracks.ToString();
+            ShuffleHistoryDaysBox.Text = _settings.ShuffleHistoryDays.ToString();
+            ShuffleTopUpRemainingBox.Text = _settings.ShuffleTopUpWhenRemaining.ToString();
+            ShuffleExcludePlayedCheckBox.IsChecked = _settings.ShuffleExcludePlayed;
+            ShuffleAutoTopUpCheckBox.IsChecked = _settings.ShuffleAutoTopUp;
+            ContinueShuffleAfterSpecialPlayCheckBox.IsChecked = _settings.ContinueLibraryShuffleAfterSpecialPlay;
+            ShuffleArtistSpreadCheckBox.IsChecked = _settings.ShuffleArtistSpread;
+            ShowGenresInPlaySourcesCheckBox.IsChecked = _settings.ShowGenresInPlaySources;
+            LoadWakeUiFromSettings();
+            RefreshControlShuffleSourceCombo();
+        }
+        finally
+        {
+            _suppressKeepHouseGroupedToggle = false;
+        }
+
+        RefreshControlDailySpeakersUi();
+        RefreshRemoteEndpointText();
+    }
+
+    private void RegenerateRemotePin()
     {
         _settings.RemotePin = AppSettings.GenerateRemotePin();
         RemotePinBox.Text = _settings.RemotePin;
@@ -5148,9 +5212,13 @@ public partial class MainWindow : Window
         {
             SetStatus($"Could not save the new PIN: {ex.Message}", warn: true);
         }
+
+        _phoneWindow?.Refresh();
     }
 
-    private void RemoteFirewall_Click(object sender, RoutedEventArgs e)
+    private void RemoteFirewall_Click(object sender, RoutedEventArgs e) => PromptRemoteFirewall();
+
+    private void PromptRemoteFirewall()
     {
         var port = _settings.RemotePort;
         if (int.TryParse(RemotePortBox.Text, out var typed) && typed is >= 1024 and <= 65535)

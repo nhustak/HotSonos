@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#1E232C</color>
+    <color name="colorPrimaryDark">#1E232C</color>
+    <color name="colorAccent">#2ECC71</color>
+    <color name="maui_splash_color">#1E232C</color>
+</resources>

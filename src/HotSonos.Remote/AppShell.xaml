@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Shell xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+       xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+       xmlns:views="clr-namespace:HotSonos.Remote.Views"
+       x:Class="HotSonos.Remote.AppShell"
+       FlyoutBehavior="Disabled"
+       Title="HotSonos"
+       BackgroundColor="#12161C"
+       ForegroundColor="#F4F7FB">
+    <TabBar>
+        <ShellContent Title="Now" ContentTemplate="{DataTemplate views:ControlPage}" Route="now" />
+        <ShellContent Title="Play" ContentTemplate="{DataTemplate views:PlayPage}" Route="play" />
+        <ShellContent Title="Library" ContentTemplate="{DataTemplate views:LibraryPage}" Route="library" />
+        <ShellContent Title="Rooms" ContentTemplate="{DataTemplate views:TopologyPage}" Route="rooms" />
+        <ShellContent Title="Reports" ContentTemplate="{DataTemplate views:ReportsPage}" Route="reports" />
+        <ShellContent Title="More" ContentTemplate="{DataTemplate views:OptionsPage}" Route="more" />
+    </TabBar>
+</Shell>

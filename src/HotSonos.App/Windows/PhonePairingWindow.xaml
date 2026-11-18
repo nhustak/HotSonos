@@ -1,0 +1,52 @@
+<Window x:Class="HotSonos.App.PhonePairingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Phone"
+        Width="560" Height="520"
+        MinWidth="420" MinHeight="420"
+        WindowStartupLocation="CenterOwner"
+        FontFamily="Segoe UI" FontSize="13"
+        Background="#FFF4F6F8">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24,18,24,24">
+            <TextBlock Text="Phone" FontSize="26" FontWeight="SemiBold" Foreground="#FF1C2536" />
+            <TextBlock x:Name="StatusText" TextWrapping="Wrap" Foreground="#FF60707F" Margin="0,4,0,12" />
+
+            <TextBlock Text="On the phone, open HotSonos and enter" FontWeight="SemiBold" Margin="0,0,0,8" />
+            <Border Background="White" BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="8" Padding="14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Address" Foreground="#FF60707F" VerticalAlignment="Top" Margin="0,4,0,10" />
+                    <TextBox x:Name="HostText" Grid.Column="1" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                             FontSize="16" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="Port" Grid.Row="1" Foreground="#FF60707F" VerticalAlignment="Center" Margin="0,0,0,10" />
+                    <TextBox x:Name="PortText" Grid.Row="1" Grid.Column="1" IsReadOnly="True" BorderThickness="0"
+                             Background="Transparent" FontSize="16" Margin="0,0,0,10" />
+                    <TextBlock Text="PIN" Grid.Row="2" Foreground="#FF60707F" VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                        <TextBox x:Name="PinText" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                                 FontSize="24" FontFamily="Consolas" FontWeight="SemiBold" Foreground="#FF1C8E54" />
+                        <Button Content="New PIN" Margin="16,0,0,0" Padding="10,4" Click="NewPin_Click" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <TextBlock TextWrapping="Wrap" Foreground="#FF60707F" FontSize="12" Margin="0,8,0,0"
+                       Text="The phone sends this PIN on every request. The listener stays on the PC address that shares a network with a speaker. MCP stays on 127.0.0.1." />
+
+            <TextBlock Text="Windows Firewall" FontWeight="SemiBold" Margin="0,18,0,6" />
+            <TextBlock TextWrapping="Wrap" Foreground="#FF60707F" FontSize="12" Margin="0,0,0,8"
+                       Text="A phone on Wi-Fi needs inbound TCP on this port for Private networks. HotSonos does not change Public. From an elevated PowerShell, or use the button:" />
+            <TextBox x:Name="FirewallText" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Padding="8" />
+            <Button Content="Allow on private networks…" HorizontalAlignment="Left" Margin="0,10,0,0"
+                    Padding="10,4" Click="Firewall_Click" />
+        </StackPanel>
+    </ScrollViewer>
+</Window>

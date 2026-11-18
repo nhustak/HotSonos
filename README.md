@@ -16,9 +16,10 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 
 ### Product direction
 - **Today:** history-aware shuffle (**All**, **folder**, **tag**, or **genre** from Control), transport/volume hotkeys, favorite slots (Sonos / tag / genre / folder), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play, optional **hide genres**, loopback MCP for agents.
-- **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Tray: Library…, Topology…, Logs…, Reports…, Debug…
+- **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Top bar: **Phone**. Tray: Phone…, Library…, Topology…, Logs…, Reports…, Debug…
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
+- **Phone:** Android app (`src/HotSonos.Remote`, .NET MAUI) is a full view of this PC over `http://<pc>:42342` with header `X-HotSonos-Pin`. The **Phone** button shows the address and PIN.
 
 **Having issues (stutter, dead zones, flaky grouping)?** Make sure **SonosNet is off** — see [Turn off SonosNet](#turn-off-sonosnet) near the bottom.
 
@@ -230,11 +231,34 @@ dotnet run --project src/HotSonos.Harness -- --room "Living Room" favorites
 dotnet run --project src/HotSonos.Harness -- --room "Living Room" shuffle
 ```
 
+### Android
+
+The phone app is .NET MAUI (`src/HotSonos.Remote`, package `com.hotsonos.remote`, minSdk 24). It is not in `HotSonos.slnx`, so the Windows solution does not need the Android workload.
+
+```powershell
+dotnet build src\HotSonos.Remote\HotSonos.Remote.csproj -f net10.0-android
+dotnet publish src\HotSonos.Remote\HotSonos.Remote.csproj -f net10.0-android -c Release
+```
+
+Needs the .NET MAUI Android workload, an Android SDK with a current platform, and JDK 17 or later. Debug output keeps the assemblies in the APK (`EmbedAssembliesIntoApk`), so you can sideload it:
+
+```powershell
+adb install src\HotSonos.Remote\bin\Debug\net10.0-android\com.hotsonos.remote-Signed.apk
+```
+
+Release publish writes `com.hotsonos.remote-Signed.aab` (and an APK) under `src\HotSonos.Remote\bin\Release\net10.0-android\publish\`. It is signed with the Play upload key from `%USERPROFILE%\.android-keys\hotsonos\` when that folder contains `hotsonos-upload.keystore` and `hotsonos-upload.password` (alias `hotsonos-upload`). Override the folder with `HOTSONOS_UPLOAD_KEY_DIR`. If the keystore is missing, Release uses the debug key. Do not commit the keystore.
+
+On the PC, open HotSonos and press **Phone** (or the tray item **Phone…**). The phone's first screen takes that address, port **42342**, and the 6-digit PIN. The header on every request is `X-HotSonos-Pin`. The Android emulator on the PC reaches it as `10.0.2.2`. The listener is plain HTTP on the LAN and only binds the address that shares a network with a speaker.
+
+The phone polls now-playing every 2 seconds while it is open, and loads the other tabs when you open them. Reboot, regroup, fresh start, rescan, wiping the queue, and deleting a tag ask you to confirm first.
+
 ### Project layout
 | Project | Purpose |
 |---|---|
 | `HotSonos.Core` | UPnP client (discovery, control, events, shuffle) |
-| `HotSonos.App` | Tray app: hotkeys, settings, library, tags, MCP, wake |
+| `HotSonos.App` | Tray app: hotkeys, settings, library, tags, MCP, wake, phone listener |
+| `HotSonos.Remote` | Android (MAUI) full remote. Not in the Windows solution |
+| `HotSonos.Remote.Protocol` | Shared phone DTOs and Daily speaker-group rules |
 | `HotSonos.Harness` | Console tester |
 | `HotSonos.Core.Tests` | Offline unit tests |
 
@@ -251,7 +275,8 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 - **Tag / genre / one-shot play** — client builds a queue from the library cache; optional continue into full-library top-up (`ContinueLibraryShuffleAfterSpecialPlay`).  
 - **Control shuffle From** — `ControlShuffleSource` = `all` | `folder:{path}` | `tag:{key}` | `genre:{name}`; genres gated by `ShowGenresInPlaySources`.  
 - **Library** — filesystem scan under discovered UNC roots; optional master match for dual-write.  
-- **MCP** — Kestrel loopback host inside the tray process.  
+- **MCP** — Kestrel loopback host inside the tray process.
+- **Phone** — a second Kestrel host on the speaker subnet, port 42342, PIN on every route. It calls the same action gate as MCP.  
 - **GENA** — optional speaker push (now-playing, topology, volume). **Options → Use speaker push events (GENA)**; `HOTSONOS_GENA=1` still forces on. Off = poll only.  
 - **Volume** — house logical % for ±; per-room offsets on absolute write (Level all / Wake / ±); Speakers sliders show raw Sonos %.
 
