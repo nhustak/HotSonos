@@ -460,7 +460,7 @@ The phone is a view of the tray app with the same control. PC mode does not disc
 **What the phone can do.** Same delegates and action gate as the tray and MCP:
 
 - Transport, seek, house volume (logical level, room offsets, slider does not unmute), mute, level-all, per-room volume and mute, active room chosen from the PC's room list
-- Daily speaker groups: all speakers, checked rooms, save / select / remove a named preset. Start shuffle follows `ControlShuffleSource`. Daily shuffle and Fresh start use the action gate. Resume shuffle. Favorite slots, Sonos favorites, tags, genres, folders
+- Daily speaker groups: all speakers, checked rooms, save / select / remove a named preset. On Now, the per-speaker check list (and Save group, which edits that list) stays hidden while **All speakers** is on. The switch and the All speakers line are the state. Turning All speakers off shows the room checks. Start shuffle follows `ControlShuffleSource`. Daily shuffle and Fresh start use the action gate. Resume shuffle. Favorite slots, Sonos favorites, tags, genres, folders
 - Queue: play (keep the queue, song on top), queue next, replace / wipe
 - Library search, the folder list (add a UNC path, Daily checkboxes, Discover from Sonos, one shared master folder), create / rename / delete tags, toggle tags on a track (file write, including master dual-write when that default is on), rescan
 - Spotify saved links: play, save, remove. Linking the Spotify account stays on the PC (it opens a browser there)
@@ -666,6 +666,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-10-04 | §6.6 phone remote: LAN API on the tray app, Android client is a remote only |
 | 2026-11-18 | §6.6 phone is a full view: MAUI tabs, Phone pairing screen, restrictions removed. PIN and port 42342 kept |
 | 2026-11-18 | §6.6 phone also runs standalone on the speakers (Auto / PC only / Speakers only). PIN and port 42342 unchanged |
+| 2026-11-19 | §6.6 phone Now: hide the Daily per-speaker check list while All speakers is on |
 | 2026-07-15 | Library plan step 2: TagLib scanner → SQLite cache; rescan UI; MCP status/search/get |
 | 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |

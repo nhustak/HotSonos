@@ -16,6 +16,7 @@ sealed class ControlPage : RemotePage
     readonly Label _daily = RemoteUi.Muted("Daily group");
     readonly Switch _allSpeakers = new();
     readonly VerticalStackLayout _roomChecks = new();
+    readonly VerticalStackLayout _speakerPick = new() { Spacing = 6, IsVisible = false };
     readonly VerticalStackLayout _presets = new();
     readonly Entry _presetName = RemoteUi.Field("Group name");
     readonly VerticalStackLayout _from = new();
@@ -102,6 +103,11 @@ sealed class ControlPage : RemotePage
             await LoadDailyAsync();
         };
 
+        var saveGroup = RemoteUi.Button("Save checked rooms as a group", SavePresetAsync);
+        _speakerPick.Add(_roomChecks);
+        _speakerPick.Add(_presetName);
+        _speakerPick.Add(saveGroup);
+
         var transport = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() } };
         Add(transport, RemoteUi.Button("Previous", () => Go(
             (speaker, ct) => speaker.PreviousAsync(ct),
@@ -145,9 +151,7 @@ sealed class ControlPage : RemotePage
                     Children = { _allSpeakers, new Label { Text = "All speakers", TextColor = Swatches.Ink, VerticalOptions = LayoutOptions.Center } },
                 },
                 _presets,
-                _roomChecks,
-                _presetName,
-                RemoteUi.Button("Save checked rooms as a group", SavePresetAsync)),
+                _speakerPick),
             _speakerShuffle = RemoteUi.Button("Shuffle speaker library", ShuffleLibraryAsync),
             RemoteUi.Muted("Queue"),
             _queue,
@@ -261,6 +265,7 @@ sealed class ControlPage : RemotePage
             _spotify.Clear();
             _heard.Clear();
             _queue.Clear();
+            _speakerPick.IsVisible = false;
             _from.Add(RemoteUi.NeedsPc("HotSonos on the PC"));
             _action.Text = AppServices.Link.Problem ?? "Cannot reach the PC.";
             return;
@@ -345,6 +350,7 @@ sealed class ControlPage : RemotePage
         _heard.Add(RemoteUi.NeedsPc("Heard outside the library"));
         _presets.Clear();
         _roomChecks.Clear();
+        _speakerPick.IsVisible = false;
         _favorites.Clear();
         _queue.Clear();
 
@@ -401,6 +407,7 @@ sealed class ControlPage : RemotePage
         _suppressAll = true;
         _allSpeakers.IsToggled = _groups.AllSpeakers;
         _suppressAll = false;
+        ApplySpeakerChecklist(_groups.AllSpeakers);
         _daily.Text = _groups.AllSpeakers
             ? "All speakers join Daily shuffle, Fresh start, and regroup."
             : (_groups.ActivePreset ?? $"{_groups.Rooms.Count} rooms") + " · unchecked rooms stay out.";
@@ -452,6 +459,9 @@ sealed class ControlPage : RemotePage
         _presetName.Text = "";
         await LoadDailyAsync();
     }
+
+    void ApplySpeakerChecklist(bool allSpeakers) =>
+        _speakerPick.IsVisible = DailyGroupLogic.ShowSpeakerChecklist(allSpeakers);
 
     List<string> CheckedRooms()
     {
