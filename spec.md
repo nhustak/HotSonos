@@ -162,7 +162,7 @@ Match notes: content hash skipped (master often different encode/hi-res). Ambigu
 
 **Step 6** (or step 5 polish): playlist create from filter + play on Sonos; further MCP polish as needed.
 
-**Phone remote** (§6.6, shipped): the Android app is a full view of this PC when the PC answers, and it can also drive the speakers directly. LAN API stays on port **42342** with the 6-digit PIN. Link modes: Auto (PC first), PC only, Speakers only. Client is `src/HotSonos.Remote` (.NET MAUI, not in `HotSonos.slnx`). Library groups (§6.2) stay the next product slice.
+**Phone remote** (§6.6): first launch with no saved pairing opens **Connect** (find the PC on UDP 42343, or type the LAN address and PIN). Connecting uses **PC only** so every tab talks to the tray app. More is always available and holds the address, PIN, and link mode. Library folders and the shared master path can be set from the phone. LAN API stays on port **42342** with the 6-digit PIN. Client is `src/HotSonos.Remote` (.NET MAUI, not in `HotSonos.slnx`). Library groups (§6.2) stay the next product slice.
 
 ---
 
@@ -447,18 +447,22 @@ Access model (target):
 
 ### 6.6 Phone remote — full view of this PC (shipped)
 
-The phone is a view of the tray app with the same control, not a second Sonos controller. It does not discover speakers and it does not send UPnP. MCP stays on `127.0.0.1:42341`.
+The phone is a view of the tray app with the same control. PC mode does not discover speakers and does not send UPnP; that path is only **Speakers only**. MCP stays on `127.0.0.1:42341`. The phone listener stays on the LAN address that shares a /24 with a speaker.
 
 **Why the PIN stayed.** HotList pairs with a long token on port 42356. HotSonos already ships a 6-digit house PIN on port **42342** and header `X-HotSonos-Pin`. Phones already save that PIN, and the listener still binds only the PC address that shares a /24 with a speaker (stricter than HotList's `0.0.0.0`). A new token format would break that pairing without changing who can open a socket on the house LAN. The PIN is still required on every route, compared in fixed time.
 
-**PC pairing.** The main window has a top-bar **Phone** button (tray **Phone…** opens it too). It shows the listening URL, the port, the PIN, **New PIN**, and the Private-network firewall command. Options still has the enable checkbox, port, and PIN. The phone cannot change the PIN, the port, or MCP.
+**PC pairing.** The main window has a top-bar **Phone** button (tray **Phone…** opens it too). It shows the listening address, the port, and the PIN in large type, **Copy**, **New PIN**, and the Private-network firewall command (TCP 42342 and UDP 42343). Options still has the enable checkbox, port, and PIN. The phone cannot change the PIN, the port, or MCP.
+
+**First launch.** With no saved pairing the phone opens **Connect**, not the Now tab and not speaker discovery. **Find PC** sends a UDP probe (`HS1?` to the local /24 broadcast and to 255.255.255.255, port **42343**). The tray answers with its LAN address and HTTP port only — never the PIN — and also announces that reply every couple of seconds on the speaker subnet. **Test and connect** saves the address, port (blank means 42342), and 6-digit PIN, and reports wrong PIN, timed out, unreachable, or any other failure as text on the page. The address and PIN can be changed and tried again. It then stays in **PC only**. **Use speakers without the PC** is the secondary choice and is the only way to open the tabs with no pairing. An emulator does not share the PC's subnet, so Find PC will miss; type the 192.168 address from the Phone window. `10.0.2.2` is the PC loopback, and the listener is not bound there.
+
+**Mode.** Every tab has a tappable line: `PC: <address>`, `Speakers`, `Speakers: <room>`, `PC unreachable`, or `PC: not paired`. It opens **More**. More is never disabled. It holds the address, PIN, Find PC, Test and save, Forget, and Auto / PC only / Speakers only. The tab bar is the phone's own six buttons. Android's built-in bar only keeps five and was greying the rest out, which hid More on a fresh install. A control that needs the PC says so and offers **Open connection** instead of sitting there disabled.
 
 **What the phone can do.** Same delegates and action gate as the tray and MCP:
 
-- Transport, house volume (logical level, room offsets, slider does not unmute), mute, level-all, per-room volume and mute, active room
+- Transport, seek, house volume (logical level, room offsets, slider does not unmute), mute, level-all, per-room volume and mute, active room chosen from the PC's room list
 - Daily speaker groups: all speakers, checked rooms, save / select / remove a named preset. Start shuffle follows `ControlShuffleSource`. Daily shuffle and Fresh start use the action gate. Resume shuffle. Favorite slots, Sonos favorites, tags, genres, folders
 - Queue: play (keep the queue, song on top), queue next, replace / wipe
-- Library search, create / rename / delete tags, toggle tags on a track (file write, including master dual-write when that default is on), rescan
+- Library search, the folder list (add a UNC path, Daily checkboxes, Discover from Sonos, one shared master folder), create / rename / delete tags, toggle tags on a track (file write, including master dual-write when that default is on), rescan
 - Spotify saved links: play, save, remove. Linking the Spotify account stays on the PC (it opens a browser there)
 - Topology: members, regroup, set coordinator, keep house grouped, reboot one speaker or all
 - Wake and nightly settings, wake now / cancel, the playback settings that affect the house (genres, GENA, shuffle sizes, level percent, tag master default)
@@ -471,13 +475,13 @@ Reboot, wipe queue, rescan, regroup, fresh start, and tag delete ask for confirm
 
 **Android app.** `src/HotSonos.Remote` is a .NET MAUI app (`net10.0-android` only, minSdk 24, package `com.hotsonos.remote`). Tabs: Now, Play, Library, Rooms, Reports, More. It is not in `HotSonos.slnx` and not in the MSI, so the Windows build does not need the Android workload. Shared DTOs: `src/HotSonos.Remote.Protocol`. The speaker client is `HotSonos.Core` (already `net10.0`, no Windows APIs): SSDP, SOAP, transport, favorites, and the speaker Music Library. Volume and grouping for the phone live in `SonosDirect` in that same library. Release publish signs with `%USERPROFILE%\.android-keys\hotsonos\` when that upload key exists, and with the debug key otherwise (`HOTSONOS_UPLOAD_KEY_DIR` overrides the folder).
 
-**Standalone.** The phone can run with no PC. Link (Pair and More): **Auto** (default) tries the paired PC for 2 seconds and uses the speakers when it does not answer; **PC only** never falls back; **Speakers only** never calls the PC. The choice is rechecked when the app resumes. A line at the top of each screen says `PC · address`, `Speakers · room`, or `PC unreachable`.
+**Standalone.** The phone can run with no PC after **Use speakers without the PC**. Link (More): **Auto** tries the paired PC for 2 seconds and uses the speakers when it does not answer; **PC only** (what Connect saves) never falls back and keeps polling the PC; **Speakers only** never calls the PC. The choice is rechecked when the app resumes. The line at the top of each screen says `PC: address`, `Speakers`, `Speakers: room`, `PC unreachable`, or `PC: not paired`.
 
 Standalone uses SSDP M-SEARCH for ZonePlayer (`239.255.255.250:1900`) while holding a WifiManager multicast lock (`CHANGE_WIFI_MULTICAST_STATE`), then the same SOAP services as the tray app: ZoneGroupTopology, AVTransport, RenderingControl, ContentDirectory. It does now playing (title, artist, album, art), play/pause/next/previous/seek, house and per-room volume and mute, group/ungroup and set coordinator, Sonos favorites and Sonos playlists, a short queue list, search/browse of the speaker's indexed Music Library (`A:`), play/queue from that, and a random sample from it. That sample is not HotSonos shuffle: no last-played history and no top-up.
 
 HotSonos shuffle, tags, Daily speaker presets, Reports, wake/nightly, and saved Spotify links stay labeled **needs the PC** in speaker mode. PC mode, the PIN, and the LAN-only bind are unchanged. MCP stays on `127.0.0.1:42341`.
 
-**Not on the phone.** Hotkey capture, Quick Tag / Quick Play overlays, tray double-click, flyout, and Start with Windows are PC shell. Master-root browse and library-path editing need the PC file dialog. Bass/treble EQ is not on this surface. Playlist-from-filter is not shipped on the desktop either.
+**Not on the phone.** Hotkey capture, Quick Tag / Quick Play overlays, tray double-click, flyout, and Start with Windows are PC shell (they need the Windows session). Per-folder master maps that differ from each other stay on the PC; the phone can set one shared master path as text. There is no file-browse dialog. Bass/treble EQ is not on this surface. Playlist-from-filter is not shipped on the desktop either. Deleting audio files from disk stays on the PC. Spotify account linking still opens a browser on the PC. The phone cannot change the PIN, the port, or MCP.
 
 ---
 

@@ -52,29 +52,29 @@ sealed class RemoteLive
                     continue;
                 }
 
-                if (link.OnPc)
+                if (link.DrivePc && AppServices.Connection.IsPaired)
                 {
                     var call = await AppServices.Client.GetStatusAsync(ct).ConfigureAwait(false);
                     if (ct.IsCancellationRequested)
                         return;
                     if (call.Kind == RemoteCallKind.Ok && call.Value is not null)
                     {
+                        link.NotePcUp();
                         Status = call.Value;
                         Problem = null;
                     }
-                    else if (call.Kind == RemoteCallKind.Unauthorized)
+                    else
                     {
-                        Problem = "The PC rejected the PIN.";
-                    }
-                    else if (call.Kind == RemoteCallKind.Unreachable)
-                    {
-                        Problem = "Cannot reach the PC.";
+                        var text = call.Detail ?? RemoteFailureText.Describe(Map(call.Kind), null);
+                        link.NotePcDown(text);
+                        Status = null;
+                        Problem = text;
                     }
                 }
-                else if (link.Outcome == PhoneLinkOutcome.PcDown)
+                else if (link.DrivePc)
                 {
                     Status = null;
-                    Problem = link.Problem ?? "Cannot reach the PC.";
+                    Problem = "Enter the PC address and PIN. Tap the line at the top.";
                 }
                 else if (link.Speakers.Zones.Count == 0)
                 {
@@ -104,6 +104,15 @@ sealed class RemoteLive
         }
     }
 
+    static RemoteFailureKind Map(RemoteCallKind kind) => kind switch
+    {
+        RemoteCallKind.Unauthorized => RemoteFailureKind.WrongPin,
+        RemoteCallKind.Timeout => RemoteFailureKind.Timeout,
+        RemoteCallKind.Cancelled => RemoteFailureKind.Cancelled,
+        RemoteCallKind.Failed => RemoteFailureKind.Failed,
+        _ => RemoteFailureKind.Unreachable,
+    };
+
     static RemoteStatusResponse FromSpeakers(SonosHouseSnapshot snap)
     {
         var groups = snap.Zones
@@ -124,7 +133,9 @@ sealed class RemoteLive
                 now.CurrentTrack,
                 now.NumberOfTracks,
                 !string.IsNullOrWhiteSpace(now.AlbumArtUri),
-                now.AlbumArtUri ?? "");
+                now.AlbumArtUri ?? "",
+                now.Position is { } pos ? (int)pos.TotalSeconds : null,
+                now.Duration is { } dur ? (int)dur.TotalSeconds : null);
         return new RemoteStatusResponse(
             true,
             "speakers",

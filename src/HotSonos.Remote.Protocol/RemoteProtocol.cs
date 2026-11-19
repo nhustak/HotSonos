@@ -143,7 +143,9 @@ public static class RemoteNet
         }
 
         portText ??= (portField ?? "").Trim();
-        if (!int.TryParse(portText, NumberStyles.None, CultureInfo.InvariantCulture, out port)
+        if (string.IsNullOrEmpty(portText))
+            port = RemoteApi.DefaultPort;
+        else if (!int.TryParse(portText, NumberStyles.None, CultureInfo.InvariantCulture, out port)
             || port is < 1024 or > 65535)
         {
             error = "Port must be between 1024 and 65535.";
@@ -197,7 +199,9 @@ public sealed record RemoteNowPlayingDto(
     int? Track,
     int? Tracks,
     bool HasArt,
-    string ArtRevision);
+    string ArtRevision,
+    int? PositionSeconds = null,
+    int? DurationSeconds = null);
 
 public sealed record RemoteCommandResponse(bool Ok, string? Message, string? Error);
 

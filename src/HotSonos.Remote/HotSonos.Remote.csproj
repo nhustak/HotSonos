@@ -15,7 +15,7 @@
     <!-- Existing package. Kept so a sideloaded build replaces the previous remote. -->
     <ApplicationId>com.hotsonos.remote</ApplicationId>
     <ApplicationDisplayVersion>$(Version)</ApplicationDisplayVersion>
-    <ApplicationVersion>3</ApplicationVersion>
+    <ApplicationVersion>4</ApplicationVersion>
     <SupportedOSPlatformVersion>24.0</SupportedOSPlatformVersion>
 
     <!-- Debug APK keeps the assemblies inside so adb install works without Fast Deployment. -->

@@ -42,9 +42,9 @@ sealed class ReportsPage : RemotePage
             RemoteUi.Button("Load older", () => LoadAsync(reset: false)));
     }
 
-    protected override void OnAppearing()
+    protected override void OnShown()
     {
-        base.OnAppearing();
+        base.OnShown();
         if (_rows.Children.Count == 0)
             _ = LoadAsync(reset: true);
     }
@@ -60,10 +60,13 @@ sealed class ReportsPage : RemotePage
 
     async Task LoadAsync(bool reset)
     {
-        if (!AppServices.Link.OnPc)
+        if (!AppServices.Link.DrivePc || !AppServices.Link.OnPc)
         {
             _rows.Clear();
-            _status.Text = "Song play history, music, and the event log need the PC.";
+            _rows.Add(RemoteUi.NeedsPc("Song play history, music, and the event log"));
+            _status.Text = AppServices.Link.DrivePc
+                ? (AppServices.Link.Problem ?? "Cannot reach the PC.")
+                : "Song play history, music, and the event log need the PC.";
             return;
         }
 

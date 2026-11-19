@@ -321,6 +321,53 @@ public sealed partial class HotSonosRemoteHost
                 true, st.IsScanning, st.TrackCount, st.SonosUnplayableCount, st.Phase, st.LastScanError, st.Note), RemoteApi.Json);
         });
 
+        app.MapGet("/api/library/config", () => Results.Json(BuildLibraryConfig(state, null), RemoteApi.Json));
+
+        app.MapPost("/api/library/config", async (HttpContext ctx) =>
+        {
+            Log(ctx);
+            var body = await ReadJson<RemoteLibraryConfigBody>(ctx).ConfigureAwait(false);
+            if (body is null)
+                return BadJson();
+            var edits = (body.Roots ?? []).Select(r => new LibraryRootEdit(r.Path ?? "", r.InDaily));
+            if (!LibraryPathRules.TryNormalize(edits, body.MasterRoot, out var roots, out var master, out var error))
+                return Results.Json(BuildLibraryConfig(state, null, error), RemoteApi.Json, statusCode: StatusCodes.Status400BadRequest);
+
+            var settings = state.Settings().EnsureShape();
+            var distinct = DistinctMasters(settings);
+            if (!LibraryPathRules.MasterEditAllowed(distinct, settings.MasterLibraryRoot, master))
+            {
+                return Results.Json(BuildLibraryConfig(
+                    state,
+                    null,
+                    "This PC has different master folders for different library folders. Change that map on the PC."), RemoteApi.Json, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            settings.SonosLibraryRoots = roots.Select(r => r.Path).ToList();
+            settings.DailyLibraryRoots = roots.Where(r => r.InDaily).Select(r => r.Path).ToList();
+            settings.MasterLibraryRoot = master;
+            if (distinct <= 1)
+            {
+                settings.MasterLibraryMappings = string.IsNullOrWhiteSpace(master)
+                    ? []
+                    : roots.Select(r => new MasterLibraryMapping { SonosPath = r.Path, MasterRoot = master }).ToList();
+            }
+
+            settings.EnsureShape();
+            SaveSettings(state);
+            return Results.Json(BuildLibraryConfig(state, "Saved library folders."), RemoteApi.Json);
+        });
+
+        app.MapPost("/api/library/discover", async (HttpContext ctx) =>
+        {
+            Log(ctx);
+            var lib = state.Library;
+            if (lib is null)
+                return Results.Json(BuildLibraryConfig(state, null, "Library service not available."), RemoteApi.Json);
+            var (ok, message, _) = await lib.DiscoverRootsFromSonosAsync(ctx.RequestAborted).ConfigureAwait(false);
+            return Results.Json(BuildLibraryConfig(state, ok ? message : null, ok ? null : message), RemoteApi.Json);
+        });
+
         app.MapGet("/api/library/track", (HttpContext ctx) =>
         {
             var path = ctx.Request.Query["path"].ToString();
@@ -584,6 +631,43 @@ public sealed partial class HotSonosRemoteHost
         if (body.ControlShuffleSource is not null) settings.ControlShuffleSource = body.ControlShuffleSource.Trim();
         if (body.PreferredCoordinator is not null)
             settings.PreferredHouseCoordinatorRoom = string.IsNullOrWhiteSpace(body.PreferredCoordinator) ? null : body.PreferredCoordinator.Trim();
+    }
+
+    private static int DistinctMasters(AppSettings settings) =>
+        (settings.MasterLibraryMappings ?? [])
+            .Select(m => m.MasterRoot)
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim().TrimEnd('\\', '/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+    private static RemoteLibraryConfigResponse BuildLibraryConfig(HotSonosMcpState state, string? note, string? error = null)
+    {
+        var settings = state.Settings().EnsureShape();
+        var daily = settings.GetEffectiveDailyLibraryRoots();
+        var roots = settings.SonosLibraryRoots.Select(path =>
+        {
+            var trimmed = path.Trim().TrimEnd('\\', '/');
+            var inDaily = daily.Any(d => string.Equals(d.Trim().TrimEnd('\\', '/'), trimmed, StringComparison.OrdinalIgnoreCase));
+            return new RemoteLibraryRootDto(trimmed, inDaily);
+        }).ToList();
+        var st = state.Library?.GetStatus();
+        var distinct = DistinctMasters(settings);
+        var mapNote = distinct > 1
+            ? "This PC has different master folders per library folder. The phone shows the first. The full map stays on the PC."
+            : null;
+        var combined = string.Join(" ", new[] { note, mapNote }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        return new RemoteLibraryConfigResponse(
+            error is null,
+            roots,
+            settings.MasterLibraryRoot,
+            distinct,
+            st?.IsScanning == true,
+            st?.TrackCount ?? 0,
+            st?.Phase,
+            st?.LastScanError,
+            string.IsNullOrWhiteSpace(combined) ? null : combined,
+            error);
     }
 
     private static RemoteSettingsResponse BuildSettings(HotSonosMcpState state)

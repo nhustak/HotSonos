@@ -243,3 +243,38 @@ public sealed class RemoteSpotifyBody
     public string? Name { get; set; }
     public string? Reference { get; set; }
 }
+
+public sealed class RemoteSeekBody
+{
+    public int Seconds { get; set; }
+}
+
+public sealed record RemoteQueueResponse(bool Ok, IReadOnlyList<RemoteQueueItemDto> Tracks, string? Error);
+
+public sealed record RemoteQueueItemDto(int Number, string Title, string Artist);
+
+public sealed record RemoteLibraryRootDto(string Path, bool InDaily);
+
+public sealed record RemoteLibraryConfigResponse(
+    bool Ok,
+    IReadOnlyList<RemoteLibraryRootDto> Roots,
+    string? MasterRoot,
+    int DistinctMasters,
+    bool Scanning,
+    int TrackCount,
+    string? Phase,
+    string? LastError,
+    string? Note,
+    string? Error);
+
+public sealed class RemoteLibraryConfigBody
+{
+    public List<RemoteLibraryRootBody>? Roots { get; set; }
+    public string? MasterRoot { get; set; }
+}
+
+public sealed class RemoteLibraryRootBody
+{
+    public string? Path { get; set; }
+    public bool InDaily { get; set; }
+}

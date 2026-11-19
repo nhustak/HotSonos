@@ -7,41 +7,59 @@ using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote;
 
-enum RemoteCallKind
+public enum RemoteCallKind
 {
     Ok,
     Unauthorized,
     Unreachable,
+    Timeout,
     Failed,
     Cancelled,
 }
 
-sealed record RemoteCall<T>(T? Value, RemoteCallKind Kind, string? Detail);
+public sealed record RemoteCall<T>(T? Value, RemoteCallKind Kind, string? Detail);
 
 /// <summary>
 /// Talks only to the tray app. Redirects are off so the house PIN is not forwarded.
 /// Status, art, search, and sources use 8 seconds. Play, shuffle, and queue use 90.
 /// </summary>
-sealed class RemoteClient : IDisposable
+public sealed class RemoteClient : IDisposable
 {
     static readonly TimeSpan Fast = TimeSpan.FromSeconds(8);
     static readonly TimeSpan Slow = TimeSpan.FromSeconds(90);
 
-    readonly HttpClient _http = new(new SocketsHttpHandler
-    {
-        AllowAutoRedirect = false,
-        ConnectTimeout = TimeSpan.FromSeconds(5),
-    })
-    {
-        Timeout = Timeout.InfiniteTimeSpan,
-    };
+    readonly HttpClient _http;
+    PcTarget? _target;
 
+    public RemoteClient()
+        : this(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        })
+    {
+    }
+
+    /// <summary>Test hook. The handler receives each request after the address and PIN are stamped on it.</summary>
+    public RemoteClient(HttpMessageHandler handler)
+    {
+        _http = new HttpClient(handler, disposeHandler: true)
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+    }
+
+    /// <summary>
+    /// Point later requests at this PC. Safe to call again after requests have
+    /// already been sent: the address and PIN are stamped onto each request,
+    /// because HttpClient freezes BaseAddress and default headers after the first send.
+    /// </summary>
     public void Apply(string host, int port, string pin)
     {
-        _http.BaseAddress = new UriBuilder("http", host, port).Uri;
-        _http.DefaultRequestHeaders.Remove(RemoteApi.PinHeader);
-        _http.DefaultRequestHeaders.TryAddWithoutValidation(RemoteApi.PinHeader, pin);
+        _target = new PcTarget(new UriBuilder("http", host, port).Uri, pin ?? "");
     }
+
+    sealed record PcTarget(Uri BaseUri, string Pin);
 
     public void Dispose() => _http.Dispose();
 
@@ -67,6 +85,12 @@ sealed class RemoteClient : IDisposable
 
     public Task<RemoteCall<RemoteCommandResponse>> StepVolumeAsync(int direction, CancellationToken ct) =>
         PostAsync("api/volume/step", new RemoteVolumeStepBody { Direction = direction }, RemoteJsonContext.Default.RemoteVolumeStepBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> SeekAsync(int seconds, CancellationToken ct) =>
+        PostAsync("api/transport/seek", new RemoteSeekBody { Seconds = seconds }, RemoteJsonContext.Default.RemoteSeekBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteQueueResponse>> GetQueueAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/queue", null, Fast, RemoteJsonContext.Default.RemoteQueueResponse, ct);
 
     public Task<RemoteCall<RemoteCommandResponse>> PlayPauseAsync(CancellationToken ct) =>
         EmptyAsync("api/transport/play-pause", Fast, ct);
@@ -179,6 +203,15 @@ sealed class RemoteClient : IDisposable
     public Task<RemoteCall<RemoteLibraryStatusResponse>> GetLibraryStatusAsync(CancellationToken ct) =>
         SendAsync(HttpMethod.Get, "api/library/status", null, Fast, RemoteJsonContext.Default.RemoteLibraryStatusResponse, ct);
 
+    public Task<RemoteCall<RemoteLibraryConfigResponse>> GetLibraryConfigAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/library/config", null, Fast, RemoteJsonContext.Default.RemoteLibraryConfigResponse, ct);
+
+    public Task<RemoteCall<RemoteLibraryConfigResponse>> SaveLibraryConfigAsync(RemoteLibraryConfigBody body, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, "api/library/config", Json(body, RemoteJsonContext.Default.RemoteLibraryConfigBody), Fast, RemoteJsonContext.Default.RemoteLibraryConfigResponse, ct);
+
+    public Task<RemoteCall<RemoteLibraryConfigResponse>> DiscoverLibraryAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, "api/library/discover", null, Slow, RemoteJsonContext.Default.RemoteLibraryConfigResponse, ct);
+
     public Task<RemoteCall<RemoteCommandResponse>> RescanAsync(bool forceAll, CancellationToken ct) =>
         PostAsync("api/library/rescan", new RemoteRescanBody { ForceAll = forceAll }, RemoteJsonContext.Default.RemoteRescanBody, Fast, ct);
 
@@ -247,9 +280,11 @@ sealed class RemoteClient : IDisposable
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(Fast);
-            using var response = await _http.GetAsync("api/art", cts.Token).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Get, "api/art");
+            Stamp(request);
+            using var response = await _http.SendAsync(request, cts.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
-                return new(null, RemoteCallKind.Unauthorized, null);
+                return new(null, RemoteCallKind.Unauthorized, RemoteFailureText.Describe(RemoteFailureKind.WrongPin, null));
             if (response.StatusCode == HttpStatusCode.NotFound)
                 return new(null, RemoteCallKind.Ok, null);
             if (!response.IsSuccessStatusCode)
@@ -257,9 +292,9 @@ sealed class RemoteClient : IDisposable
             var bytes = await response.Content.ReadAsByteArrayAsync(cts.Token).ConfigureAwait(false);
             return new(bytes, RemoteCallKind.Ok, null);
         }
-        catch (Exception ex) when (Classify(ex, ct) is { } kind)
+        catch (Exception ex) when (Classify(ex, ct) is { } failure)
         {
-            return new(null, kind, null);
+            return new(null, failure.Kind, failure.Detail);
         }
     }
 
@@ -286,9 +321,10 @@ sealed class RemoteClient : IDisposable
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(timeout);
             using var request = new HttpRequestMessage(method, path) { Content = content };
+            Stamp(request);
             using var response = await _http.SendAsync(request, cts.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
-                return new(default, RemoteCallKind.Unauthorized, null);
+                return new(default, RemoteCallKind.Unauthorized, RemoteFailureText.Describe(RemoteFailureKind.WrongPin, null));
 
             var text = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
             T? value = default;
@@ -315,20 +351,46 @@ sealed class RemoteClient : IDisposable
 
             return new(value, RemoteCallKind.Ok, null);
         }
-        catch (Exception ex) when (Classify(ex, ct) is { } kind)
+        catch (Exception ex) when (Classify(ex, ct) is { } failure)
         {
-            return new(default, kind, null);
+            return new(default, failure.Kind, failure.Detail);
         }
     }
 
-    static RemoteCallKind? Classify(Exception ex, CancellationToken ct)
+    void Stamp(HttpRequestMessage request)
+    {
+        var target = _target ?? throw new InvalidOperationException("Apply the PC address before sending.");
+        var path = request.RequestUri;
+        request.RequestUri = path is { IsAbsoluteUri: true }
+            ? path
+            : new Uri(target.BaseUri, path?.OriginalString ?? "");
+        request.Headers.Remove(RemoteApi.PinHeader);
+        request.Headers.TryAddWithoutValidation(RemoteApi.PinHeader, target.Pin);
+    }
+
+    static StringContent Json<T>(T body, JsonTypeInfo<T> info)
+    {
+        var json = JsonSerializer.Serialize(body, info);
+        return new StringContent(json, Encoding.UTF8, "application/json");
+    }
+
+    static (RemoteCallKind Kind, string Detail)? Classify(Exception ex, CancellationToken ct)
     {
         if (ex is ObjectDisposedException)
-            return RemoteCallKind.Cancelled;
+            return (RemoteCallKind.Cancelled, RemoteFailureText.Describe(RemoteFailureKind.Cancelled, null));
         if (ex is OperationCanceledException)
-            return ct.IsCancellationRequested ? RemoteCallKind.Cancelled : RemoteCallKind.Unreachable;
-        if (ex is HttpRequestException or SocketException or IOException)
-            return RemoteCallKind.Unreachable;
+        {
+            var kind = RemoteFailureText.Classify(ct.IsCancellationRequested, TransportFault.Canceled);
+            var call = kind == RemoteFailureKind.Cancelled ? RemoteCallKind.Cancelled : RemoteCallKind.Timeout;
+            return (call, RemoteFailureText.Describe(kind, null));
+        }
+
+        if (ex is HttpRequestException)
+            return (RemoteCallKind.Unreachable, RemoteFailureText.Describe(RemoteFailureKind.Unreachable, ex.Message));
+        if (ex is SocketException)
+            return (RemoteCallKind.Unreachable, RemoteFailureText.Describe(RemoteFailureKind.Unreachable, ex.Message));
+        if (ex is IOException)
+            return (RemoteCallKind.Unreachable, RemoteFailureText.Describe(RemoteFailureKind.Unreachable, ex.Message));
         return null;
     }
 }

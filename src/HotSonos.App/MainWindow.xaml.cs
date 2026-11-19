@@ -5225,9 +5225,13 @@ public partial class MainWindow : Window
             port = typed;
 
         // One elevated prompt. Private profile only — do not open Public.
+        // No RemoteAddress filter: an emulator's source address is the virtual switch, not the house subnet.
+        var discover = HotSonos.Remote.Protocol.RemoteDiscovery.Port;
         var args =
             "/c netsh advfirewall firewall delete rule name=\"HotSonos Remote\" " +
-            $"& netsh advfirewall firewall add rule name=\"HotSonos Remote\" dir=in action=allow protocol=TCP localport={port} profile=private";
+            $"& netsh advfirewall firewall add rule name=\"HotSonos Remote\" dir=in action=allow protocol=TCP localport={port} profile=private " +
+            "& netsh advfirewall firewall delete rule name=\"HotSonos Remote Discover\" " +
+            $"& netsh advfirewall firewall add rule name=\"HotSonos Remote Discover\" dir=in action=allow protocol=UDP localport={discover} profile=private";
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -5238,7 +5242,7 @@ public partial class MainWindow : Window
                 Verb = "runas",
                 WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
             });
-            SetStatus($"Allow HotSonos remote TCP {port} on Private networks (approve the prompt).", warn: false);
+            SetStatus($"Allow HotSonos remote TCP {port} and UDP {discover} on Private networks (approve the prompt).", warn: false);
         }
         catch (Exception ex)
         {

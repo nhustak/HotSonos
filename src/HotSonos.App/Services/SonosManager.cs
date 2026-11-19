@@ -1217,6 +1217,20 @@ public sealed class SonosManager
     public async Task<IReadOnlyList<SonosFavorite>> GetFavoritesAsync(CancellationToken ct = default) =>
         _controller is null ? [] : await _controller.GetFavoritesAsync(ct).ConfigureAwait(false);
 
+    public Task SeekToAsync(TimeSpan position, CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No active room.");
+        if (position < TimeSpan.Zero)
+            position = TimeSpan.Zero;
+        return _controller.SeekToTimeAsync(position, ct);
+    }
+
+    public Task<IReadOnlyList<SonosQueueTrack>> GetQueueAsync(int limit = 30, CancellationToken ct = default) =>
+        _controller is null
+            ? Task.FromResult<IReadOnlyList<SonosQueueTrack>>([])
+            : _controller.GetQueueAsync(limit, ct);
+
     /// <summary>
     /// Discovers Music Library filesystem roots from Sonos <c>A:TRACKS</c>
     /// (<c>x-file-cifs</c> URIs → UNC folders). Refreshes discovery if needed.

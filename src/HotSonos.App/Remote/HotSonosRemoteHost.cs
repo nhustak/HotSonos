@@ -40,6 +40,7 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
     private WebApplication? _app;
     private Task? _runTask;
+    private RemoteDiscoveryListener? _discovery;
 
     public string? Endpoint { get; private set; }
     public bool IsRunning => _app is not null && _runTask is { IsCompleted: false };
@@ -169,6 +170,15 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
             throw ex;
         }
 
+        try
+        {
+            _discovery = new RemoteDiscoveryListener(ip, port);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Phone discovery did not start", ex);
+        }
+
         AppLog.Info($"Remote listening at {Endpoint}");
         AppLog.Lifecycle($"Remote listening {Endpoint}");
     }
@@ -196,6 +206,14 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
         }
         finally
         {
+            var discovery = _discovery;
+            _discovery = null;
+            if (discovery is not null)
+            {
+                try { await discovery.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception ex) { AppLog.Warn("Phone discovery stop failed", ex); }
+            }
+
             _app = null;
             _runTask = null;
             Endpoint = null;
@@ -229,7 +247,9 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
                         np.CurrentTrack,
                         np.NumberOfTracks,
                         !string.IsNullOrWhiteSpace(artUri),
-                        RemoteNet.ArtRevision(artUri)),
+                        RemoteNet.ArtRevision(artUri),
+                        np.Position is { } pos ? (int)pos.TotalSeconds : null,
+                        np.Duration is { } dur ? (int)dur.TotalSeconds : null),
                 state.Sonos.HouseLogicalVolume,
                 state.Sonos.HouseMuted,
                 state.Wake?.IsActive == true,
@@ -254,6 +274,39 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
             Log(ctx);
             var (volume, muted) = await hooks.SampleVolumeAsync(ctx.RequestAborted).ConfigureAwait(false);
             return Results.Json(new RemoteVolumeSampleResponse(true, volume, muted, null), RemoteApi.Json);
+        });
+
+        app.MapPost("/api/transport/seek", async (HttpContext ctx) =>
+        {
+            Log(ctx);
+            var body = await ReadJson<RemoteSeekBody>(ctx).ConfigureAwait(false);
+            if (body is null || body.Seconds is < 0 or > 86400)
+                return Results.Json(new RemoteCommandResponse(false, null, "Seek must be 0 to 86400 seconds."), RemoteApi.Json, statusCode: StatusCodes.Status400BadRequest);
+            try
+            {
+                await state.Sonos.SeekToAsync(TimeSpan.FromSeconds(body.Seconds), ctx.RequestAborted).ConfigureAwait(false);
+                return Results.Json(new RemoteCommandResponse(true, "Seeked", null), RemoteApi.Json);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Remote seek failed", ex);
+                return Results.Json(new RemoteCommandResponse(false, null, ex.Message), RemoteApi.Json);
+            }
+        });
+
+        app.MapGet("/api/queue", async (HttpContext ctx) =>
+        {
+            try
+            {
+                var tracks = await state.Sonos.GetQueueAsync(30, ctx.RequestAborted).ConfigureAwait(false);
+                var rows = tracks.Select(t => new RemoteQueueItemDto(t.Number, t.Title, t.Artist)).ToList();
+                return Results.Json(new RemoteQueueResponse(true, rows, null), RemoteApi.Json);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Remote queue failed", ex);
+                return Results.Json(new RemoteQueueResponse(false, [], ex.Message), RemoteApi.Json);
+            }
         });
 
         app.MapPost("/api/transport/play-pause", Transport(state, HotsonosAction.PlayPause));
