@@ -116,4 +116,11 @@ public static class DailyGroupLogic
             .FirstOrDefault(p => SameRooms(p.Rooms, model.Rooms))
             ?.Name;
     }
+
+    /// <summary>
+    /// Phone Now screen: the per-speaker check list is how a subset is picked.
+    /// When All speakers is on, hide it. The switch and the All speakers line are the state.
+    /// A named group (All off) keeps the list so rooms can be changed.
+    /// </summary>
+    public static bool ShowSpeakerChecklist(bool allSpeakers) => !allSpeakers;
 }

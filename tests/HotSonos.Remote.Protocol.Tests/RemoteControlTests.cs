@@ -131,6 +131,13 @@ public class DailyGroupLogicTests
         Assert.Equal(["Office"], model.Rooms);
         Assert.Equal("Group not found.", DailyGroupLogic.RemovePreset(model, "office"));
     }
+
+    [Fact]
+    public void ShowSpeakerChecklist_HidesTheRoomListWhenAllSpeakersIsOn()
+    {
+        Assert.False(DailyGroupLogic.ShowSpeakerChecklist(allSpeakers: true));
+        Assert.True(DailyGroupLogic.ShowSpeakerChecklist(allSpeakers: false));
+    }
 }
 
 public class RemoteSettingsRulesTests
