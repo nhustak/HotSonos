@@ -51,13 +51,21 @@ sealed class ConnectionForm
             return null;
         }
 
-        AppServices.Client.Apply(host, port, pin);
-        Status.Text = "Connecting…";
-        var call = await AppServices.Client.GetStatusAsync(CancellationToken.None);
-        Status.Text = call.Kind == RemoteCallKind.Ok
-            ? "Connected to " + host + ". " + (call.Value?.NowPlaying?.Title ?? call.Value?.ActiveGroupLabel ?? "Nothing playing yet.")
-            : call.Detail ?? "Could not reach the PC.";
-        return call;
+        try
+        {
+            AppServices.Client.Apply(host, port, pin);
+            Status.Text = "Connecting…";
+            var call = await AppServices.Client.GetStatusAsync(CancellationToken.None);
+            Status.Text = call.Kind == RemoteCallKind.Ok
+                ? "Connected to " + host + ". " + (call.Value?.NowPlaying?.Title ?? call.Value?.ActiveGroupLabel ?? "Nothing playing yet.")
+                : call.Detail ?? "Could not reach the PC.";
+            return call;
+        }
+        catch (Exception ex)
+        {
+            Status.Text = FaultText(ex);
+            return null;
+        }
     }
 
     public bool Save()
@@ -68,12 +76,23 @@ sealed class ConnectionForm
             return false;
         }
 
-        var connection = AppServices.Connection;
-        connection.Host = host;
-        connection.Port = port;
-        connection.Pin = pin;
-        connection.Save();
-        AppServices.Client.Apply(host, port, pin);
-        return true;
+        try
+        {
+            var connection = AppServices.Connection;
+            connection.Host = host;
+            connection.Port = port;
+            connection.Pin = pin;
+            connection.Save();
+            AppServices.Client.Apply(host, port, pin);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Status.Text = FaultText(ex);
+            return false;
+        }
     }
+
+    static string FaultText(Exception ex) =>
+        string.IsNullOrWhiteSpace(ex.Message) ? "Could not connect." : ex.Message;
 }

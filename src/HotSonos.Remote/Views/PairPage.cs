@@ -48,13 +48,20 @@ sealed class PairPage : ContentPage
 
     async Task ConnectAsync()
     {
-        var call = await _form.ProbeAsync();
-        if (call is not { Kind: RemoteCallKind.Ok })
-            return;
-        if (!_form.Save())
-            return;
-        AppServices.Link.SetPreference(PhoneLinkPreference.Pc);
-        App.EnterApp();
+        try
+        {
+            var call = await _form.ProbeAsync();
+            if (call is not { Kind: RemoteCallKind.Ok })
+                return;
+            if (!_form.Save())
+                return;
+            AppServices.Link.SetPreference(PhoneLinkPreference.Pc);
+            App.EnterApp();
+        }
+        catch (Exception ex)
+        {
+            _form.Status.Text = string.IsNullOrWhiteSpace(ex.Message) ? "Could not connect." : ex.Message;
+        }
     }
 
     Task SpeakersAsync()

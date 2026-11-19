@@ -7,7 +7,7 @@ using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote;
 
-enum RemoteCallKind
+public enum RemoteCallKind
 {
     Ok,
     Unauthorized,
@@ -17,32 +17,49 @@ enum RemoteCallKind
     Cancelled,
 }
 
-sealed record RemoteCall<T>(T? Value, RemoteCallKind Kind, string? Detail);
+public sealed record RemoteCall<T>(T? Value, RemoteCallKind Kind, string? Detail);
 
 /// <summary>
 /// Talks only to the tray app. Redirects are off so the house PIN is not forwarded.
 /// Status, art, search, and sources use 8 seconds. Play, shuffle, and queue use 90.
 /// </summary>
-sealed class RemoteClient : IDisposable
+public sealed class RemoteClient : IDisposable
 {
     static readonly TimeSpan Fast = TimeSpan.FromSeconds(8);
     static readonly TimeSpan Slow = TimeSpan.FromSeconds(90);
 
-    readonly HttpClient _http = new(new SocketsHttpHandler
-    {
-        AllowAutoRedirect = false,
-        ConnectTimeout = TimeSpan.FromSeconds(5),
-    })
-    {
-        Timeout = Timeout.InfiniteTimeSpan,
-    };
+    readonly HttpClient _http;
+    PcTarget? _target;
 
+    public RemoteClient()
+        : this(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        })
+    {
+    }
+
+    /// <summary>Test hook. The handler receives each request after the address and PIN are stamped on it.</summary>
+    public RemoteClient(HttpMessageHandler handler)
+    {
+        _http = new HttpClient(handler, disposeHandler: true)
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+    }
+
+    /// <summary>
+    /// Point later requests at this PC. Safe to call again after requests have
+    /// already been sent: the address and PIN are stamped onto each request,
+    /// because HttpClient freezes BaseAddress and default headers after the first send.
+    /// </summary>
     public void Apply(string host, int port, string pin)
     {
-        _http.BaseAddress = new UriBuilder("http", host, port).Uri;
-        _http.DefaultRequestHeaders.Remove(RemoteApi.PinHeader);
-        _http.DefaultRequestHeaders.TryAddWithoutValidation(RemoteApi.PinHeader, pin);
+        _target = new PcTarget(new UriBuilder("http", host, port).Uri, pin ?? "");
     }
+
+    sealed record PcTarget(Uri BaseUri, string Pin);
 
     public void Dispose() => _http.Dispose();
 
@@ -263,7 +280,9 @@ sealed class RemoteClient : IDisposable
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(Fast);
-            using var response = await _http.GetAsync("api/art", cts.Token).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Get, "api/art");
+            Stamp(request);
+            using var response = await _http.SendAsync(request, cts.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
                 return new(null, RemoteCallKind.Unauthorized, RemoteFailureText.Describe(RemoteFailureKind.WrongPin, null));
             if (response.StatusCode == HttpStatusCode.NotFound)
@@ -302,6 +321,7 @@ sealed class RemoteClient : IDisposable
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(timeout);
             using var request = new HttpRequestMessage(method, path) { Content = content };
+            Stamp(request);
             using var response = await _http.SendAsync(request, cts.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
                 return new(default, RemoteCallKind.Unauthorized, RemoteFailureText.Describe(RemoteFailureKind.WrongPin, null));
@@ -335,6 +355,17 @@ sealed class RemoteClient : IDisposable
         {
             return new(default, failure.Kind, failure.Detail);
         }
+    }
+
+    void Stamp(HttpRequestMessage request)
+    {
+        var target = _target ?? throw new InvalidOperationException("Apply the PC address before sending.");
+        var path = request.RequestUri;
+        request.RequestUri = path is { IsAbsoluteUri: true }
+            ? path
+            : new Uri(target.BaseUri, path?.OriginalString ?? "");
+        request.Headers.Remove(RemoteApi.PinHeader);
+        request.Headers.TryAddWithoutValidation(RemoteApi.PinHeader, target.Pin);
     }
 
     static StringContent Json<T>(T body, JsonTypeInfo<T> info)
