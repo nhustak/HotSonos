@@ -55,6 +55,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action default is "tools platform-tools". The old "tools"
+          # package was removed from the SDK repo, so that default fails with
+          # "Failed to find package 'tools'". cmdline-tools is installed by
+          # the action itself; platform-tools is the package we still need.
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android platform
         run: |
