@@ -17,12 +17,12 @@ sealed class TopologyPage : RemotePage
         {
             if (_suppressKeep)
                 return;
-            if (!AppServices.Link.OnPc)
+            if (!AppServices.Link.DrivePc)
             {
                 _suppressKeep = true;
                 _keep.IsToggled = !e.Value;
                 _suppressKeep = false;
-                _status.Text = "Keep house grouped needs the PC.";
+                _status.Text = RemoteFailureText.PcRequired("Keep house grouped");
                 return;
             }
 
@@ -52,9 +52,9 @@ sealed class TopologyPage : RemotePage
             _volumes);
     }
 
-    protected override void OnAppearing()
+    protected override void OnShown()
     {
-        base.OnAppearing();
+        base.OnShown();
         _ = LoadAsync();
     }
 
@@ -62,9 +62,19 @@ sealed class TopologyPage : RemotePage
 
     async Task LoadAsync()
     {
-        if (!AppServices.Link.OnPc)
+        if (!AppServices.Link.DrivePc)
         {
             await LoadSpeakersAsync();
+            return;
+        }
+
+        if (!AppServices.Link.OnPc)
+        {
+            _groups.Clear();
+            _members.Clear();
+            _volumes.Clear();
+            _groups.Add(RemoteUi.NeedsPc("Rooms on the PC"));
+            _status.Text = AppServices.Link.Problem ?? "Cannot reach the PC.";
             return;
         }
 
@@ -124,12 +134,9 @@ sealed class TopologyPage : RemotePage
     async Task LoadSpeakersAsync()
     {
         var house = AppServices.Link.Speakers;
-        _suppressKeep = true;
-        _keep.IsEnabled = false;
-        _suppressKeep = false;
         _status.Text = house.Zones.Count == 0
             ? (AppServices.Link.Problem ?? "No speakers yet.")
-            : "Keep grouped, Daily regroup, and reboot need the PC.";
+            : RemoteFailureText.PcRequired("Keep grouped, Daily regroup, and reboot");
 
         _groups.Clear();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -216,7 +223,7 @@ sealed class TopologyPage : RemotePage
 
     async Task RegroupAsync()
     {
-        if (!AppServices.Link.OnPc)
+        if (!AppServices.Link.DrivePc)
         {
             var room = AppServices.Link.Speakers.ActiveZone?.RoomName;
             if (room is null)
@@ -249,7 +256,7 @@ sealed class TopologyPage : RemotePage
 
     async Task RegroupRoomAsync(string room)
     {
-        if (!AppServices.Link.OnPc)
+        if (!AppServices.Link.DrivePc)
         {
             await LeadAsync(room);
             return;
@@ -263,9 +270,9 @@ sealed class TopologyPage : RemotePage
 
     async Task RebootAsync(string? room, bool all)
     {
-        if (!AppServices.Link.OnPc)
+        if (!AppServices.Link.DrivePc)
         {
-            _status.Text = "Reboot needs the PC.";
+            _status.Text = RemoteFailureText.PcRequired("Reboot");
             return;
         }
 

@@ -33,8 +33,20 @@ public static class PhoneLinkPolicy
 
     public static string Banner(PhoneLinkOutcome outcome, string? pcHost, string? room) => outcome switch
     {
-        PhoneLinkOutcome.Pc => string.IsNullOrWhiteSpace(pcHost) ? "PC" : "PC · " + pcHost.Trim(),
-        PhoneLinkOutcome.PcDown => "PC unreachable",
-        _ => string.IsNullOrWhiteSpace(room) ? "Speakers" : "Speakers · " + room.Trim(),
+        PhoneLinkOutcome.Pc => string.IsNullOrWhiteSpace(pcHost) ? "PC" : "PC: " + pcHost.Trim(),
+        PhoneLinkOutcome.PcDown => string.IsNullOrWhiteSpace(pcHost) ? "PC: not paired" : "PC unreachable",
+        _ => string.IsNullOrWhiteSpace(room) ? "Speakers" : "Speakers: " + room.Trim(),
     };
+}
+
+/// <summary>Whether the phone should open Connect before the tabs.</summary>
+public static class PhoneLaunch
+{
+    /// <summary>
+    /// First launch, and any later launch with no saved pairing, opens Connect.
+    /// Speakers only is an explicit choice and opens the tabs without a PC.
+    /// A saved address and PIN opens the tabs.
+    /// </summary>
+    public static bool OpenConnectScreen(PhoneLinkPreference preference, bool paired) =>
+        !paired && preference != PhoneLinkPreference.Standalone;
 }

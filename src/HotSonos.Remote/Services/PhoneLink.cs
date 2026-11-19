@@ -12,8 +12,8 @@ sealed class PhoneLink
     const string Key = "phone.link";
 
     public PhoneLinkPreference Preference { get; private set; } = PhoneLinkPreference.Auto;
-    public PhoneLinkOutcome Outcome { get; private set; } = PhoneLinkOutcome.Speakers;
-    public string Banner { get; private set; } = "Speakers";
+    public PhoneLinkOutcome Outcome { get; private set; } = PhoneLinkOutcome.PcDown;
+    public string Banner { get; private set; } = "PC: not paired";
     public string? Problem { get; private set; }
 
     /// <summary>False until the first reachability check finishes. The poll waits so it does not discover at the same time.</summary>
@@ -22,6 +22,9 @@ sealed class PhoneLink
     public event Action? Changed;
 
     public bool OnPc => Outcome == PhoneLinkOutcome.Pc;
+
+    /// <summary>PC only, or a live PC. Screens use the PC API and do not substitute speakers.</summary>
+    public bool DrivePc => Preference == PhoneLinkPreference.Pc || OnPc;
 
     public PhoneLink()
     {
@@ -32,10 +35,20 @@ sealed class PhoneLink
             "standalone" => PhoneLinkPreference.Standalone,
             _ => PhoneLinkPreference.Auto,
         };
-        if (Preference != PhoneLinkPreference.Standalone && (Preference == PhoneLinkPreference.Pc || AppServices.Connection.IsPaired))
+        if (Preference == PhoneLinkPreference.Standalone)
+        {
+            Outcome = PhoneLinkOutcome.Speakers;
+            Banner = "Speakers";
+        }
+        else if (AppServices.Connection.IsPaired)
         {
             Outcome = PhoneLinkOutcome.Pc;
             Banner = PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, AppServices.Connection.Host, null);
+        }
+        else
+        {
+            Outcome = PhoneLinkOutcome.PcDown;
+            Banner = "PC: not paired";
         }
     }
 
@@ -57,24 +70,56 @@ sealed class PhoneLink
             Publish(PhoneLinkOutcome.Speakers, null);
     }
 
+    /// <summary>A status poll reached the PC. PC-only mode recovers without waiting for resume.</summary>
+    public void NotePcUp()
+    {
+        if (Preference == PhoneLinkPreference.Standalone)
+            return;
+        if (OnPc && Problem is null)
+            return;
+        Publish(PhoneLinkOutcome.Pc, null);
+    }
+
+    /// <summary>A status poll missed the PC. Auto does not leave a live PC session on one miss.</summary>
+    public void NotePcDown(string problem)
+    {
+        if (Preference == PhoneLinkPreference.Pc)
+        {
+            Publish(PhoneLinkOutcome.PcDown, problem);
+            return;
+        }
+
+        if (Outcome == PhoneLinkOutcome.Pc)
+        {
+            Problem = problem;
+            Ready = true;
+            MainThread.BeginInvokeOnMainThread(() => Changed?.Invoke());
+        }
+    }
+
     public async Task ResolveAsync(CancellationToken ct)
     {
         var paired = AppServices.Connection.IsPaired;
         var reachable = false;
+        string? miss = null;
         if (Preference != PhoneLinkPreference.Standalone && paired)
         {
             var connection = AppServices.Connection;
             AppServices.Client.Apply(connection.Host, connection.Port, connection.Pin);
+            var wait = Preference == PhoneLinkPreference.Pc ? TimeSpan.FromSeconds(6) : TimeSpan.FromSeconds(2);
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            limit.CancelAfter(TimeSpan.FromSeconds(2));
+            limit.CancelAfter(wait);
             try
             {
                 var call = await AppServices.Client.GetStatusAsync(limit.Token).ConfigureAwait(false);
                 reachable = call.Kind == RemoteCallKind.Ok;
+                if (!reachable)
+                    miss = call.Detail;
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 reachable = false;
+                miss = RemoteFailureText.Describe(RemoteFailureKind.Timeout, null);
             }
         }
 
@@ -95,7 +140,10 @@ sealed class PhoneLink
             return;
         }
 
-        Publish(outcome, outcome == PhoneLinkOutcome.PcDown ? "Cannot reach the PC." : null);
+        var problem = outcome == PhoneLinkOutcome.PcDown
+            ? miss ?? (paired ? "Cannot reach the PC." : "Enter the PC address and PIN.")
+            : null;
+        Publish(outcome, problem);
     }
 
     void Publish(PhoneLinkOutcome outcome, string? problem)

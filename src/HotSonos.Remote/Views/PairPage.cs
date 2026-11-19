@@ -4,69 +4,57 @@ namespace HotSonos.Remote.Views;
 
 sealed class PairPage : ContentPage
 {
-    readonly Entry _host = RemoteUi.Field("PC address or http://192.168.1.10:42342");
-    readonly Entry _port = RemoteUi.Field("Port", Keyboard.Numeric);
-    readonly Entry _pin = RemoteUi.Field("6-digit PIN", Keyboard.Numeric);
-    readonly Label _status = RemoteUi.Muted("Enter the address and PIN from the PC Phone button.");
+    readonly ConnectionForm _form = new();
 
     public PairPage()
     {
-        Title = "Pair";
+        Title = "Connect";
         BackgroundColor = Swatches.Bg;
-        var saved = AppServices.Connection;
-        _host.Text = saved.Host;
-        _port.Text = saved.Port.ToString();
-        _pin.Text = saved.Pin;
-        _pin.MaxLength = 6;
-
-        Content = RemoteUi.Page(
-            "Pair with the PC",
-            _status,
-            RemoteUi.Muted("Link"),
-            RemoteUi.ModePicker(),
-            RemoteUi.Muted("On the PC, open HotSonos and tap Phone. The emulator on that PC is 10.0.2.2. Speakers only skips the PC."),
-            _host,
-            _port,
-            _pin,
-            RemoteUi.Button("Test connection", TestAsync),
-            RemoteUi.Button("Save and open", SaveAsync),
+        _form.Status.Text = "Connect to the HotSonos PC for full control. The address and PIN are on the PC Phone window.";
+        Content = RemoteUi.ConnectPage(
+            "Connect to your PC",
+            _form.Status,
+            RemoteUi.Muted("Find PC looks on this Wi-Fi. An emulator cannot hear that announce — type the PC's 192.168 address."),
+            RemoteUi.Button("Find PC", FindAsync),
+            _form.Host,
+            _form.Port,
+            _form.Pin,
+            RemoteUi.Button("Test and connect", ConnectAsync),
+            RemoteUi.Muted("Test and connect uses PC only, so a missed PC stays a missed PC. Auto and Speakers are on More after you are in."),
             RemoteUi.Button("Use speakers without the PC", SpeakersAsync));
     }
 
-    async Task TestAsync()
+    async Task FindAsync()
     {
-        if (!TryRead(out var host, out var port, out var pin, out var error))
+        _form.Status.Text = "Looking for HotSonos on this network…";
+        try
         {
-            _status.Text = error;
-            return;
-        }
+            var found = await PcFinder.FindAsync(TimeSpan.FromSeconds(3), CancellationToken.None);
+            if (found is null)
+            {
+                _form.Status.Text = "No PC answered. Type the address from the Phone window. On an emulator, type the PC's 192.168 address.";
+                return;
+            }
 
-        AppServices.Client.Apply(host, port, pin);
-        _status.Text = "Connecting…";
-        var call = await AppServices.Client.GetStatusAsync(CancellationToken.None);
-        _status.Text = call.Kind switch
+            _form.Host.Text = found.Value.Host;
+            _form.Port.Text = found.Value.Port.ToString();
+            _form.Status.Text = "Found HotSonos at " + found.Value.Host + ". Enter the 6-digit PIN, then Test and connect.";
+        }
+        catch (Exception ex)
         {
-            RemoteCallKind.Ok => "Connected. " + (call.Value?.NowPlaying?.Title ?? call.Value?.ActiveGroupLabel ?? "No music yet."),
-            RemoteCallKind.Unauthorized => "The PC rejected the PIN.",
-            _ => "Cannot reach the PC.",
-        };
+            _form.Status.Text = "Could not search the network. " + ex.Message;
+        }
     }
 
-    async Task SaveAsync()
+    async Task ConnectAsync()
     {
-        if (!TryRead(out var host, out var port, out var pin, out var error))
-        {
-            _status.Text = error;
+        var call = await _form.ProbeAsync();
+        if (call is not { Kind: RemoteCallKind.Ok })
             return;
-        }
-
-        var connection = AppServices.Connection;
-        connection.Host = host;
-        connection.Port = port;
-        connection.Pin = pin;
-        connection.Save();
+        if (!_form.Save())
+            return;
+        AppServices.Link.SetPreference(PhoneLinkPreference.Pc);
         App.EnterApp();
-        await Task.CompletedTask;
     }
 
     Task SpeakersAsync()
@@ -74,24 +62,5 @@ sealed class PairPage : ContentPage
         AppServices.Link.SetPreference(PhoneLinkPreference.Standalone);
         App.EnterApp();
         return Task.CompletedTask;
-    }
-
-    bool TryRead(out string host, out int port, out string pin, out string? error)
-    {
-        if (!RemoteNet.TryParseAddress(_host.Text, _port.Text, out host, out port, out error))
-        {
-            pin = "";
-            return false;
-        }
-
-        pin = (_pin.Text ?? "").Trim();
-        if (!RemoteNet.IsSixDigitPin(pin))
-        {
-            error = "PIN must be 6 digits.";
-            return false;
-        }
-
-        error = null;
-        return true;
     }
 }

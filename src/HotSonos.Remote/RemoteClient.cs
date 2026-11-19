@@ -12,6 +12,7 @@ enum RemoteCallKind
     Ok,
     Unauthorized,
     Unreachable,
+    Timeout,
     Failed,
     Cancelled,
 }
@@ -67,6 +68,12 @@ sealed class RemoteClient : IDisposable
 
     public Task<RemoteCall<RemoteCommandResponse>> StepVolumeAsync(int direction, CancellationToken ct) =>
         PostAsync("api/volume/step", new RemoteVolumeStepBody { Direction = direction }, RemoteJsonContext.Default.RemoteVolumeStepBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> SeekAsync(int seconds, CancellationToken ct) =>
+        PostAsync("api/transport/seek", new RemoteSeekBody { Seconds = seconds }, RemoteJsonContext.Default.RemoteSeekBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteQueueResponse>> GetQueueAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/queue", null, Fast, RemoteJsonContext.Default.RemoteQueueResponse, ct);
 
     public Task<RemoteCall<RemoteCommandResponse>> PlayPauseAsync(CancellationToken ct) =>
         EmptyAsync("api/transport/play-pause", Fast, ct);
@@ -179,6 +186,15 @@ sealed class RemoteClient : IDisposable
     public Task<RemoteCall<RemoteLibraryStatusResponse>> GetLibraryStatusAsync(CancellationToken ct) =>
         SendAsync(HttpMethod.Get, "api/library/status", null, Fast, RemoteJsonContext.Default.RemoteLibraryStatusResponse, ct);
 
+    public Task<RemoteCall<RemoteLibraryConfigResponse>> GetLibraryConfigAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/library/config", null, Fast, RemoteJsonContext.Default.RemoteLibraryConfigResponse, ct);
+
+    public Task<RemoteCall<RemoteLibraryConfigResponse>> SaveLibraryConfigAsync(RemoteLibraryConfigBody body, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, "api/library/config", Json(body, RemoteJsonContext.Default.RemoteLibraryConfigBody), Fast, RemoteJsonContext.Default.RemoteLibraryConfigResponse, ct);
+
+    public Task<RemoteCall<RemoteLibraryConfigResponse>> DiscoverLibraryAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, "api/library/discover", null, Slow, RemoteJsonContext.Default.RemoteLibraryConfigResponse, ct);
+
     public Task<RemoteCall<RemoteCommandResponse>> RescanAsync(bool forceAll, CancellationToken ct) =>
         PostAsync("api/library/rescan", new RemoteRescanBody { ForceAll = forceAll }, RemoteJsonContext.Default.RemoteRescanBody, Fast, ct);
 
@@ -249,7 +265,7 @@ sealed class RemoteClient : IDisposable
             cts.CancelAfter(Fast);
             using var response = await _http.GetAsync("api/art", cts.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
-                return new(null, RemoteCallKind.Unauthorized, null);
+                return new(null, RemoteCallKind.Unauthorized, RemoteFailureText.Describe(RemoteFailureKind.WrongPin, null));
             if (response.StatusCode == HttpStatusCode.NotFound)
                 return new(null, RemoteCallKind.Ok, null);
             if (!response.IsSuccessStatusCode)
@@ -257,9 +273,9 @@ sealed class RemoteClient : IDisposable
             var bytes = await response.Content.ReadAsByteArrayAsync(cts.Token).ConfigureAwait(false);
             return new(bytes, RemoteCallKind.Ok, null);
         }
-        catch (Exception ex) when (Classify(ex, ct) is { } kind)
+        catch (Exception ex) when (Classify(ex, ct) is { } failure)
         {
-            return new(null, kind, null);
+            return new(null, failure.Kind, failure.Detail);
         }
     }
 
@@ -288,7 +304,7 @@ sealed class RemoteClient : IDisposable
             using var request = new HttpRequestMessage(method, path) { Content = content };
             using var response = await _http.SendAsync(request, cts.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
-                return new(default, RemoteCallKind.Unauthorized, null);
+                return new(default, RemoteCallKind.Unauthorized, RemoteFailureText.Describe(RemoteFailureKind.WrongPin, null));
 
             var text = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
             T? value = default;
@@ -315,20 +331,35 @@ sealed class RemoteClient : IDisposable
 
             return new(value, RemoteCallKind.Ok, null);
         }
-        catch (Exception ex) when (Classify(ex, ct) is { } kind)
+        catch (Exception ex) when (Classify(ex, ct) is { } failure)
         {
-            return new(default, kind, null);
+            return new(default, failure.Kind, failure.Detail);
         }
     }
 
-    static RemoteCallKind? Classify(Exception ex, CancellationToken ct)
+    static StringContent Json<T>(T body, JsonTypeInfo<T> info)
+    {
+        var json = JsonSerializer.Serialize(body, info);
+        return new StringContent(json, Encoding.UTF8, "application/json");
+    }
+
+    static (RemoteCallKind Kind, string Detail)? Classify(Exception ex, CancellationToken ct)
     {
         if (ex is ObjectDisposedException)
-            return RemoteCallKind.Cancelled;
+            return (RemoteCallKind.Cancelled, RemoteFailureText.Describe(RemoteFailureKind.Cancelled, null));
         if (ex is OperationCanceledException)
-            return ct.IsCancellationRequested ? RemoteCallKind.Cancelled : RemoteCallKind.Unreachable;
-        if (ex is HttpRequestException or SocketException or IOException)
-            return RemoteCallKind.Unreachable;
+        {
+            var kind = RemoteFailureText.Classify(ct.IsCancellationRequested, TransportFault.Canceled);
+            var call = kind == RemoteFailureKind.Cancelled ? RemoteCallKind.Cancelled : RemoteCallKind.Timeout;
+            return (call, RemoteFailureText.Describe(kind, null));
+        }
+
+        if (ex is HttpRequestException)
+            return (RemoteCallKind.Unreachable, RemoteFailureText.Describe(RemoteFailureKind.Unreachable, ex.Message));
+        if (ex is SocketException)
+            return (RemoteCallKind.Unreachable, RemoteFailureText.Describe(RemoteFailureKind.Unreachable, ex.Message));
+        if (ex is IOException)
+            return (RemoteCallKind.Unreachable, RemoteFailureText.Describe(RemoteFailureKind.Unreachable, ex.Message));
         return null;
     }
 }

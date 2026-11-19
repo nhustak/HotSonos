@@ -25,9 +25,29 @@ public class PhoneLinkPolicyTests
     [Fact]
     public void Banner_NamesThePcOrTheRoom()
     {
-        Assert.Equal("PC · 192.168.1.20", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, "192.168.1.20", "Kitchen"));
-        Assert.Equal("Speakers · Kitchen", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Speakers, "192.168.1.20", "Kitchen"));
+        Assert.Equal("PC: 192.168.1.20", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, "192.168.1.20", "Kitchen"));
+        Assert.Equal("Speakers: Kitchen", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Speakers, "192.168.1.20", "Kitchen"));
+        Assert.Equal("Speakers", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Speakers, "192.168.1.20", "  "));
         Assert.Equal("PC unreachable", PhoneLinkPolicy.Banner(PhoneLinkOutcome.PcDown, "192.168.1.20", "Kitchen"));
+        Assert.Equal("PC: not paired", PhoneLinkPolicy.Banner(PhoneLinkOutcome.PcDown, "  ", null));
+    }
+}
+
+public class PhoneLaunchTests
+{
+    [Fact]
+    public void FirstLaunchWithoutAPairingOpensConnect()
+    {
+        Assert.True(PhoneLaunch.OpenConnectScreen(PhoneLinkPreference.Auto, paired: false));
+        Assert.True(PhoneLaunch.OpenConnectScreen(PhoneLinkPreference.Pc, paired: false));
+    }
+
+    [Fact]
+    public void SavedPairingOrSpeakersOnlyOpensTheApp()
+    {
+        Assert.False(PhoneLaunch.OpenConnectScreen(PhoneLinkPreference.Auto, paired: true));
+        Assert.False(PhoneLaunch.OpenConnectScreen(PhoneLinkPreference.Pc, paired: true));
+        Assert.False(PhoneLaunch.OpenConnectScreen(PhoneLinkPreference.Standalone, paired: false));
     }
 }
 

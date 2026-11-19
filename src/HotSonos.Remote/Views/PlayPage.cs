@@ -23,9 +23,9 @@ sealed class PlayPage : RemotePage
             _folders);
     }
 
-    protected override void OnAppearing()
+    protected override void OnShown()
     {
-        base.OnAppearing();
+        base.OnShown();
         _ = LoadAsync();
     }
 
@@ -33,13 +33,15 @@ sealed class PlayPage : RemotePage
 
     async Task LoadAsync()
     {
-        if (!AppServices.Link.OnPc)
+        if (!AppServices.Link.DrivePc || !AppServices.Link.OnPc)
         {
             _tags.Clear();
             _genres.Clear();
             _folders.Clear();
             _tags.Add(RemoteUi.NeedsPc("Tags, genres, and library folders"));
-            _status.Text = "Those play sources are the PC library. Sonos favorites are on Now.";
+            _status.Text = AppServices.Link.DrivePc
+                ? (AppServices.Link.Problem ?? "Cannot reach the PC.")
+                : "Those play sources are the PC library. Sonos favorites are on Now.";
             return;
         }
 

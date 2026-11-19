@@ -33,4 +33,12 @@ sealed class PcConnectionSettings
         Preferences.Set(PortKey, Port);
         Preferences.Set(PinKey, Pin);
     }
+
+    public void Forget()
+    {
+        Host = "";
+        Pin = "";
+        Port = RemoteApi.DefaultPort;
+        Save();
+    }
 }

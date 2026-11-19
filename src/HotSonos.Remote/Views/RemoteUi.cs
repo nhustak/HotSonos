@@ -80,37 +80,52 @@ static class RemoteUi
         };
     }
 
-    public static ScrollView Page(string title, params View[] sections)
+    public static ScrollView Page(string title, params View[] sections) =>
+        BuildPage(title, showChip: true, sections);
+
+    public static ScrollView ConnectPage(string title, params View[] sections) =>
+        BuildPage(title, showChip: false, sections);
+
+    static ScrollView BuildPage(string title, bool showChip, View[] sections)
     {
         var stack = new VerticalStackLayout
         {
             Padding = new Thickness(16, 12, 16, 28),
             Spacing = 6,
-            Children = { Heading(title), ModeChip() },
         };
+        stack.Add(Heading(title));
+        if (showChip)
+            stack.Add(ModeChip());
         foreach (var section in sections)
             stack.Add(section);
         return new ScrollView { Content = stack, BackgroundColor = Swatches.Bg };
     }
 
-    /// <summary>Top-of-page line: PC · address, Speakers · room, or PC unreachable.</summary>
-    public static Label ModeChip()
+    /// <summary>Tappable line on every screen: PC: address, Speakers, or PC unreachable. Opens More.</summary>
+    public static View ModeChip()
     {
-        var chip = new Label
+        var chip = new Button
         {
             FontAttributes = FontAttributes.Bold,
             FontSize = 14,
+            BackgroundColor = Swatches.Card,
+            CornerRadius = 8,
+            Padding = new Thickness(10, 8),
             Margin = new Thickness(0, 0, 0, 6),
+            HorizontalOptions = LayoutOptions.Fill,
         };
         void Paint()
         {
             var link = AppServices.Link;
             chip.Text = link.Banner;
-            chip.TextColor = link.OnPc ? Color.FromArgb("#7EB6FF") : Swatches.Accent;
+            chip.TextColor = link.OnPc ? Color.FromArgb("#7EB6FF")
+                : link.Outcome == PhoneLinkOutcome.PcDown ? Swatches.Danger
+                : Swatches.Accent;
         }
 
         Paint();
         AppServices.Link.Changed += Paint;
+        chip.Clicked += (_, _) => AppShell.OpenConnection();
         return chip;
     }
 
@@ -134,8 +149,17 @@ static class RemoteUi
         return picker;
     }
 
-    public static Label NeedsPc(string what) =>
-        Muted(what + " needs the PC. Pair on More, or leave the link on Auto.");
+    public static View NeedsPc(string what)
+    {
+        var stack = new VerticalStackLayout { Spacing = 4 };
+        stack.Add(Muted(RemoteFailureText.PcRequired(what)));
+        stack.Add(Button("Open connection", () =>
+        {
+            AppShell.OpenConnection();
+            return Task.CompletedTask;
+        }));
+        return stack;
+    }
 }
 
 abstract class RemotePage : ContentPage
@@ -145,19 +169,56 @@ abstract class RemotePage : ContentPage
         BackgroundColor = Swatches.Bg;
     }
 
+    bool _listening;
+    View? _held;
+
+    public void NotifyShown()
+    {
+        if (!_listening)
+        {
+            _listening = true;
+            AppServices.Live.Changed += OnLive;
+            AppServices.Link.Changed += OnLink;
+            OnStatus(AppServices.Live.Status);
+        }
+
+        OnShown();
+    }
+
+    public void NotifyHidden()
+    {
+        if (!_listening)
+            return;
+        _listening = false;
+        AppServices.Live.Changed -= OnLive;
+        AppServices.Link.Changed -= OnLink;
+    }
+
+    /// <summary>Pull the page body out so the tab host can show it. Android's shell bar only keeps five tabs.</summary>
+    public View TakeBody()
+    {
+        _held ??= Content ?? throw new InvalidOperationException("Page has no content.");
+        if (Content is not null)
+            Content = null;
+        if (_held.Parent is ContentView host)
+            host.Content = null;
+        return _held;
+    }
+
     protected override void OnAppearing()
     {
         base.OnAppearing();
-        AppServices.Live.Changed += OnLive;
-        AppServices.Link.Changed += OnLink;
-        OnStatus(AppServices.Live.Status);
+        NotifyShown();
     }
 
     protected override void OnDisappearing()
     {
-        AppServices.Live.Changed -= OnLive;
-        AppServices.Link.Changed -= OnLink;
+        NotifyHidden();
         base.OnDisappearing();
+    }
+
+    protected virtual void OnShown()
+    {
     }
 
     void OnLive() => OnStatus(AppServices.Live.Status);
@@ -198,7 +259,7 @@ abstract class RemotePage : ContentPage
         var result = await call(CancellationToken.None).ConfigureAwait(true);
         if (result.Kind == RemoteCallKind.Unauthorized)
         {
-            await DisplayAlert("PIN", "The PC rejected the PIN. Open More and pair again.", "OK");
+            await DisplayAlert("PIN", result.Detail ?? "Wrong PIN. The PC rejected it. Open connection and enter the PIN from the PC Phone window.", "OK");
             return false;
         }
 

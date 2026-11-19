@@ -32,6 +32,8 @@ sealed class OptionsPage : RemotePage
     readonly VerticalStackLayout _days = new();
     readonly VerticalStackLayout _logs = new();
     readonly Switch[] _day = new Switch[7];
+    readonly ConnectionForm _connection = new();
+    readonly ScrollView _scroll;
 
     public OptionsPage()
     {
@@ -51,11 +53,20 @@ sealed class OptionsPage : RemotePage
         }
 
         _days.Add(dayRow);
-        Content = RemoteUi.Page(
+        _scroll = RemoteUi.Page(
             "More",
-            _status,
+            RemoteUi.Muted("Connection"),
+            _connection.Status,
+            _connection.Host,
+            _connection.Port,
+            _connection.Pin,
+            RemoteUi.Button("Find PC", FindPcAsync),
+            RemoteUi.Button("Test and save", SaveConnectionAsync),
             RemoteUi.Muted("Link"),
             RemoteUi.ModePicker(),
+            RemoteUi.Button("Forget PC", ForgetAsync, danger: true),
+            RemoteUi.Button("Use speakers without the PC", SpeakersAsync),
+            _status,
             RemoteUi.Button("Reload", LoadAsync),
             RemoteUi.Muted("Wake"),
             Labeled("Enabled", _wake),
@@ -91,16 +102,68 @@ sealed class OptionsPage : RemotePage
             RemoteUi.Button("Failure diagnostic", DiagnosticAsync),
             RemoteUi.Muted("Recent PC log"),
             _logs,
-            RemoteUi.Button("Change PC / PIN", () =>
-            {
-                App.LeaveToPair();
-                return Task.CompletedTask;
-            }));
+            RemoteUi.Muted("Hotkey capture, Quick Tag, Quick Play, the tray flyout, and Start with Windows stay on the PC."));
+        Content = _scroll;
     }
 
-    protected override void OnAppearing()
+    async Task FindPcAsync()
     {
-        base.OnAppearing();
+        _connection.Status.Text = "Looking for HotSonos on this network…";
+        try
+        {
+            var found = await PcFinder.FindAsync(TimeSpan.FromSeconds(3), CancellationToken.None);
+            if (found is null)
+            {
+                _connection.Status.Text = "No PC answered. Type the address from the Phone window.";
+                return;
+            }
+
+            _connection.Host.Text = found.Value.Host;
+            _connection.Port.Text = found.Value.Port.ToString();
+            _connection.Status.Text = "Found " + found.Value.Host + ". Enter the PIN, then Test and save.";
+        }
+        catch (Exception ex)
+        {
+            _connection.Status.Text = ex.Message;
+        }
+    }
+
+    async Task SaveConnectionAsync()
+    {
+        var call = await _connection.ProbeAsync();
+        if (call is not { Kind: RemoteCallKind.Ok })
+            return;
+        if (!_connection.Save())
+            return;
+        if (AppServices.Link.Preference == PhoneLinkPreference.Standalone)
+            AppServices.Link.SetPreference(PhoneLinkPreference.Pc);
+        await AppServices.Link.ResolveAsync(CancellationToken.None);
+        await LoadAsync();
+    }
+
+    async Task ForgetAsync()
+    {
+        if (!await Confirm("Forget PC", "Clear the saved address and PIN on this phone?"))
+            return;
+        AppServices.Connection.Forget();
+        AppServices.Link.SetPreference(PhoneLinkPreference.Pc);
+        _connection.Load();
+        _connection.Status.Text = "Forgotten. Enter the address and PIN from the PC Phone window.";
+        await AppServices.Link.ResolveAsync(CancellationToken.None);
+    }
+
+    Task SpeakersAsync()
+    {
+        AppServices.Link.SetPreference(PhoneLinkPreference.Standalone);
+        _ = AppServices.Link.ResolveAsync(CancellationToken.None);
+        _connection.Status.Text = "Speakers only. The PC is not contacted.";
+        return Task.CompletedTask;
+    }
+
+    protected override void OnShown()
+    {
+        base.OnShown();
+        _ = _scroll.ScrollToAsync(0, 0, false);
         _ = LoadAsync();
     }
 
@@ -108,10 +171,17 @@ sealed class OptionsPage : RemotePage
 
     async Task LoadAsync()
     {
+        if (!AppServices.Link.DrivePc)
+        {
+            _logs.Clear();
+            _status.Text = RemoteFailureText.PcRequired("Wake, nightly, and the other settings");
+            return;
+        }
+
         if (!AppServices.Link.OnPc)
         {
             _logs.Clear();
-            _status.Text = "Wake, nightly, and the other settings need the PC. The link above still switches modes.";
+            _status.Text = AppServices.Link.Problem ?? "Cannot reach the PC.";
             return;
         }
 
@@ -160,7 +230,7 @@ sealed class OptionsPage : RemotePage
     {
         if (!AppServices.Link.OnPc)
         {
-            _status.Text = "Those settings need the PC.";
+            _status.Text = RemoteFailureText.PcRequired("Those settings");
             return;
         }
 
@@ -212,7 +282,7 @@ sealed class OptionsPage : RemotePage
     {
         if (!AppServices.Link.OnPc)
         {
-            _status.Text = "The failure diagnostic needs the PC.";
+            _status.Text = RemoteFailureText.PcRequired("The failure diagnostic");
             return;
         }
 
@@ -225,7 +295,7 @@ sealed class OptionsPage : RemotePage
     {
         if (AppServices.Link.OnPc)
             return true;
-        _status.Text = "Wake and nightly need the PC.";
+        _status.Text = RemoteFailureText.PcRequired("Wake and nightly");
         return false;
     }
 

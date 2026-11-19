@@ -12,7 +12,7 @@ sealed class ControlPage : RemotePage
     readonly Label _meta = RemoteUi.Muted("");
     readonly Label _volume = RemoteUi.Muted("Volume");
     readonly Slider _slider = new() { Minimum = 0, Maximum = 100, Value = 20 };
-    readonly Picker _rooms = new() { Title = "Room", TextColor = Swatches.Ink, BackgroundColor = Swatches.Card };
+    readonly Picker _rooms = new() { Title = "Choose a room", TextColor = Swatches.Ink, BackgroundColor = Swatches.Card };
     readonly Label _daily = RemoteUi.Muted("Daily group");
     readonly Switch _allSpeakers = new();
     readonly VerticalStackLayout _roomChecks = new();
@@ -27,6 +27,8 @@ sealed class ControlPage : RemotePage
     readonly Label _action = RemoteUi.Muted("");
     readonly Slider _seek = new() { Minimum = 0, Maximum = 100, IsVisible = false };
     readonly VerticalStackLayout _queue = new();
+    readonly Label _roomEmpty = RemoteUi.Muted("Waiting for rooms.");
+    Button? _speakerShuffle;
 
     bool _drag;
     bool _seekDrag;
@@ -39,12 +41,13 @@ sealed class ControlPage : RemotePage
 
     public ControlPage()
     {
+        _rooms.IsVisible = false;
         _slider.DragStarted += (_, _) => _drag = true;
         _slider.DragCompleted += async (_, _) =>
         {
             _drag = false;
             var percent = (int)_slider.Value;
-            if (AppServices.Link.OnPc)
+            if (AppServices.Link.DrivePc)
                 await Act(ct => AppServices.Client.SetVolumeAsync(percent, ct), _action);
             else
                 await Speaker((_, ct) => AppServices.Link.Speakers.SetHouseVolumeAsync(percent, ct), _action);
@@ -53,10 +56,20 @@ sealed class ControlPage : RemotePage
         _seek.DragCompleted += async (_, _) =>
         {
             _seekDrag = false;
-            var now = AppServices.Link.Speakers.LastNow;
-            if (AppServices.Link.OnPc || now?.Duration is not { TotalSeconds: > 0 } dur)
+            if (AppServices.Link.DrivePc)
+            {
+                var dur = _status?.NowPlaying?.DurationSeconds;
+                if (dur is not > 0)
+                    return;
+                var seconds = (int)Math.Round(dur.Value * (_seek.Value / 100.0));
+                await Act(ct => AppServices.Client.SeekAsync(seconds, ct), _action);
                 return;
-            var target = TimeSpan.FromSeconds(dur.TotalSeconds * (_seek.Value / 100));
+            }
+
+            var now = AppServices.Link.Speakers.LastNow;
+            if (now?.Duration is not { TotalSeconds: > 0 } speakerDur)
+                return;
+            var target = TimeSpan.FromSeconds(speakerDur.TotalSeconds * (_seek.Value / 100));
             await Speaker((speaker, ct) => speaker.SeekToTimeAsync(target, ct), _action);
         };
         _rooms.SelectedIndexChanged += async (_, _) =>
@@ -67,7 +80,7 @@ sealed class ControlPage : RemotePage
             if (index < 0 || index >= _status.Groups.Count)
                 return;
             var room = _status.Groups[index].Room;
-            if (AppServices.Link.OnPc)
+            if (AppServices.Link.DrivePc)
                 await Act(ct => AppServices.Client.SetRoomAsync(room, ct), _action);
             else
                 AppServices.Link.SelectRoom(room);
@@ -76,12 +89,12 @@ sealed class ControlPage : RemotePage
         {
             if (_suppressAll)
                 return;
-            if (!AppServices.Link.OnPc)
+            if (!AppServices.Link.DrivePc)
             {
                 _suppressAll = true;
                 _allSpeakers.IsToggled = !e.Value;
                 _suppressAll = false;
-                _action.Text = "Daily speaker groups need the PC.";
+                _action.Text = RemoteFailureText.PcRequired("Daily speaker groups");
                 return;
             }
 
@@ -122,6 +135,7 @@ sealed class ControlPage : RemotePage
             volumeRow,
             RemoteUi.Muted("Room"),
             _rooms,
+            _roomEmpty,
             RemoteUi.Card(
                 RemoteUi.Muted("Daily speaker group"),
                 _daily,
@@ -134,7 +148,7 @@ sealed class ControlPage : RemotePage
                 _roomChecks,
                 _presetName,
                 RemoteUi.Button("Save checked rooms as a group", SavePresetAsync)),
-            RemoteUi.Button("Shuffle speaker library", ShuffleLibraryAsync),
+            _speakerShuffle = RemoteUi.Button("Shuffle speaker library", ShuffleLibraryAsync),
             RemoteUi.Muted("Queue"),
             _queue,
             RemoteUi.Muted("Start shuffle from"),
@@ -149,7 +163,7 @@ sealed class ControlPage : RemotePage
             _favorites,
             RemoteUi.Muted("Spotify"),
             _spotifyLink,
-            RemoteUi.Button("Play Spotify link", () => Act(ct => AppServices.Client.PlaySpotifyAsync(_spotifyLink.Text ?? "", ct), _action)),
+            RemoteUi.Button("Play Spotify link", () => PcOnly("Saved Spotify links") ? Act(ct => AppServices.Client.PlaySpotifyAsync(_spotifyLink.Text ?? "", ct), _action) : Task.CompletedTask),
             RemoteUi.Button("Save Spotify link", SaveSpotifyAsync),
             _spotify,
             RemoteUi.Muted("Heard outside the library"),
@@ -158,16 +172,16 @@ sealed class ControlPage : RemotePage
             RemoteUi.Button("Refresh lists", LoadListsAsync));
     }
 
-    protected override void OnAppearing()
+    protected override void OnShown()
     {
-        base.OnAppearing();
+        base.OnShown();
         _ = LoadListsAsync();
     }
 
     protected override void OnLinkChanged() => _ = LoadListsAsync();
 
     Task Go(Func<SonosController, CancellationToken, Task> speakers, Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc) =>
-        AppServices.Link.OnPc ? Act(pc, _action) : Speaker(speakers, _action);
+        AppServices.Link.DrivePc ? Act(pc, _action) : Speaker(speakers, _action);
 
     protected override void OnStatus(RemoteStatusResponse? status)
     {
@@ -195,16 +209,20 @@ sealed class ControlPage : RemotePage
         }
 
         ApplyRooms(status);
-        if (!AppServices.Link.OnPc && !_seekDrag)
+        if (!_seekDrag && AppServices.Link.DrivePc)
+        {
+            var dur = np?.DurationSeconds;
+            var pos = np?.PositionSeconds;
+            _seek.IsVisible = dur is > 1;
+            if (dur is > 0 && pos is int at)
+                _seek.Value = Math.Clamp(at / (double)dur.Value * 100, 0, 100);
+        }
+        else if (!_seekDrag)
         {
             var playing = AppServices.Link.Speakers.LastNow;
             _seek.IsVisible = playing?.Duration is { TotalSeconds: > 1 };
             if (playing?.Duration is { TotalSeconds: > 0 } dur && playing.Position is { } pos)
                 _seek.Value = Math.Clamp(pos.TotalSeconds / dur.TotalSeconds * 100, 0, 100);
-        }
-        else if (AppServices.Link.OnPc)
-        {
-            _seek.IsVisible = false;
         }
 
         if (np?.ArtRevision != _artRevision)
@@ -213,9 +231,11 @@ sealed class ControlPage : RemotePage
 
     async Task ShuffleLibraryAsync()
     {
-        if (AppServices.Link.OnPc)
+        if (AppServices.Link.DrivePc)
         {
-            _action.Text = "Start shuffle uses play history on the PC. Speaker shuffle is for standalone.";
+            if (!PcOnly("HotSonos shuffle"))
+                return;
+            await Act(ct => AppServices.Client.StartShuffleAsync(ct), _action);
             return;
         }
 
@@ -225,9 +245,24 @@ sealed class ControlPage : RemotePage
 
     async Task LoadListsAsync()
     {
-        if (!AppServices.Link.OnPc)
+        if (_speakerShuffle is not null)
+            _speakerShuffle.IsVisible = !AppServices.Link.DrivePc;
+        if (!AppServices.Link.DrivePc)
         {
             await LoadSpeakerListsAsync();
+            return;
+        }
+
+        if (!AppServices.Link.OnPc)
+        {
+            _from.Clear();
+            _slots.Clear();
+            _favorites.Clear();
+            _spotify.Clear();
+            _heard.Clear();
+            _queue.Clear();
+            _from.Add(RemoteUi.NeedsPc("HotSonos on the PC"));
+            _action.Text = AppServices.Link.Problem ?? "Cannot reach the PC.";
             return;
         }
 
@@ -287,11 +322,19 @@ sealed class ControlPage : RemotePage
         _heard.Clear();
         foreach (var track in heard.Value?.Tracks ?? [])
             _heard.Add(RemoteUi.Muted($"{track.Title} — {track.Artist} · {track.Plays}"));
+
+        var queue = await AppServices.Client.GetQueueAsync(CancellationToken.None);
+        _queue.Clear();
+        var items = queue.Value?.Tracks ?? [];
+        if (items.Count == 0)
+            _queue.Add(RemoteUi.Muted(queue.Detail ?? "Queue is empty."));
+        foreach (var track in items)
+            _queue.Add(RemoteUi.Muted($"{track.Number}. {track.Title} — {track.Artist}"));
     }
 
     async Task LoadSpeakerListsAsync()
     {
-        _daily.Text = "Daily speaker groups need the PC.";
+        _daily.Text = RemoteFailureText.PcRequired("Daily speaker groups");
         _from.Clear();
         _from.Add(RemoteUi.NeedsPc("HotSonos shuffle (play history, tags, genres, folders)"));
         _slots.Clear();
@@ -426,9 +469,9 @@ sealed class ControlPage : RemotePage
 
     bool PcOnly(string what)
     {
-        if (AppServices.Link.OnPc)
+        if (AppServices.Link.DrivePc)
             return true;
-        _action.Text = what + " needs the PC.";
+        _action.Text = RemoteFailureText.PcRequired(what);
         return false;
     }
 
@@ -477,13 +520,18 @@ sealed class ControlPage : RemotePage
         }
 
         _rooms.SelectedIndex = groups.Count == 0 ? -1 : index;
+        _rooms.IsVisible = groups.Count > 0;
+        _roomEmpty.IsVisible = groups.Count == 0;
+        _roomEmpty.Text = AppServices.Link.DrivePc
+            ? "No rooms from the PC yet."
+            : "No speakers answered yet.";
         _suppressRoom = false;
     }
 
     async Task LoadArtAsync(string? revision, bool hasArt)
     {
         _artRevision = revision;
-        if (!AppServices.Link.OnPc)
+        if (!AppServices.Link.DrivePc)
         {
             _art.Source = hasArt && Uri.TryCreate(revision, UriKind.Absolute, out var art) ? ImageSource.FromUri(art) : null;
             return;

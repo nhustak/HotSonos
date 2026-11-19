@@ -81,6 +81,12 @@ public class RemoteNetTests
         Assert.False(RemoteNet.TryParseAddress("https://192.168.1.20:42342", "42342", out _, out _, out error));
         Assert.Equal("Use the http address from the tray.", error);
         Assert.False(RemoteNet.TryParseAddress("", "42342", out _, out _, out error));
+        Assert.True(RemoteNet.TryParseAddress("living-room", "", out host, out port, out error));
+        Assert.Equal("living-room", host);
+        Assert.Equal(42342, port);
+        Assert.True(RemoteNet.TryParseAddress("living-room", null, out host, out port, out error));
+        Assert.Equal(42342, port);
+
         Assert.False(RemoteNet.TryParseAddress("192.168.1.20", "80", out _, out _, out error));
         Assert.False(RemoteNet.TryParseAddress("192.168.1.20/status", "42342", out _, out _, out _));
     }
