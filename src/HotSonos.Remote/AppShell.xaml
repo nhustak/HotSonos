@@ -6,7 +6,9 @@
              Title="HotSonos">
     <Grid RowDefinitions="*,Auto">
         <ContentView x:Name="Body" />
-        <Grid x:Name="TabBar" Grid.Row="1" ColumnDefinitions="*,*,*,*,*,*"
-              BackgroundColor="#1C2430" Padding="2,6,2,10" ColumnSpacing="2" />
+        <ScrollView x:Name="TabScroll" Grid.Row="1" Orientation="Horizontal"
+                    BackgroundColor="#1C2430" HorizontalScrollBarVisibility="Never">
+            <HorizontalStackLayout x:Name="TabBar" Padding="4,6,4,10" Spacing="0" />
+        </ScrollView>
     </Grid>
 </ContentPage>

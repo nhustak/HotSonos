@@ -19,7 +19,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 - **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Top bar: **Phone**. Tray: Phone…, Library…, Topology…, Logs…, Reports…, Debug…
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
-- **Phone:** Android app (`src/HotSonos.Remote`, .NET MAUI) opens **Connect** until a PC is saved. It is then a full view of this PC over `http://<pc>:42342` with header `X-HotSonos-Pin`. The **Phone** button shows the address and PIN to type. Link: Auto, PC only, or Speakers only.
+- **Phone:** Android app (`src/HotSonos.Remote`, .NET MAUI) opens **Connect** until a PC is saved. It then opens on **Player** (art and transport) over `http://<pc>:42342` with header `X-HotSonos-Pin`, or straight on the speakers. The **Phone** button on the PC shows the address and PIN to type. Link: Auto, PC only, or Speakers only, under Settings → Connection / PC.
 
 **Having issues (stutter, dead zones, flaky grouping)?** Make sure **SonosNet is off** — see [Turn off SonosNet](#turn-off-sonosnet) near the bottom.
 
@@ -250,7 +250,7 @@ Release publish writes `com.hotsonos.remote-Signed.aab` (and an APK) under `src\
 
 On the PC, open HotSonos and press **Phone** (or the tray item **Phone…**). The first phone screen is **Connect**. Type the address and the 6-digit PIN shown there (port **42342** if you leave it blank). **Find PC** uses a UDP announce on port 42343; an emulator is not on that subnet, so type the PC's 192.168 address. `10.0.2.2` is the PC loopback, and the listener is not bound there. The header on every request is `X-HotSonos-Pin`. The listener is plain HTTP and only binds the address that shares a network with a speaker.
 
-**Test and connect** stays in **PC only**. More (always available) can switch to **Auto** (try the PC, then the speakers) or **Speakers only**. Each screen has a tappable line that opens those connection settings. Speakers only needs no PIN: the phone discovers ZonePlayer devices on the Wi-Fi (it holds an Android multicast lock) and sends the same UPnP calls as the tray app. HotSonos shuffle, tags, Daily groups, Reports, wake, and saved Spotify links say they need the PC, with a button back to connection, when the phone is on the speakers.
+**Test and connect** stays in **PC only**. Settings → Connection / PC can switch to **Auto** (try the PC, then the speakers) or **Speakers only**. Each screen except Player has a tappable line (`PC`, `Speakers`, `Speakers: room`, `PC unreachable`, or `PC: not paired`) that opens those connection settings. The PC address is on that page, not on Player. Speakers only needs no PIN: the phone discovers ZonePlayer devices on the Wi-Fi (it holds an Android multicast lock) and sends the same UPnP calls as the tray app. HotSonos shuffle, tags, Daily groups, Reports, wake, and saved Spotify links say they need the PC, with a button back to connection, when the phone is on the speakers.
 
 The phone polls now-playing every 2 seconds while it is open, and loads the other tabs when you open them. It checks the PC again when the app resumes. Reboot, regroup, fresh start, rescan, wiping the queue, deleting a tag, and leaving or leading a group ask you to confirm first.
 

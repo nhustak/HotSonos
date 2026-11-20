@@ -101,7 +101,7 @@ static class RemoteUi
         return new ScrollView { Content = stack, BackgroundColor = Swatches.Bg };
     }
 
-    /// <summary>Tappable line on every screen: PC: address, Speakers, or PC unreachable. Opens More.</summary>
+    /// <summary>Tappable line on every screen: PC, Speakers, Speakers: room, or PC unreachable. Opens Connection / PC.</summary>
     public static View ModeChip()
     {
         var chip = new Button
@@ -128,6 +128,13 @@ static class RemoteUi
         chip.Clicked += (_, _) => AppShell.OpenConnection();
         return chip;
     }
+
+    public static Button Back() =>
+        Button("Back", () =>
+        {
+            AppShell.Pop();
+            return Task.CompletedTask;
+        });
 
     public static View ModePicker()
     {

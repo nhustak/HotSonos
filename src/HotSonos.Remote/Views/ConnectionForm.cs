@@ -2,7 +2,7 @@ using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote.Views;
 
-/// <summary>Address, port, and PIN shared by the first-launch Connect screen and More.</summary>
+/// <summary>Address, port, and PIN shared by the first-launch Connect screen and Settings → Connection / PC.</summary>
 sealed class ConnectionForm
 {
     public readonly Entry Host = RemoteUi.Field("PC address or 192.168.1.10");
