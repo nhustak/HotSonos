@@ -10,6 +10,9 @@ sealed class PairPage : ContentPage
     {
         Title = "Connect";
         BackgroundColor = Swatches.Bg;
+#if IOS
+        SafeAreaEdges = Microsoft.Maui.SafeAreaEdges.Container;
+#endif
         _form.Status.Text = "Connect to the HotSonos PC for full control. The address and PIN are on the PC Phone window.";
         Content = RemoteUi.ConnectPage(
             "Connect to your PC",
@@ -32,7 +35,11 @@ sealed class PairPage : ContentPage
             var found = await PcFinder.FindAsync(TimeSpan.FromSeconds(3), CancellationToken.None);
             if (found is null)
             {
+#if IOS
+                _form.Status.Text = IosDiscovery.FindPcMiss;
+#else
                 _form.Status.Text = "No PC answered. Type the address from the Phone window. On an emulator, type the PC's 192.168 address.";
+#endif
                 return;
             }
 
@@ -42,7 +49,11 @@ sealed class PairPage : ContentPage
         }
         catch (Exception ex)
         {
+#if IOS
+            _form.Status.Text = IosDiscovery.FindPcMiss;
+#else
             _form.Status.Text = "Could not search the network. " + ex.Message;
+#endif
         }
     }
 

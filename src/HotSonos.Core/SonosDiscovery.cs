@@ -304,7 +304,11 @@ public sealed class SonosDiscovery
                     }
                 }
                 catch (OperationCanceledException) { }
-                catch (SocketException) { }
+                catch (Exception ex) when (ex is SocketException or IOException or UnauthorizedAccessException)
+                {
+                    // One interface can refuse the send (iOS without the multicast
+                    // entitlement). The other probes, and a total miss, still return empty.
+                }
             }, ct);
 
             while (!ct.IsCancellationRequested)
@@ -322,7 +326,11 @@ public sealed class SonosDiscovery
             await sender.ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
-        catch (SocketException) { }
+        catch (Exception ex) when (ex is SocketException or IOException or UnauthorizedAccessException)
+        {
+            // Bind or receive failed on this interface. Discovery continues on the others
+            // and returns no zones when every probe misses, including iOS without multicast.
+        }
     }
 
     /// <summary>Returns the IPv4 address of each up, multicast-capable, non-loopback interface.</summary>

@@ -1,8 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- HotSonos phone. Android only; no iOS, Mac Catalyst, or Windows targets. -->
-    <TargetFramework>net10.0-android</TargetFramework>
+    <!-- Android is the default so Windows and Linux builds (GitHub Actions) do not
+         need the iOS workload. macOS also targets net10.0-ios.
+         Codemagic passes -p:HotSonosRemoteTargetFrameworks=net10.0-ios so restore
+         does not also pull the Android workload. That property is local to this
+         project: a global TargetFrameworks would retarget HotSonos.Remote.Protocol
+         and HotSonos.Core, which stay net10.0. -->
+    <TargetFrameworks Condition="'$(HotSonosRemoteTargetFrameworks)' != ''">$(HotSonosRemoteTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(HotSonosRemoteTargetFrameworks)' == '' And '$(TargetFrameworks)' == ''">net10.0-android</TargetFrameworks>
+    <TargetFrameworks Condition="'$(HotSonosRemoteTargetFrameworks)' == '' And '$(TargetFrameworks)' == 'net10.0-android' And ($([MSBuild]::IsOSPlatform('OSX')) Or '$(IncludeiOS)' == 'true')">$(TargetFrameworks);net10.0-ios</TargetFrameworks>
+
     <OutputType>Exe</OutputType>
     <RootNamespace>HotSonos.Remote</RootNamespace>
     <UseMaui>true</UseMaui>
@@ -12,14 +20,29 @@
     <MauiXamlInflator>SourceGen</MauiXamlInflator>
 
     <ApplicationTitle>HotSonos</ApplicationTitle>
-    <!-- Existing package. Kept so a sideloaded build replaces the previous remote. -->
+    <!-- Existing package. Same id on Android and iOS so the store record matches the sideload. -->
     <ApplicationId>com.hotsonos.remote</ApplicationId>
     <ApplicationDisplayVersion>$(Version)</ApplicationDisplayVersion>
     <ApplicationVersion>4</ApplicationVersion>
-    <SupportedOSPlatformVersion>24.0</SupportedOSPlatformVersion>
+
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
 
     <!-- Debug APK keeps the assemblies inside so adb install works without Fast Deployment. -->
     <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+  </PropertyGroup>
+
+  <!-- iOS. CodesignKey defaults to a local development identity. Codemagic passes
+       -p:CodesignKey and -p:CodesignProvision for App Store distribution.
+       An empty -p:CodesignKey is a global property and wins over this default,
+       which is how the unsigned simulator check builds.
+       Apple rejects the four-part product version (1.0.0.76). The store version
+       is 1.0.76 unless the publish command passes ApplicationDisplayVersion. -->
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+    <ApplicationDisplayVersion>1.0.76</ApplicationDisplayVersion>
+    <CodesignKey Condition="'$(CodesignKey)' == ''">Apple Development</CodesignKey>
+    <CodesignEntitlements>Platforms\iOS\Entitlements.plist</CodesignEntitlements>
+    <ValidateXcodeVersion>false</ValidateXcodeVersion>
   </PropertyGroup>
 
   <!-- Play upload signing (Release only). Keystore lives outside the repo,
@@ -41,6 +64,10 @@
   <ItemGroup>
     <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" ForegroundScale="0.5" Color="#1E232C" />
     <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#1E232C" BaseSize="192,192" />
+  </ItemGroup>
+
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+    <BundleResource Include="Platforms\iOS\PrivacyInfo.xcprivacy" LogicalName="PrivacyInfo.xcprivacy" />
   </ItemGroup>
 
   <ItemGroup>
