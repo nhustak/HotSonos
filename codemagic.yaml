@@ -42,11 +42,11 @@ workflows:
         - REPLACE_WITH_HOTSONOS_IOS_ENV_GROUP
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.hotsonos.remote
+        bundle_identifier: com.tangenttech.hotsonos
       vars:
         DOTNET_PATH: $CM_BUILD_DIR/.dotnet
         DOTNET: $CM_BUILD_DIR/.dotnet/dotnet
-        BUNDLE_ID: com.hotsonos.remote
+        BUNDLE_ID: com.tangenttech.hotsonos
         IOS_PROJECT: HotSonos.Remote.csproj
     scripts:
       - name: Install .NET 10
@@ -73,7 +73,7 @@ workflows:
         script: |
           set -euo pipefail
           # ios_signing has already fetched the App Store certificate and profile
-          # for com.hotsonos.remote. MAUI has no checked-in Xcode project, so
+          # for com.tangenttech.hotsonos. MAUI has no checked-in Xcode project, so
           # xcode-project use-profiles cannot edit one. keychain initialize plus
           # the CodesignKey / CodesignProvision properties below are the MAUI equivalent.
           keychain initialize

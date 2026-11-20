@@ -20,8 +20,9 @@
     <MauiXamlInflator>SourceGen</MauiXamlInflator>
 
     <ApplicationTitle>HotSonos</ApplicationTitle>
-    <!-- Existing package. Same id on Android and iOS so the store record matches the sideload. -->
-    <ApplicationId>com.hotsonos.remote</ApplicationId>
+    <!-- Android package and iOS bundle id. An install of the previous id,
+         com.hotsonos.remote, is a different app and is not replaced. -->
+    <ApplicationId>com.tangenttech.hotsonos</ApplicationId>
     <ApplicationDisplayVersion>$(Version)</ApplicationDisplayVersion>
     <ApplicationVersion>4</ApplicationVersion>
 
