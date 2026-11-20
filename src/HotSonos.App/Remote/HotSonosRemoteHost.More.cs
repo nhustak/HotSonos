@@ -714,6 +714,9 @@ public sealed partial class HotSonosRemoteHost
 
     private static async Task<RemoteTopologyResponse> BuildTopologyAsync(HotSonosMcpState state, CancellationToken ct)
     {
+        // Rooms pull-to-refresh and a grouping change both hit this route. Read ZoneGroupState
+        // first so the cards are not the snapshot left by the last heartbeat.
+        await state.Sonos.PullZoneGroupStateAsync(ct, wait: true).ConfigureAwait(false);
         var settings = state.Settings().EnsureShape();
         var snap = state.Sonos.LastTopology;
         var members = snap?.Members.Select(m => new RemoteMemberDto(
