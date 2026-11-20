@@ -194,3 +194,29 @@ public class RemoteSettingsRulesTests
         Assert.DoesNotContain("remotePin", json, StringComparison.OrdinalIgnoreCase);
     }
 }
+
+public class PhoneVolumeTests
+{
+    [Fact]
+    public void Next_StepsByTheConfiguredAmountAndClamps()
+    {
+        Assert.Equal(22, PhoneVolume.Next(20, 1, 2));
+        Assert.Equal(18, PhoneVolume.Next(20, -1, 2));
+        Assert.Equal(100, PhoneVolume.Next(99, 1, 2));
+        Assert.Equal(100, PhoneVolume.Next(100, 1, 2));
+        Assert.Equal(0, PhoneVolume.Next(1, -1, 2));
+        Assert.Equal(0, PhoneVolume.Next(0, -1, 2));
+        Assert.Equal(25, PhoneVolume.Next(20, 1, 5));
+    }
+
+    [Fact]
+    public void ConfiguredStep_MatchesTheHardwareVolumeKeys()
+    {
+        Assert.Equal(2, PhoneVolume.SpeakerStep);
+        Assert.Equal(2, PhoneVolume.ConfiguredStep(drivePc: false, pcVolumeStep: 5));
+        Assert.Equal(2, PhoneVolume.ConfiguredStep(drivePc: true, pcVolumeStep: 2));
+        Assert.Equal(5, PhoneVolume.ConfiguredStep(drivePc: true, pcVolumeStep: 5));
+        Assert.Equal(2, PhoneVolume.ConfiguredStep(drivePc: true, pcVolumeStep: null));
+        Assert.Equal(2, PhoneVolume.ConfiguredStep(drivePc: true, pcVolumeStep: 0));
+    }
+}

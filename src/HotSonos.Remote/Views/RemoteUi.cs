@@ -199,6 +199,11 @@ abstract class RemotePage : ContentPage
         _listening = false;
         AppServices.Live.Changed -= OnLive;
         AppServices.Link.Changed -= OnLink;
+        OnHidden();
+    }
+
+    protected virtual void OnHidden()
+    {
     }
 
     /// <summary>Pull the page body out so the tab host can show it. Android's shell bar only keeps five tabs.</summary>

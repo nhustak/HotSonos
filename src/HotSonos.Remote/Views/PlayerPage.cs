@@ -43,6 +43,16 @@ sealed class PlayerPage : RemotePage
     readonly Border _playButton;
 
     bool _drag;
+    bool _local;
+    bool _sending;
+    DateTime _acceptStatusAfter;
+    bool _holding;
+    int _repeat;
+    int _shown = 20;
+    int _target = 20;
+    int _applied = 20;
+    int _pcStep = PhoneVolume.SpeakerStep;
+    bool _muted;
     string? _artRevision;
     RemoteStatusResponse? _status;
 
@@ -60,15 +70,23 @@ sealed class PlayerPage : RemotePage
             Content = _art,
         };
 
+        _volume.FontSize = 18;
+        _volume.TextColor = Swatches.Ink;
+        _volume.HorizontalTextAlignment = TextAlignment.Center;
+        _volume.VerticalTextAlignment = TextAlignment.Center;
+        _volume.HorizontalOptions = LayoutOptions.Fill;
+        _volume.VerticalOptions = LayoutOptions.Center;
+
         _slider.DragStarted += (_, _) => _drag = true;
-        _slider.DragCompleted += async (_, _) =>
+        _slider.DragCompleted += (_, _) =>
         {
             _drag = false;
-            var percent = (int)_slider.Value;
-            if (AppServices.Link.DrivePc)
-                await Act(ct => AppServices.Client.SetVolumeAsync(percent, ct));
-            else
-                await Speaker((_, ct) => AppServices.Link.Speakers.SetHouseVolumeAsync(percent, ct));
+            var percent = Math.Clamp((int)_slider.Value, 0, 100);
+            Pin();
+            _target = percent;
+            Paint(percent);
+            if (!_sending)
+                _ = FlushAsync();
         };
 
         var previous = IconButton("prev", 78, "Previous", () => Go(
@@ -89,6 +107,20 @@ sealed class PlayerPage : RemotePage
             Children = { previous, _playButton, next },
         };
 
+        var stepRow = new Grid
+        {
+            ColumnSpacing = 12,
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Auto),
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
+            },
+        };
+        Put(stepRow, StepButton("−", -1), 0);
+        Put(stepRow, _volume, 1);
+        Put(stepRow, StepButton("+", 1), 2);
+
         var volumeRow = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition() } };
         Put(volumeRow, RemoteUi.Button("Mute", () => Go(
             async (_, ct) => { await AppServices.Link.Speakers.ToggleGroupMuteAsync(ct); },
@@ -101,7 +133,7 @@ sealed class PlayerPage : RemotePage
         {
             Spacing = 8,
             Padding = new Thickness(8, 0, 8, 4),
-            Children = { _title, _artist, _album, transport, _volume, _slider, volumeRow },
+            Children = { _title, _artist, _album, transport, stepRow, _slider, volumeRow },
         };
 
         var layout = new Grid
@@ -114,6 +146,20 @@ sealed class PlayerPage : RemotePage
         Grid.SetRow(controls, 1);
         layout.Add(controls);
         Content = layout;
+    }
+
+    protected override void OnShown()
+    {
+        base.OnShown();
+        _ = LoadStepAsync();
+    }
+
+    protected override void OnLinkChanged() => _ = LoadStepAsync();
+
+    protected override void OnHidden()
+    {
+        _holding = false;
+        _repeat++;
     }
 
     protected override void OnSizeAllocated(double width, double height)
@@ -143,9 +189,17 @@ sealed class PlayerPage : RemotePage
 
         if (status?.Volume is int volume)
         {
-            _volume.Text = status.Muted == true ? $"Volume {volume}% · muted" : $"Volume {volume}%";
-            if (!_drag)
-                _slider.Value = volume;
+            _muted = status.Muted == true;
+            var keepLocal = _local && volume != _shown && DateTime.UtcNow < _acceptStatusAfter;
+            if (_drag || keepLocal)
+                Paint(_shown);
+            else
+            {
+                _local = false;
+                _applied = volume;
+                _target = volume;
+                Paint(volume);
+            }
         }
 
         if (np?.ArtRevision != _artRevision)
@@ -171,6 +225,128 @@ sealed class PlayerPage : RemotePage
         if (_artRevision != revision || call.Value is not { Length: > 0 } bytes)
             return;
         _art.Source = ImageSource.FromStream(() => new MemoryStream(bytes));
+    }
+
+    Button StepButton(string text, int direction)
+    {
+        var button = new Button
+        {
+            Text = text,
+            FontSize = 34,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = Colors.White,
+            BackgroundColor = Swatches.Card,
+            CornerRadius = 36,
+            WidthRequest = 72,
+            HeightRequest = 72,
+            Padding = 0,
+            Margin = 0,
+        };
+        SemanticProperties.SetDescription(button, direction < 0 ? "Volume down" : "Volume up");
+        button.Pressed += (_, _) => BeginRepeat(direction);
+        button.Released += (_, _) => _holding = false;
+        return button;
+    }
+
+    void BeginRepeat(int direction)
+    {
+        var token = ++_repeat;
+        _holding = true;
+        Nudge(direction);
+        _ = RepeatAsync(direction, token);
+    }
+
+    async Task RepeatAsync(int direction, int token)
+    {
+        await Task.Delay(420).ConfigureAwait(true);
+        while (_holding && _repeat == token)
+        {
+            Nudge(direction);
+            await Task.Delay(160).ConfigureAwait(true);
+        }
+    }
+
+    void Nudge(int direction)
+    {
+        var step = PhoneVolume.ConfiguredStep(AppServices.Link.DrivePc, _pcStep);
+        var next = PhoneVolume.Next(_shown, direction, step);
+        if (next == _shown)
+            return;
+        Pin();
+        _target = next;
+        Paint(next);
+        if (!_sending)
+            _ = FlushAsync();
+    }
+
+    void Pin()
+    {
+        _local = true;
+        var until = DateTime.UtcNow.AddSeconds(3);
+        if (until > _acceptStatusAfter)
+            _acceptStatusAfter = until;
+    }
+
+    void Paint(int volume)
+    {
+        _shown = Math.Clamp(volume, 0, 100);
+        _volume.Text = _muted ? $"Volume {_shown}% · muted" : $"Volume {_shown}%";
+        if (!_drag)
+            _slider.Value = _shown;
+    }
+
+    async Task LoadStepAsync()
+    {
+        if (!AppServices.Link.DrivePc)
+            return;
+        var call = await AppServices.Client.GetSettingsAsync(CancellationToken.None).ConfigureAwait(true);
+        if (call.Value is { Ok: true } settings)
+            _pcStep = PhoneVolume.Normalize(settings.VolumeStep);
+    }
+
+    async Task FlushAsync()
+    {
+        _sending = true;
+        try
+        {
+            while (_applied != _target)
+            {
+                var percent = _target;
+                var ok = AppServices.Link.DrivePc
+                    ? await Act(ct => AppServices.Client.SetVolumeAsync(percent, ct)).ConfigureAwait(true)
+                    : await SendSpeakerVolumeAsync(percent).ConfigureAwait(true);
+                if (!ok)
+                {
+                    _holding = false;
+                    _repeat++;
+                    _local = false;
+                    _target = _applied;
+                    Paint(_applied);
+                    break;
+                }
+
+                _applied = percent;
+            }
+        }
+        finally
+        {
+            _sending = false;
+        }
+    }
+
+    async Task<bool> SendSpeakerVolumeAsync(int percent)
+    {
+        try
+        {
+            await AppServices.Link.Speakers.SetHouseVolumeAsync(percent, CancellationToken.None).ConfigureAwait(true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (Application.Current?.MainPage is Page page)
+                await page.DisplayAlert("HotSonos", ex.Message, "OK").ConfigureAwait(true);
+            return false;
+        }
     }
 
     static Border IconButton(string kind, double size, string description, Func<Task> click) =>

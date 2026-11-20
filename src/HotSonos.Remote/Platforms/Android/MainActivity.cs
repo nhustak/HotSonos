@@ -2,6 +2,7 @@ using Android.App;
 using Android.Content.PM;
 using Android.OS;
 using Android.Views;
+using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote;
 
@@ -24,7 +25,7 @@ public class MainActivity : MauiAppCompatActivity
                 if (AppServices.Link.OnPc)
                     _ = AppServices.Client.StepVolumeAsync(direction, CancellationToken.None);
                 else
-                    _ = AppServices.Link.Speakers.StepHouseVolumeAsync(direction * 2, CancellationToken.None);
+                    _ = AppServices.Link.Speakers.StepHouseVolumeAsync(direction * PhoneVolume.SpeakerStep, CancellationToken.None);
             }
 
             return true;
