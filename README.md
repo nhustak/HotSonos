@@ -19,7 +19,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 - **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Top bar: **Phone**. Tray: Phone…, Library…, Topology…, Logs…, Reports…, Debug…
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
-- **Phone:** Android app (`src/HotSonos.Remote`, .NET MAUI) opens **Connect** until a PC is saved. It then opens on **Player** (art and transport) over `http://<pc>:42342` with header `X-HotSonos-Pin`, or straight on the speakers. The **Phone** button on the PC shows the address and PIN to type. Link: Auto, PC only, or Speakers only, under Settings → Connection / PC.
+- **Phone:** Android app (`src/HotSonos.Remote`, .NET MAUI) opens **Connect** until a PC is saved. It then opens on **Player** (art, transport, and − / + volume) over `http://<pc>:42342` with header `X-HotSonos-Pin`, or straight on the speakers. The **Phone** button on the PC shows the address and PIN to type. Link: Auto, PC only, or Speakers only, under Settings → Connection / PC.
 
 **Having issues (stutter, dead zones, flaky grouping)?** Make sure **SonosNet is off** — see [Turn off SonosNet](#turn-off-sonosnet) near the bottom.
 
