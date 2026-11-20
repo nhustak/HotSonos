@@ -1,3 +1,4 @@
+using HotSonos.App.Services;
 using HotSonos.Core;
 
 namespace HotSonos.App.Models;
@@ -350,6 +351,19 @@ public sealed class AppSettings
     public static bool IsValidRemotePin(string? pin) =>
         pin is { Length: 6 } && pin.All(char.IsDigit);
 
+    // ---- Phone wireless debugging (adb deploy). Not the remote PIN or listener. ----
+
+    /// <summary>
+    /// Wireless adb host for the phone. Default <c>192.168.1.171</c>.
+    /// The one-time pairing code is not a setting.
+    /// </summary>
+    public string PhoneAdbHost { get; set; } = PhoneWirelessDebug.DefaultHost;
+
+    /// <summary>
+    /// Wireless adb connect port. Changes when the phone reboots. Default <c>34011</c>.
+    /// </summary>
+    public int PhoneAdbPort { get; set; } = PhoneWirelessDebug.DefaultConnectPort;
+
     // ---- Music library roots (filesystem; for future scan/tags; not Sonos UPnP) ----
 
     /// <summary>
@@ -655,6 +669,8 @@ public sealed class AppSettings
         if (RemotePort is < 1024 or > 65535) RemotePort = 42342;
         if (!IsValidRemotePin(RemotePin))
             RemotePin = GenerateRemotePin();
+        PhoneAdbHost = PhoneWirelessDebug.NormalizeHost(PhoneAdbHost);
+        PhoneAdbPort = PhoneWirelessDebug.NormalizePort(PhoneAdbPort);
         TrayDoubleClickAction = (TrayDoubleClickAction ?? "").Trim().ToLowerInvariant() switch
         {
             TrayDoubleClickControl => TrayDoubleClickControl,

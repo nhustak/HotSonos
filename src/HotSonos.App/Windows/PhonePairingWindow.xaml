@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Phone"
-        Width="560" Height="640"
-        MinWidth="420" MinHeight="480"
+        Width="560" Height="860"
+        MinWidth="420" MinHeight="520"
         WindowStartupLocation="CenterOwner"
         FontFamily="Segoe UI" FontSize="13"
         Background="#FFF4F6F8">
@@ -44,6 +44,33 @@
             <TextBox x:Name="FirewallText" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Padding="8" />
             <Button Content="Allow on private networks…" HorizontalAlignment="Left" Margin="0,10,0,0"
                     Padding="10,4" Click="Firewall_Click" />
+
+            <TextBlock Text="Phone wireless debugging" FontWeight="SemiBold" Margin="0,18,0,6" />
+            <TextBlock TextWrapping="Wrap" Foreground="#FF60707F" FontSize="12" Margin="0,0,0,8"
+                       Text="Install and debug the phone app over Wi-Fi. This is Android wireless debugging, separate from the HotSonos PIN above. The connect port changes when the phone reboots. Pairing is optional. The pairing code is shown on the phone once and is not saved." />
+            <Border Background="White" BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="8" Padding="14">
+                <StackPanel>
+                    <TextBlock Text="Phone adb IP" Foreground="#FF60707F" />
+                    <TextBox x:Name="AdbHostBox" Margin="0,2,0,10" Padding="6,4" />
+                    <TextBlock Text="Connect port" Foreground="#FF60707F" />
+                    <TextBox x:Name="AdbConnectPortBox" Margin="0,2,0,10" Padding="6,4" />
+
+                    <TextBlock Text="Pairing" FontWeight="SemiBold" Margin="0,4,0,6" />
+                    <TextBlock Text="Pairing port" Foreground="#FF60707F" />
+                    <TextBox x:Name="AdbPairPortBox" Margin="0,2,0,10" Padding="6,4" />
+                    <TextBlock Text="Pairing code" Foreground="#FF60707F" />
+                    <TextBox x:Name="AdbPairCodeBox" Margin="0,2,0,10" Padding="6,4" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <Button x:Name="AdbPairButton" Content="Pair" Padding="14,4" Margin="0,0,8,0" Click="AdbPair_Click" />
+                        <Button x:Name="AdbConnectButton" Content="Connect" Padding="14,4" Click="AdbConnect_Click" />
+                    </StackPanel>
+                    <TextBox x:Name="AdbResultText" IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                             TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Padding="8"
+                             Margin="0,10,0,0" MinHeight="48" MaxHeight="140"
+                             VerticalScrollBarVisibility="Auto" Foreground="#FF1C2536" />
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </Window>
