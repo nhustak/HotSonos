@@ -12,6 +12,7 @@ sealed class ConnectionSettingsPage : RemotePage
             "Connection / PC",
             RemoteUi.Back(),
             _connection.Status,
+            RemoteUi.Muted("If Find PC misses, type the address from the PC Phone window. This page is Settings, then Connection / PC. A Chromebook often cannot hear the UDP broadcast."),
             _connection.Host,
             _connection.Port,
             _connection.Pin,
@@ -38,9 +39,9 @@ sealed class ConnectionSettingsPage : RemotePage
             if (found is null)
             {
 #if IOS
-                _connection.Status.Text = IosDiscovery.FindPcMiss;
+                _connection.Status.Text = HotSonos.Remote.IosDiscovery.FindPcMiss;
 #else
-                _connection.Status.Text = "No PC answered. Type the address from the Phone window.";
+                _connection.Status.Text = RemoteFailureText.FindPcMissed;
 #endif
                 return;
             }
@@ -52,9 +53,11 @@ sealed class ConnectionSettingsPage : RemotePage
         catch (Exception ex)
         {
 #if IOS
-            _connection.Status.Text = IosDiscovery.FindPcMiss;
+            _connection.Status.Text = HotSonos.Remote.IosDiscovery.FindPcMiss;
 #else
-            _connection.Status.Text = ex.Message;
+            _connection.Status.Text = string.IsNullOrWhiteSpace(ex.Message)
+                ? RemoteFailureText.FindPcMissed
+                : ex.Message + " " + RemoteFailureText.FindPcMissed;
 #endif
         }
     }

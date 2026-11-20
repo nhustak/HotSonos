@@ -52,6 +52,10 @@ sealed class PlayerPage : RemotePage
     int _target = 20;
     int _applied = 20;
     int _pcStep = PhoneVolume.SpeakerStep;
+    readonly Grid _column;
+#if ANDROID
+    readonly Grid _host;
+#endif
     bool _muted;
     bool _known;
     bool _sampling;
@@ -59,7 +63,6 @@ sealed class PlayerPage : RemotePage
     bool _forceSample;
     string? _artRevision;
     RemoteStatusResponse? _status;
-    readonly Grid _layout;
 
 #if IOS
     /// <summary>iPad Player column. iPhone stays full width. Android does not compile this.</summary>
@@ -89,6 +92,7 @@ sealed class PlayerPage : RemotePage
         _volume.HorizontalOptions = LayoutOptions.Fill;
         _volume.VerticalOptions = LayoutOptions.Center;
 
+        RemoteInput.OmitFromTabOrder(_slider);
         _slider.DragStarted += (_, _) => _drag = true;
         _slider.ValueChanged += (_, e) =>
         {
@@ -156,31 +160,43 @@ sealed class PlayerPage : RemotePage
             Children = { _title, _artist, _album, transport, stepRow, _slider, volumeRow },
         };
 
-        _layout = new Grid
+        _column = new Grid
         {
             BackgroundColor = Swatches.Bg,
             Padding = new Thickness(16, 8, 16, 8),
+            HorizontalOptions = LayoutOptions.Center,
+            VerticalOptions = LayoutOptions.Fill,
             RowDefinitions = { new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) },
         };
-        _layout.Add(_artFrame);
+        _column.Add(_artFrame);
         Grid.SetRow(controls, 1);
-        _layout.Add(controls);
+        _column.Add(controls);
 #if IOS
         // iPad only: a centered column. The host stays full-bleed so the sides match the page.
-        // iPhone leaves WidthRequest unset and fills the body. Android does not take this branch.
+        // iPhone leaves WidthRequest unset and fills the body.
         var host = new Grid
         {
             BackgroundColor = Swatches.Bg,
             HorizontalOptions = LayoutOptions.Fill,
             VerticalOptions = LayoutOptions.Fill,
         };
-        _layout.HorizontalOptions = LayoutOptions.Fill;
-        _layout.VerticalOptions = LayoutOptions.Fill;
-        host.Add(_layout);
-        _layout.SizeChanged += (_, _) => FitPlayerColumn();
+        _column.HorizontalOptions = LayoutOptions.Fill;
+        _column.VerticalOptions = LayoutOptions.Fill;
+        host.Add(_column);
+        _column.SizeChanged += (_, _) => FitPlayerColumn();
         Content = host;
+#elif ANDROID
+        // Chromebook and other wide windows: center a phone-width column. A phone fills the body.
+        _host = new Grid { BackgroundColor = Swatches.Bg };
+        _host.Add(_column);
+        _host.SizeChanged += (_, _) =>
+        {
+            if (_host.Width > 0 && _host.Height > 0)
+                Arrange(_host.Width, _host.Height);
+        };
+        Content = _host;
 #else
-        Content = _layout;
+        Content = _column;
 #endif
     }
 
@@ -214,6 +230,10 @@ sealed class PlayerPage : RemotePage
         base.OnSizeAllocated(width, height);
 #if IOS
         FitPlayerColumn();
+#elif ANDROID
+        // The shell reparents the body, so the page often has no size. Prefer the host that is on screen.
+        if (_host.Width <= 0)
+            Arrange(width, height);
 #else
         if (width <= 0 || height <= 0)
             return;
@@ -224,6 +244,20 @@ sealed class PlayerPage : RemotePage
 #endif
     }
 
+#if ANDROID
+    void Arrange(double width, double height)
+    {
+        if (width <= 0 || height <= 0)
+            return;
+        var column = RemoteWindow.Column(width, RemoteWindow.PlayerColumnMax);
+        RemoteUi.Fit(_column, width, RemoteWindow.PlayerColumnMax);
+        var side = Math.Min(column - 48, height * 0.46);
+        side = Math.Clamp(side, 160, 420);
+        _artFrame.WidthRequest = side;
+        _artFrame.HeightRequest = side;
+    }
+#endif
+
 #if IOS
     /// <summary>
     /// The page body is hosted in the shell, so the column grid is what actually gets a size.
@@ -231,22 +265,22 @@ sealed class PlayerPage : RemotePage
     /// </summary>
     void FitPlayerColumn()
     {
-        var height = _layout.Height;
+        var height = _column.Height;
         if (height <= 0)
             return;
 
-        var available = (_layout.Parent as VisualElement)?.Width ?? _layout.Width;
+        var available = (_column.Parent as VisualElement)?.Width ?? _column.Width;
         if (available <= 0)
             return;
 
         var tablet = DeviceInfo.Idiom == DeviceIdiom.Tablet && available > IpadColumnWidth;
         var contentWidth = tablet ? IpadColumnWidth : available;
         var desiredRequest = tablet ? IpadColumnWidth : -1;
-        if (Math.Abs(_layout.WidthRequest - desiredRequest) > 0.5)
-            _layout.WidthRequest = desiredRequest;
+        if (Math.Abs(_column.WidthRequest - desiredRequest) > 0.5)
+            _column.WidthRequest = desiredRequest;
         var align = tablet ? LayoutOptions.Center : LayoutOptions.Fill;
-        if (_layout.HorizontalOptions != align)
-            _layout.HorizontalOptions = align;
+        if (_column.HorizontalOptions != align)
+            _column.HorizontalOptions = align;
 
         var side = Math.Min(contentWidth - 48, height * 0.46);
         side = Math.Clamp(side, 160, 420);
@@ -518,17 +552,7 @@ sealed class PlayerPage : RemotePage
             Content = new Grid { Children = { glyph } },
         };
         SemanticProperties.SetDescription(button, description);
-        var tap = new TapGestureRecognizer();
-        tap.Tapped += async (_, _) =>
-        {
-            try { await click().ConfigureAwait(true); }
-            catch (Exception ex)
-            {
-                if (Application.Current?.MainPage is Page page)
-                    await page.DisplayAlert("HotSonos", ex.Message, "OK");
-            }
-        };
-        button.GestureRecognizers.Add(tap);
+        RemoteInput.MakeActivable(button, click);
         return button;
     }
 

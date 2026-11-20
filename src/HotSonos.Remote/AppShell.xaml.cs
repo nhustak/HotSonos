@@ -1,3 +1,4 @@
+using HotSonos.Remote.Protocol;
 using HotSonos.Remote.Views;
 
 namespace HotSonos.Remote;
@@ -59,7 +60,25 @@ public partial class AppShell : ContentPage
         }
 
         Select(0);
+#if ANDROID
+        SizeChanged += (_, _) => LayoutTabs(Width);
+#endif
     }
+
+#if ANDROID
+    /// <summary>Phone widths keep the scrolling strip. A wide window shows every tab at a capped width.</summary>
+    void LayoutTabs(double width)
+    {
+        if (width <= 0 || _tabs.Length == 0)
+            return;
+        var each = RemoteWindow.TabButtonWidth(width, _tabs.Length);
+        var spread = each > 0;
+        TabBar.HorizontalOptions = spread ? LayoutOptions.Center : LayoutOptions.Start;
+        TabHost.MinimumWidthRequest = Math.Max(0, TabScroll.Width);
+        foreach (var tab in _tabs)
+            tab.WidthRequest = spread ? each : -1;
+    }
+#endif
 
     public static void OpenConnection()
     {
@@ -179,6 +198,9 @@ public partial class AppShell : ContentPage
 #if IOS
         if (width <= 0)
             return;
+        // The tab strip sits in a grid so a wide Android window can center it.
+        // Give that grid the viewport width or iPad centering has nothing to center in.
+        TabHost.MinimumWidthRequest = Math.Max(0, width);
         // Eight labels fit on an iPad and sit in the middle. A phone keeps the
         // scrolling strip aligned to the start, same as Android.
         var measured = TabBar.Measure(double.PositiveInfinity, 80);

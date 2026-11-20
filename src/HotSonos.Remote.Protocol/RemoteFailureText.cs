@@ -45,6 +45,13 @@ public static class RemoteFailureText
         };
     }
 
+    /// <summary>
+    /// Find PC heard nothing. ChromeOS runs Android behind NAT, so UDP 42343 often never
+    /// leaves the container. The same miss happens on an emulator. The typed address is the path.
+    /// </summary>
+    public const string FindPcMissed =
+        "No PC answered. Type the address from the PC Phone window. A Chromebook or an emulator often cannot hear UDP broadcast on port 42343 — enter that address under Settings, then Connection / PC.";
+
     public static string PcRequired(string what) =>
         what + " needs the PC. Connect to your PC to use this. Tap the PC / Speakers line at the top.";
 

@@ -17,7 +17,7 @@ sealed class PairPage : ContentPage
         Content = RemoteUi.ConnectPage(
             "Connect to your PC",
             _form.Status,
-            RemoteUi.Muted("Find PC looks on this Wi-Fi. An emulator cannot hear that announce — type the PC's 192.168 address."),
+            RemoteUi.Muted("Find PC looks on this Wi-Fi. A Chromebook or an emulator often cannot hear that announce — type the PC's address from the Phone window."),
             RemoteUi.Button("Find PC", FindAsync),
             _form.Host,
             _form.Port,
@@ -36,9 +36,9 @@ sealed class PairPage : ContentPage
             if (found is null)
             {
 #if IOS
-                _form.Status.Text = IosDiscovery.FindPcMiss;
+                _form.Status.Text = HotSonos.Remote.IosDiscovery.FindPcMiss;
 #else
-                _form.Status.Text = "No PC answered. Type the address from the Phone window. On an emulator, type the PC's 192.168 address.";
+                _form.Status.Text = RemoteFailureText.FindPcMissed;
 #endif
                 return;
             }
@@ -50,9 +50,9 @@ sealed class PairPage : ContentPage
         catch (Exception ex)
         {
 #if IOS
-            _form.Status.Text = IosDiscovery.FindPcMiss;
+            _form.Status.Text = HotSonos.Remote.IosDiscovery.FindPcMiss;
 #else
-            _form.Status.Text = "Could not search the network. " + ex.Message;
+            _form.Status.Text = "Could not search the network. " + ex.Message + " " + RemoteFailureText.FindPcMissed;
 #endif
         }
     }

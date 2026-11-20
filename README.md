@@ -258,6 +258,34 @@ On the PC, open HotSonos and press **Phone** (or the tray item **Phone…**). Th
 
 The phone polls now-playing every 2 seconds while it is open, and loads the other tabs when you open them. It checks the PC again when the app resumes. Reboot, regroup, fresh start, rescan, wiping the queue, deleting a tag, and leaving or leading a group ask you to confirm first.
 
+### ChromeOS
+
+The same APK runs as an Android app on a Chromebook. The window is resizable and not locked to portrait, and resizing it does not restart the activity. A phone-width window keeps the phone Player. A wider window centers that column (album art stays square, transport and Mute / Level all stay a phone size) and keeps the bottom tab bar. Once the window is wide enough for every tab, they sit in one row instead of scrolling.
+
+Keyboard and mouse, when a text field is not focused: **Space** play/pause, **Left** / **Right** (or media previous / next) skip, **Up** / **Down** or **+** / **-** change volume by the same step as the hardware volume keys, **M** mute. Media play, pause, next, and previous work even while typing. **Enter** activates the focused control. Buttons light up under the pointer. The wheel scrolls lists, and scrolls the tab strip sideways when the pointer is over it.
+
+**Find PC** sends a UDP broadcast on port **42343**. ChromeOS runs Android behind NAT, so that broadcast often never reaches the PC. Type the address and PIN from the PC **Phone** window. On first launch the boxes are on **Connect**. After that they are under **Settings**, then **Connection / PC**. A missed search says so.
+
+**Play internal testing** (no developer mode):
+
+1. `dotnet publish src\HotSonos.Remote\HotSonos.Remote.csproj -f net10.0-android -c Release` and upload `com.hotsonos.remote-Signed.aab` from `src\HotSonos.Remote\bin\Release\net10.0-android\publish\`.
+2. In Play Console, open Testing → Internal testing, create a release, and add the Google account that is signed in on the Chromebook.
+3. On the Chromebook, open the opt-in link in Chrome and install HotSonos from the Play Store.
+
+**ADB debugging** (developer mode on ChromeOS builds that hide the switch until then):
+
+1. If Settings does not show ADB debugging, enable developer mode (hold Esc + Refresh + Power, then Ctrl+D). That powerwashes the Chromebook.
+2. Settings → Advanced → Developers. Turn on the Linux development environment if it is off, then turn on **Develop Android apps** / **ADB debugging** and accept the restart.
+3. Copy the APK into the Linux files folder (Downloads is shared). In the Linux terminal:
+
+```bash
+sudo apt update && sudo apt install -y adb
+adb connect 100.115.92.2:5555
+adb install -r com.hotsonos.remote-Signed.apk
+```
+
+Accept the debugging prompt on the Chromebook. `100.115.92.2` is the Android container as seen from the Linux VM. A debug build's APK is `src\HotSonos.Remote\bin\Debug\net10.0-android\com.hotsonos.remote-Signed.apk`.
+
 ### Project layout
 | Project | Purpose |
 |---|---|
