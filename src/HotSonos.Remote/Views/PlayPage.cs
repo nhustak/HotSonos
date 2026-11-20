@@ -15,12 +15,9 @@ sealed class PlayPage : RemotePage
             "Play",
             _status,
             RemoteUi.Button("Refresh", LoadAsync),
-            RemoteUi.Muted("Tags"),
-            _tags,
-            RemoteUi.Muted("Genres"),
-            _genres,
-            RemoteUi.Muted("Folders"),
-            _folders);
+            RemoteUi.Section(PhoneSections.PlayTags, "Tags", _tags),
+            RemoteUi.Section(PhoneSections.PlayGenres, "Genres", _genres),
+            RemoteUi.Section(PhoneSections.PlayFolders, "Folders", _folders));
     }
 
     protected override void OnShown()
