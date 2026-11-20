@@ -955,7 +955,40 @@ public sealed class SonosManager
         }
     }
 
-    private void OnTopologyEvent(string stateXml)
+    private void OnTopologyEvent(string stateXml) => ApplyZoneGroupState(stateXml, fromHeartbeat: false);
+
+    /// <summary>
+    /// Reads ZoneGroupState from a speaker we already know. Updates the live grouping
+    /// without <see cref="TopologyChanged"/>, so a heartbeat cannot auto-regroup.
+    /// </summary>
+    public async Task PullZoneGroupStateAsync(CancellationToken ct = default)
+    {
+        if (!await _refreshGate.WaitAsync(0, ct).ConfigureAwait(false))
+            return;
+
+        try
+        {
+            var ip = _controller?.CoordinatorIp
+                     ?? _zones.FirstOrDefault(z => !string.IsNullOrWhiteSpace(z.IpAddress))?.IpAddress
+                     ?? Groups.FirstOrDefault()?.CoordinatorIp;
+            if (string.IsNullOrWhiteSpace(ip))
+                return;
+
+            var response = await _soap.InvokeAsync(
+                ip, SonosService.ZoneGroupTopology, "GetZoneGroupState", [], ct).ConfigureAwait(false);
+            var xml = SonosSoapClient.ReadValue(response, "ZoneGroupState");
+            if (string.IsNullOrWhiteSpace(xml))
+                return;
+
+            ApplyZoneGroupState(xml, fromHeartbeat: true);
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
+    }
+
+    private void ApplyZoneGroupState(string stateXml, bool fromHeartbeat)
     {
         try
         {
@@ -980,7 +1013,8 @@ public sealed class SonosManager
             var vanishedNow = SonosDiscovery.ParseVanishedRooms(stateXml);
 
             // Heavy monitor: full member graph + event log (expensive on GENA floods).
-            if (_settings().EnsureShape().TopologyMonitorEnabled)
+            // Heartbeat only refreshes the visible grouping. It does not append the event trail.
+            if (!fromHeartbeat && _settings().EnsureShape().TopologyMonitorEnabled)
             {
                 var snap = SonosDiscovery.ParseTopologySnapshot(stateXml);
                 _lastTopology = snap;
@@ -1032,7 +1066,9 @@ public sealed class SonosManager
             // Only notify UI when something meaningful changed — GENA often re-sends identical topology.
             var controllerIpAfter = _controller?.CoordinatorIp;
             var controllerChanged = !string.Equals(controllerIpBefore, controllerIpAfter, StringComparison.OrdinalIgnoreCase);
-            if (groupsChanged || offlineChanged || controllerChanged)
+            // Heartbeat updates the picture the tray and phone read. It must not raise
+            // TopologyChanged: that path can schedule Keep house grouped.
+            if (!fromHeartbeat && (groupsChanged || offlineChanged || controllerChanged))
             {
                 try { TopologyChanged?.Invoke(); }
                 catch (Exception ex) { AppLog.Warn("TopologyChanged subscriber failed", ex); }
@@ -1139,8 +1175,11 @@ public sealed class SonosManager
 
     public ValueTask DisposeEventsAsync() => _events.DisposeAsync();
 
-    /// <summary>Discovered groups, largest first (so "All Speakers" leads).</summary>
+    /// <summary>Discovered groups, largest first. "All speakers" only when one group holds every room.</summary>
     public IReadOnlyList<SonosGroup> Groups { get; private set; } = [];
+
+    /// <summary>Live ZoneGroupTopology picture. Not the saved Daily group preset.</summary>
+    public LiveGroupingView LivePicture { get; private set; } = LiveGrouping.Map([]);
 
     /// <summary>Coordinator room name of the active group; the persisted target key.</summary>
     public string? ActiveRoom { get; private set; }
@@ -3208,23 +3247,26 @@ public sealed class SonosManager
 
     private void RebuildGroups()
     {
-        var totalVisible = _zones.Count;
+        LivePicture = LiveGrouping.Map(_zones.Select(z =>
+            new SpeakerMembership(z.RoomName, z.CoordinatorUuid, z.IsCoordinator)));
 
-        Groups = _zones
-            .GroupBy(z => z.CoordinatorUuid, StringComparer.OrdinalIgnoreCase)
+        var wholeHouse = LivePicture.Groups.Count == 1 && LivePicture.Groups[0].Rooms.Count > 1;
+        Groups = LivePicture.Groups
             .Select(g =>
             {
-                var coord = g.FirstOrDefault(z => z.IsCoordinator) ?? g.First();
-                var count = g.Count();
-                var name = count == totalVisible && totalVisible > 1
-                    ? "All Speakers"
-                    : count > 1
-                        ? $"{coord.RoomName} + {count - 1}"
-                        : coord.RoomName;
-                return new SonosGroup(name, coord.RoomName, coord.CoordinatorUuid, coord.CoordinatorIpAddress, count);
+                var coord = _zones.FirstOrDefault(z =>
+                    z.IsCoordinator && string.Equals(z.CoordinatorUuid, g.Id, StringComparison.OrdinalIgnoreCase))
+                    ?? _zones.FirstOrDefault(z =>
+                        string.Equals(z.CoordinatorUuid, g.Id, StringComparison.OrdinalIgnoreCase))
+                    ?? _zones.FirstOrDefault(z =>
+                        string.Equals(z.RoomName, g.CoordinatorRoom, StringComparison.OrdinalIgnoreCase));
+                if (coord is null)
+                    return null;
+                var name = wholeHouse ? LiveGrouping.AllSpeakers : g.Label;
+                return new SonosGroup(name, coord.RoomName, coord.CoordinatorUuid, coord.CoordinatorIpAddress, g.Rooms.Count);
             })
-            .OrderByDescending(g => g.MemberCount)
-            .ThenBy(g => g.CoordinatorRoom, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g is not null)
+            .Select(g => g!)
             .ToList();
     }
 

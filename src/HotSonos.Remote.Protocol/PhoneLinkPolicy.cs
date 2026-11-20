@@ -31,9 +31,12 @@ public static class PhoneLinkPolicy
             _ => paired && pcReachable ? PhoneLinkOutcome.Pc : PhoneLinkOutcome.Speakers,
         };
 
+    /// <summary>
+    /// Chip text. A live PC is just "PC" — the address stays on Connect and Settings → Connection / PC.
+    /// </summary>
     public static string Banner(PhoneLinkOutcome outcome, string? pcHost, string? room) => outcome switch
     {
-        PhoneLinkOutcome.Pc => string.IsNullOrWhiteSpace(pcHost) ? "PC" : "PC: " + pcHost.Trim(),
+        PhoneLinkOutcome.Pc => "PC",
         PhoneLinkOutcome.PcDown => string.IsNullOrWhiteSpace(pcHost) ? "PC: not paired" : "PC unreachable",
         _ => string.IsNullOrWhiteSpace(room) ? "Speakers" : "Speakers: " + room.Trim(),
     };

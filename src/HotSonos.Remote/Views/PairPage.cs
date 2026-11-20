@@ -20,7 +20,7 @@ sealed class PairPage : ContentPage
             _form.Port,
             _form.Pin,
             RemoteUi.Button("Test and connect", ConnectAsync),
-            RemoteUi.Muted("Test and connect uses PC only, so a missed PC stays a missed PC. Auto and Speakers are on More after you are in."),
+            RemoteUi.Muted("Test and connect uses PC only, so a missed PC stays a missed PC. Auto and Speakers are in Settings → Connection / PC after you are in."),
             RemoteUi.Button("Use speakers without the PC", SpeakersAsync));
     }
 

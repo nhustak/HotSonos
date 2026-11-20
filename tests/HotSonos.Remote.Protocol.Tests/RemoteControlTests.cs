@@ -25,7 +25,8 @@ public class PhoneLinkPolicyTests
     [Fact]
     public void Banner_NamesThePcOrTheRoom()
     {
-        Assert.Equal("PC: 192.168.1.20", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, "192.168.1.20", "Kitchen"));
+        Assert.Equal("PC", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, "192.168.1.20", "Kitchen"));
+        Assert.Equal("PC", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, "192.168.1.129:42342", null));
         Assert.Equal("Speakers: Kitchen", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Speakers, "192.168.1.20", "Kitchen"));
         Assert.Equal("Speakers", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Speakers, "192.168.1.20", "  "));
         Assert.Equal("PC unreachable", PhoneLinkPolicy.Banner(PhoneLinkOutcome.PcDown, "192.168.1.20", "Kitchen"));
@@ -98,6 +99,20 @@ public class DailyGroupLogicTests
         Assert.Null(DailyGroupLogic.SelectPreset(model, "Office hours", on: false));
         Assert.True(model.AllSpeakers);
         Assert.Null(DailyGroupLogic.ActivePresetName(model));
+    }
+
+    [Fact]
+    public void DescribePreset_NamesTheSettingNotTheLiveGroup()
+    {
+        var presets = new[]
+        {
+            new DailyPresetModel { Name = "Downstairs", Rooms = ["Kitchen", "Office"] },
+        };
+
+        Assert.Equal("All speakers", DailyGroupLogic.DescribePreset(true, ["Kitchen"], presets));
+        Assert.Equal("All speakers", DailyGroupLogic.DescribePreset(false, [], presets));
+        Assert.Equal("Downstairs", DailyGroupLogic.DescribePreset(false, ["Office", "Kitchen"], presets));
+        Assert.Equal("Den, Office", DailyGroupLogic.DescribePreset(false, ["Office", "Den", "Office"], presets));
     }
 
     [Fact]

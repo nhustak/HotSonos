@@ -19,7 +19,10 @@ public sealed record RemoteTopologyResponse(
     IReadOnlyList<RemoteCoordinatorDto> Coordinators,
     IReadOnlyList<string> Offline,
     IReadOnlyList<string> Vanished,
-    string? Error);
+    string? Error,
+    string? LiveGrouping = null,
+    string? DailyGroupPreset = null,
+    bool? GroupedAsDaily = null);
 
 public sealed record RemoteMemberDto(
     string Room,
