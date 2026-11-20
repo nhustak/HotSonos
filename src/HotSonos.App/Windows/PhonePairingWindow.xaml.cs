@@ -1,6 +1,10 @@
+using System.Globalization;
 using System.Windows;
+using System.Windows.Media;
+using HotSonos.App.Infrastructure;
 using HotSonos.App.Models;
 using HotSonos.App.Remote;
+using HotSonos.App.Services;
 using HotSonos.Remote.Protocol;
 
 namespace HotSonos.App;
@@ -11,6 +15,7 @@ public partial class PhonePairingWindow : Window
     private readonly Func<string?> _endpoint;
     private readonly Action _newPin;
     private readonly Action _firewall;
+    private bool _adbBusy;
 
     public PhonePairingWindow(AppSettings settings, Func<string?> endpoint, Action newPin, Action firewall)
     {
@@ -19,6 +24,9 @@ public partial class PhonePairingWindow : Window
         _newPin = newPin;
         _firewall = firewall;
         InitializeComponent();
+        _settings.EnsureShape();
+        AdbHostBox.Text = _settings.PhoneAdbHost;
+        AdbConnectPortBox.Text = _settings.PhoneAdbPort.ToString(CultureInfo.InvariantCulture);
         Refresh();
     }
 
@@ -76,5 +84,161 @@ public partial class PhonePairingWindow : Window
         if (pin.Length == 0)
             return;
         System.Windows.Clipboard.SetText(pin);
+    }
+
+    private async void AdbPair_Click(object sender, RoutedEventArgs e)
+    {
+        if (_adbBusy)
+            return;
+        if (!TryReadEndpoint(out var host, out var port, out var error))
+        {
+            ShowAdbResult(error, warn: true);
+            return;
+        }
+
+        if (!PhoneWirelessDebug.TryValidatePort(AdbPairPortBox.Text, out var pairPort, out var portError))
+        {
+            ShowAdbResult("Pairing port: " + portError, warn: true);
+            return;
+        }
+
+        if (!PhoneWirelessDebug.TryValidatePairingCode(AdbPairCodeBox.Text, out var code, out var codeError))
+        {
+            ShowAdbResult(codeError ?? PhoneWirelessDebug.CodeError, warn: true);
+            return;
+        }
+
+        if (!TrySaveEndpoint(host, port, out error))
+        {
+            ShowAdbResult(error, warn: true);
+            return;
+        }
+
+        var adb = PhoneWirelessDebug.ResolveAdb();
+        if (adb is null)
+        {
+            ShowAdbResult(PhoneWirelessDebug.MissingAdbMessage, warn: true);
+            return;
+        }
+
+        AdbPairCodeBox.Text = "";
+        await RunAdbAsync(
+            adb,
+            PhoneWirelessDebug.PairArguments(host, pairPort, code),
+            PhoneWirelessDebug.PairDisplay(host, pairPort),
+            code).ConfigureAwait(true);
+    }
+
+    private async void AdbConnect_Click(object sender, RoutedEventArgs e)
+    {
+        if (_adbBusy)
+            return;
+        if (!TryReadEndpoint(out var host, out var port, out var error))
+        {
+            ShowAdbResult(error, warn: true);
+            return;
+        }
+
+        if (!TrySaveEndpoint(host, port, out error))
+        {
+            ShowAdbResult(error, warn: true);
+            return;
+        }
+
+        var adb = PhoneWirelessDebug.ResolveAdb();
+        if (adb is null)
+        {
+            ShowAdbResult(PhoneWirelessDebug.MissingAdbMessage, warn: true);
+            return;
+        }
+
+        await RunAdbAsync(
+            adb,
+            PhoneWirelessDebug.ConnectArguments(host, port),
+            PhoneWirelessDebug.ConnectDisplay(host, port),
+            secret: null).ConfigureAwait(true);
+    }
+
+    private bool TryReadEndpoint(out string host, out int port, out string error)
+    {
+        if (!PhoneWirelessDebug.TryValidateHost(AdbHostBox.Text, out host, out var hostError))
+        {
+            port = 0;
+            error = hostError ?? PhoneWirelessDebug.HostRequiredError;
+            return false;
+        }
+
+        if (!PhoneWirelessDebug.TryValidatePort(AdbConnectPortBox.Text, out port, out var portError))
+        {
+            error = "Connect port: " + portError;
+            return false;
+        }
+
+        error = "";
+        return true;
+    }
+
+    private bool TrySaveEndpoint(string host, int port, out string error)
+    {
+        _settings.PhoneAdbHost = host;
+        _settings.PhoneAdbPort = port;
+        try
+        {
+            new ConfigStore().Save(_settings);
+            AdbHostBox.Text = _settings.PhoneAdbHost;
+            AdbConnectPortBox.Text = _settings.PhoneAdbPort.ToString(CultureInfo.InvariantCulture);
+            error = "";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = "Could not save the phone adb address: " + ex.Message;
+            return false;
+        }
+    }
+
+    private async Task RunAdbAsync(string adb, IReadOnlyList<string> arguments, string display, string? secret)
+    {
+        _adbBusy = true;
+        AdbPairButton.IsEnabled = false;
+        AdbConnectButton.IsEnabled = false;
+        ShowAdbResult("Running " + display, warn: false);
+        try
+        {
+            var result = await PhoneWirelessDebug.ExecuteAsync(
+                adb,
+                arguments,
+                display,
+                secret,
+                AppLog.Info).ConfigureAwait(true);
+            if (!IsLoaded)
+                return;
+            ShowAdbResult(result.Text, warn: !result.Ok);
+        }
+        catch (Exception ex)
+        {
+            if (!IsLoaded)
+                return;
+            var message = PhoneWirelessDebug.Redact(display + Environment.NewLine + ex.Message, secret);
+            AppLog.Info(message);
+            ShowAdbResult(message, warn: true);
+        }
+        finally
+        {
+            _adbBusy = false;
+            if (IsLoaded)
+            {
+                AdbPairButton.IsEnabled = true;
+                AdbConnectButton.IsEnabled = true;
+            }
+        }
+    }
+
+    private void ShowAdbResult(string? text, bool warn)
+    {
+        AdbResultText.Text = text ?? "";
+        AdbResultText.Foreground = warn
+            ? new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x8A, 0x2B, 0x2B))
+            : new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1C, 0x25, 0x36));
     }
 }

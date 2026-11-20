@@ -51,8 +51,11 @@ public sealed class ConfigStore
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
 
-            var json = JsonSerializer.Serialize(settings.EnsureShape(), JsonOptions);
+            var shaped = settings.EnsureShape();
+            var json = JsonSerializer.Serialize(shaped, JsonOptions);
             File.WriteAllText(_path, json);
+            if (!string.IsNullOrWhiteSpace(directory))
+                PhoneWirelessDebug.WriteEndpointFile(directory, shaped.PhoneAdbHost, shaped.PhoneAdbPort);
         }
         catch (Exception ex)
         {

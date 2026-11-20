@@ -7,6 +7,8 @@
     <Project Path="src/HotSonos.Remote.Protocol/HotSonos.Remote.Protocol.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/HotSonos.App.Tests/HotSonos.App.Tests.csproj" />
+    <Project Path="tests/HotSonos.App.Wpf.Tests/HotSonos.App.Wpf.Tests.csproj" />
     <Project Path="tests/HotSonos.Core.Tests/HotSonos.Core.Tests.csproj" />
     <Project Path="tests/HotSonos.Activity.Tests/HotSonos.Activity.Tests.csproj" />
     <Project Path="tests/HotSonos.Remote.Protocol.Tests/HotSonos.Remote.Protocol.Tests.csproj" />
