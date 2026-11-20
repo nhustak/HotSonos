@@ -53,6 +53,7 @@ public partial class App : System.Windows.Application
     /// <summary>Coalesced ±volume while gate/Sonos is slow — never one hotkey = one queued full action.</summary>
     private int _pendingVolumeDelta;
     private int _volumeDrainRunning; // 0/1
+    private int _groupingPullInFlight;
     private bool _isExiting;
     /// <summary>False until first discovery finishes — GENA/flyout must not run UI work before tray + room exist.</summary>
     private bool _startupReady;
@@ -331,6 +332,7 @@ public partial class App : System.Windows.Application
                     $"heartbeat up={_uptime.Elapsed:hh\\:mm\\:ss} groups={_sonos?.Groups.Count ?? 0}");
                 AppLog.Before(
                     $"idle/heartbeat up={_uptime.Elapsed:hh\\:mm\\:ss} mcp={_mcpHost?.IsRunning == true}");
+                _ = RefreshGroupingOnHeartbeatAsync();
             }
             catch (Exception ex)
             {
@@ -424,6 +426,7 @@ public partial class App : System.Windows.Application
                     ShowMainWindow();
                     _mainWindow?.ShowPhonePairing();
                 },
+                RegroupDaily: () => _ = RegroupDailyFromTrayAsync(),
                 Exit: ExitApplication));
 
         var failures = ApplyBindings();
@@ -964,10 +967,93 @@ public partial class App : System.Windows.Application
     {
         var groups = _sonos.Groups.Select(g => (g.DisplayName, g.CoordinatorRoom)).ToList();
         _tray.UpdateRooms(groups, _settings.ActiveRoom ?? _sonos.ActiveRoom);
+        var grouping = GroupingDisplay.From(_sonos, _settings);
+        _tray.UpdateLiveGrouping(grouping.Summary, grouping.PresetLabel, grouping.MatchesDaily);
         _tray.UpdateFavorites(_settings.FavoriteSlots
             .Select(s => s.IsSet ? s.DisplayLabel(_settings) : null)
             .ToList());
         _tray.UpdateOfflineSpeakers(_sonos.OfflineSpeakers);
+    }
+
+    /// <summary>
+    /// Re-reads ZoneGroupState and repaints the tray. Does not raise TopologyChanged,
+    /// so Keep house grouped is not scheduled from the heartbeat.
+    /// </summary>
+    private async Task RefreshGroupingOnHeartbeatAsync()
+    {
+        if (_sonos is null || _isExiting)
+            return;
+        if (System.Threading.Interlocked.CompareExchange(ref _groupingPullInFlight, 1, 0) != 0)
+            return;
+
+        try
+        {
+            await _sonos.PullZoneGroupStateAsync().ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (_isExiting || _tray is null)
+                    return;
+                UpdateTrayDynamic();
+                _mainWindow?.RefreshLiveGrouping();
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Heartbeat grouping refresh failed", ex);
+        }
+        finally
+        {
+            System.Threading.Interlocked.Exchange(ref _groupingPullInFlight, 0);
+        }
+    }
+
+    private async Task RegroupDailyFromTrayAsync()
+    {
+        if (!_startupReady || _sonos is null)
+            return;
+        if (!await _actionGate.WaitAsync(0).ConfigureAwait(false))
+        {
+            await Dispatcher.InvokeAsync(() => _tray?.ShowBalloon("HotSonos", "Busy — try Regroup again in a moment."));
+            return;
+        }
+
+        try
+        {
+            await Dispatcher.InvokeAsync(() => _tray?.ShowBalloon("HotSonos", "Regrouping the Daily group…"));
+            var settings = _settings.EnsureShape();
+            var preferred = settings.PreferredHouseCoordinatorRoom;
+            string message;
+            if (!string.IsNullOrWhiteSpace(preferred))
+            {
+                message = await _sonos.SetHouseCoordinatorAsync(preferred).ConfigureAwait(false);
+                settings.PreferredHouseCoordinatorRoom = preferred;
+                settings.ActiveRoom = preferred;
+                try { _store.Save(settings); }
+                catch (Exception ex) { AppLog.Warn("Settings save after regroup failed", ex); }
+            }
+            else
+            {
+                await _sonos.GroupAllSpeakersAsync().ConfigureAwait(false);
+                message = "Regrouped the Daily group.";
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                UpdateTrayDynamic();
+                _mainWindow?.RefreshLiveGrouping();
+                var toast = message.Length > 200 ? message[..197] + "..." : message;
+                _tray?.ShowBalloon("HotSonos", toast);
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Tray regroup failed", ex);
+            await Dispatcher.InvokeAsync(() => _tray?.ShowBalloon("HotSonos", "Regroup failed. See the log."));
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
     }
 
     private async void OnHotkeyPressed(HotsonosAction action)
@@ -1411,7 +1497,11 @@ public partial class App : System.Windows.Application
         if ((now - _lastTrayTopologyRefreshUtc).TotalMilliseconds < 750)
             return;
         _lastTrayTopologyRefreshUtc = now;
-        Dispatcher.BeginInvoke(UpdateTrayDynamic);
+        Dispatcher.BeginInvoke(() =>
+        {
+            UpdateTrayDynamic();
+            _mainWindow?.RefreshLiveGrouping();
+        });
         MaybeScheduleKeepHouseGrouped();
         _ = EnsureRemoteBoundAsync();
     }

@@ -186,7 +186,10 @@ public sealed record RemoteStatusResponse(
     int? Volume,
     bool? Muted,
     bool WakeActive,
-    bool Busy);
+    bool Busy,
+    string? LiveGrouping = null,
+    string? DailyGroupPreset = null,
+    bool? GroupedAsDaily = null);
 
 public sealed record RemoteGroupDto(string Room, string Label, int Members);
 

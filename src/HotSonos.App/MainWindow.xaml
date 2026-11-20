@@ -134,10 +134,33 @@
                                                FontSize="12" FontWeight="SemiBold"
                                                Foreground="#FF1C8E54" Margin="0,8,0,0" TextWrapping="Wrap" />
 
-                                    <!-- Daily house group: which speakers join on shuffle / Fresh Start / house regroup -->
-                                    <TextBlock Text="Speakers in Daily group" FontWeight="SemiBold" Margin="0,12,0,2"
+                                    <!-- Live topology, then the saved Daily preset. The preset does not regroup by itself. -->
+                                    <TextBlock x:Name="ControlLiveGroupingText"
+                                               Text="Grouped now: discovering…"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FF1C2536"
+                                               Margin="0,12,0,2"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock x:Name="ControlGroupingDriftText"
+                                               Text=""
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FFC0392B"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,4"
+                                               Visibility="Collapsed" />
+                                    <Button x:Name="ControlRegroupButton"
+                                            Content="Regroup"
+                                            Height="28"
+                                            Padding="12,0"
+                                            Margin="0,0,0,8"
+                                            HorizontalAlignment="Left"
+                                            Visibility="Collapsed"
+                                            Click="ControlRegroup_Click"
+                                            ToolTip="Join the Daily group preset. Does not start a new shuffle." />
+                                    <TextBlock Text="Daily group preset" FontWeight="SemiBold" Margin="0,4,0,2"
                                                Foreground="#FF1C2536" />
-                                    <TextBlock Text="All = whole house. A saved group on this line uses just those rooms. Uncheck All to pick rooms by hand."
+                                    <TextBlock Text="Saved preset for the next shuffle, Fresh start, and Regroup. Checking a group does not change who is grouped right now."
                                                Foreground="#FF60707F" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4" />
                                     <WrapPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,2">
                                         <CheckBox x:Name="ControlDailyAllSpeakersCheck"

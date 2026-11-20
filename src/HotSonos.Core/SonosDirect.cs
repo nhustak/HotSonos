@@ -73,12 +73,9 @@ public sealed class SonosDirect
             }
         }
 
-        var names = zone is null
-            ? ""
-            : string.Join(" + ", Zones
-                .Where(z => string.Equals(z.CoordinatorUuid, zone.CoordinatorUuid, StringComparison.OrdinalIgnoreCase))
-                .Select(z => z.RoomName));
-        return new SonosHouseSnapshot(zone?.RoomName, string.IsNullOrWhiteSpace(names) ? zone?.RoomName : names, Zones, now, volume, muted);
+        var picture = LiveGrouping.Map(Zones.Select(z =>
+            new SpeakerMembership(z.RoomName, z.CoordinatorUuid, z.IsCoordinator)));
+        return new SonosHouseSnapshot(zone?.RoomName, picture.Summary, Zones, now, volume, muted);
     }
 
     public async Task<IReadOnlyList<SonosSpeakerVolume>> ReadVolumesAsync(CancellationToken ct = default)
