@@ -33,24 +33,24 @@ sealed class TopologyPage : RemotePage
         Content = RemoteUi.Page(
             "Rooms",
             _status,
-            new HorizontalStackLayout
-            {
-                Spacing = 8,
-                Children =
+            RemoteUi.Section(
+                PhoneSections.RoomsHouse,
+                "House",
+                new HorizontalStackLayout
                 {
-                    _keep,
-                    new Label { Text = "Keep house grouped", TextColor = Swatches.Ink, VerticalOptions = LayoutOptions.Center },
+                    Spacing = 8,
+                    Children =
+                    {
+                        _keep,
+                        new Label { Text = "Keep house grouped", TextColor = Swatches.Ink, VerticalOptions = LayoutOptions.Center },
+                    },
                 },
-            },
-            RemoteUi.Button("Refresh", LoadAsync),
-            RemoteUi.Button("Regroup Daily group", RegroupAsync, danger: true),
-            RemoteUi.Button("Reboot all speakers", () => RebootAsync(null, true), danger: true),
-            RemoteUi.Muted("Groups"),
-            _groups,
-            RemoteUi.Muted("Speakers"),
-            _members,
-            RemoteUi.Muted("Volume per room"),
-            _volumes);
+                RemoteUi.Button("Refresh", LoadAsync),
+                RemoteUi.Button("Regroup Daily group", RegroupAsync, danger: true),
+                RemoteUi.Button("Reboot all speakers", () => RebootAsync(null, true), danger: true)),
+            RemoteUi.Section(PhoneSections.RoomsGroups, "Groups", _groups),
+            RemoteUi.Section(PhoneSections.RoomsSpeakers, "Speakers", _members),
+            RemoteUi.Section(PhoneSections.RoomsVolume, "Volume per room", _volumes));
     }
 
     protected override void OnShown()

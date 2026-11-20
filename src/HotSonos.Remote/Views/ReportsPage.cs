@@ -1,3 +1,5 @@
+using HotSonos.Remote.Protocol;
+
 namespace HotSonos.Remote.Views;
 
 sealed class ReportsPage : RemotePage
@@ -28,16 +30,19 @@ sealed class ReportsPage : RemotePage
         Content = RemoteUi.Page(
             "Reports",
             _status,
-            modes,
-            _query,
-            _from,
-            _to,
-            new HorizontalStackLayout
-            {
-                Spacing = 8,
-                Children = { _skipped, new Label { Text = "Skipped only", TextColor = Swatches.Ink, VerticalOptions = LayoutOptions.Center } },
-            },
-            RemoteUi.Button("Load", () => LoadAsync(reset: true)),
+            RemoteUi.Section(
+                PhoneSections.ReportFilters,
+                "Filters",
+                modes,
+                _query,
+                _from,
+                _to,
+                new HorizontalStackLayout
+                {
+                    Spacing = 8,
+                    Children = { _skipped, new Label { Text = "Skipped only", TextColor = Swatches.Ink, VerticalOptions = LayoutOptions.Center } },
+                },
+                RemoteUi.Button("Load", () => LoadAsync(reset: true))),
             _rows,
             RemoteUi.Button("Load older", () => LoadAsync(reset: false)));
     }

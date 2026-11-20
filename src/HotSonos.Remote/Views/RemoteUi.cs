@@ -156,6 +156,63 @@ static class RemoteUi
         return picker;
     }
 
+    /// <summary>
+    /// Header plus chevron. The body hides when the section is closed.
+    /// The choice is saved on the phone and restored the next time the page is built.
+    /// </summary>
+    public static View Section(string key, string title, params View[] children)
+    {
+        var open = PhoneSections.Resolve(key, AppServices.Sections);
+        var body = new VerticalStackLayout { Spacing = 6, IsVisible = open };
+        foreach (var child in children)
+            body.Add(child);
+
+        var chevron = new Label
+        {
+            Text = open ? "▼" : "▶",
+            TextColor = Swatches.Accent,
+            FontSize = 14,
+            WidthRequest = 22,
+            VerticalOptions = LayoutOptions.Center,
+        };
+        var heading = new Label
+        {
+            Text = title,
+            TextColor = Swatches.Ink,
+            FontAttributes = FontAttributes.Bold,
+            FontSize = 16,
+            VerticalOptions = LayoutOptions.Center,
+        };
+        var header = new Grid
+        {
+            Padding = new Thickness(0, 10),
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Auto),
+                new ColumnDefinition(GridLength.Star),
+            },
+        };
+        header.Add(chevron);
+        Grid.SetColumn(heading, 1);
+        header.Add(heading);
+
+        var tap = new TapGestureRecognizer();
+        tap.Tapped += (_, _) =>
+        {
+            var next = !body.IsVisible;
+            body.IsVisible = next;
+            chevron.Text = next ? "▼" : "▶";
+            AppServices.Sections.Write(key, next);
+        };
+        header.GestureRecognizers.Add(tap);
+
+        return new VerticalStackLayout
+        {
+            Spacing = 2,
+            Children = { header, body },
+        };
+    }
+
     public static View NeedsPc(string what)
     {
         var stack = new VerticalStackLayout { Spacing = 4 };

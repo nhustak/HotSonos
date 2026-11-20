@@ -70,20 +70,20 @@ sealed class SpeakersSettingsPage : RemotePage
             _live,
             _drift,
             _regroup,
-            RemoteUi.Muted("Room"),
-            _rooms,
-            _roomEmpty,
-            RemoteUi.Card(
-                RemoteUi.Muted("Daily group preset"),
-                RemoteUi.Muted("Saved for shuffle, Fresh start, and Regroup. Not who is grouped right now."),
-                _daily,
-                new HorizontalStackLayout
-                {
-                    Spacing = 8,
-                    Children = { _allSpeakers, new Label { Text = "All speakers", TextColor = Swatches.Ink, VerticalOptions = LayoutOptions.Center } },
-                },
-                _presets,
-                _speakerPick),
+            RemoteUi.Section(PhoneSections.SpeakersRoom, "Room", _rooms, _roomEmpty),
+            RemoteUi.Section(
+                PhoneSections.SpeakersDaily,
+                "Daily group preset",
+                RemoteUi.Card(
+                    RemoteUi.Muted("Saved for shuffle, Fresh start, and Regroup. Not who is grouped right now."),
+                    _daily,
+                    new HorizontalStackLayout
+                    {
+                        Spacing = 8,
+                        Children = { _allSpeakers, new Label { Text = "All speakers", TextColor = Swatches.Ink, VerticalOptions = LayoutOptions.Center } },
+                    },
+                    _presets,
+                    _speakerPick)),
             RemoteUi.Button("Refresh", LoadDailyAsync));
     }
 

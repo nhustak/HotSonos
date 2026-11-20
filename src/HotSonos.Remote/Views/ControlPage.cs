@@ -13,10 +13,8 @@ sealed class ControlPage : RemotePage
     {
         Content = RemoteUi.Page(
             "Now",
-            RemoteUi.Muted("Favorite slots"),
-            _slots,
-            RemoteUi.Muted("Sonos favorites"),
-            _favorites,
+            RemoteUi.Section(PhoneSections.NowSlots, "Favorite slots", _slots),
+            RemoteUi.Section(PhoneSections.NowFavorites, "Sonos favorites", _favorites),
             _action);
     }
 

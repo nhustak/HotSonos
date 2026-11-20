@@ -5,7 +5,8 @@ namespace HotSonos.Remote.Views;
 sealed class LibrarySettingsPage : RemotePage
 {
     readonly Label _status = RemoteUi.Muted("");
-    readonly VerticalStackLayout _config = new() { Spacing = 6 };
+    readonly VerticalStackLayout _folderNotes = new() { Spacing = 6 };
+    readonly VerticalStackLayout _folderRows = new() { Spacing = 6 };
     readonly Entry _master = RemoteUi.Field(@"Master folder, optional (\\server\masters)");
     readonly Entry _addRoot = RemoteUi.Field(@"Add folder (\\server\share\Music)");
     readonly Entry _newTag = RemoteUi.Field("New tag label");
@@ -20,15 +21,32 @@ sealed class LibrarySettingsPage : RemotePage
             "Library",
             RemoteUi.Back(),
             _status,
-            _config,
-            SettingsForm.Labeled("Write tags to the master copy", _tagMaster),
-            RemoteUi.Button("Save tag copy", SaveMasterAsync),
-            RemoteUi.Button("Rescan", () => RescanAsync(false), danger: true),
-            RemoteUi.Button("Force rescan", () => RescanAsync(true), danger: true),
-            _newTag,
-            RemoteUi.Button("Create tag", CreateTagAsync),
-            RemoteUi.Muted("Tags — delete removes the key from every file"),
-            _tags);
+            RemoteUi.Section(
+                PhoneSections.LibraryFolders,
+                "Folders",
+                _folderNotes,
+                _folderRows,
+                RemoteUi.Muted("Checked folders are the Daily mix."),
+                _addRoot,
+                RemoteUi.Button("Add folder", AddRootAsync),
+                RemoteUi.Button("Save library folders", SaveRootsAsync),
+                RemoteUi.Button("Discover from Sonos", DiscoverAsync),
+                RemoteUi.Button("Rescan", () => RescanAsync(false), danger: true),
+                RemoteUi.Button("Force rescan", () => RescanAsync(true), danger: true)),
+            RemoteUi.Section(
+                PhoneSections.LibraryMaster,
+                "Master folder",
+                RemoteUi.Muted("A master folder is where tag writes are copied."),
+                _master,
+                SettingsForm.Labeled("Write tags to the master copy", _tagMaster),
+                RemoteUi.Button("Save tag copy", SaveMasterAsync)),
+            RemoteUi.Section(
+                PhoneSections.LibraryTags,
+                "Tags",
+                _newTag,
+                RemoteUi.Button("Create tag", CreateTagAsync),
+                RemoteUi.Muted("Delete removes the key from every file."),
+                _tags));
     }
 
     protected override void OnShown()
@@ -72,10 +90,11 @@ sealed class LibrarySettingsPage : RemotePage
 
     async Task LoadConfigAsync()
     {
-        _config.Clear();
+        _folderNotes.Clear();
+        _folderRows.Clear();
         if (!AppServices.Link.DrivePc || !AppServices.Link.OnPc)
         {
-            _config.Add(RemoteUi.NeedsPc("Library folders, master folder, rescan, and tags"));
+            _folderNotes.Add(RemoteUi.NeedsPc("Library folders, master folder, rescan, and tags"));
             return;
         }
 
@@ -83,33 +102,27 @@ sealed class LibrarySettingsPage : RemotePage
         var config = call.Value;
         if (config is null)
         {
-            _config.Add(RemoteUi.Muted(call.Detail ?? "Could not load library settings."));
+            _folderNotes.Add(RemoteUi.Muted(call.Detail ?? "Could not load library settings."));
             return;
         }
 
         var scanning = config.Scanning ? " Scanning." : "";
-        _config.Add(RemoteUi.Muted($"{config.TrackCount} tracks in the cache.{scanning} {config.Phase}"));
+        _folderNotes.Add(RemoteUi.Muted($"{config.TrackCount} tracks in the cache.{scanning} {config.Phase}"));
         if (!string.IsNullOrWhiteSpace(config.LastError))
-            _config.Add(RemoteUi.Muted(config.LastError));
+            _folderNotes.Add(RemoteUi.Muted(config.LastError));
         if (!string.IsNullOrWhiteSpace(config.Note))
-            _config.Add(RemoteUi.Muted(config.Note));
+            _folderNotes.Add(RemoteUi.Muted(config.Note));
         _roots.Clear();
         foreach (var root in config.Roots)
         {
             var daily = new Switch { IsToggled = root.InDaily };
             _roots.Add((root.Path, daily));
-            _config.Add(RootRow(daily, root.Path));
+            _folderRows.Add(RootRow(daily, root.Path));
         }
 
         if (_roots.Count == 0)
-            _config.Add(RemoteUi.Muted("No library folders yet. Discover from Sonos, or add a UNC path."));
+            _folderNotes.Add(RemoteUi.Muted("No library folders yet. Discover from Sonos, or add a UNC path."));
         _master.Text = config.MasterRoot ?? "";
-        _config.Add(RemoteUi.Muted("Checked folders are the Daily mix. A master folder is where tag writes are copied."));
-        _config.Add(_master);
-        _config.Add(_addRoot);
-        _config.Add(RemoteUi.Button("Add folder", AddRootAsync));
-        _config.Add(RemoteUi.Button("Save library folders", SaveRootsAsync));
-        _config.Add(RemoteUi.Button("Discover from Sonos", DiscoverAsync));
     }
 
     Task AddRootAsync()
@@ -124,7 +137,7 @@ sealed class LibrarySettingsPage : RemotePage
         var daily = new Switch { IsToggled = true };
         _roots.Add((path, daily));
         _addRoot.Text = "";
-        _config.Insert(0, RootRow(daily, path));
+        _folderRows.Insert(0, RootRow(daily, path));
         _status.Text = "Added. Save library folders to keep it.";
         return Task.CompletedTask;
     }

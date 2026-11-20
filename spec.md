@@ -459,6 +459,8 @@ The phone is a view of the tray app with the same control. PC mode does not disc
 
 **Player.** The first tab, and the screen the app opens on. Large album art, then title, artist, and album. Previous, Play/Pause, and Next are large icon buttons (the middle button is Play or Pause from the transport state). Under that: the volume slider, **Mute**, and **Level all**. Nothing else on this screen: no queue, no settings button, no favorite list, no address, no room checks. The same screen drives the PC and, in Speakers mode, the speakers directly.
 
+**Sections.** Stacked lists on Now, Play, Rooms, Reports, and the Settings drill-ins (Playback, Library, Speakers, Wake, About) are headers with a chevron. Tap the header to hide or show the body. The phone remembers each choice. On a first visit the list you use most on that screen starts open (favorite slots, tags, house and groups, Daily group preset, library folders, shuffle, wake, report filters) and the rest start closed. Player stays fully open: now playing, transport, and volume are that whole tab, so they are not a section. Queue is one list. Settings itself is the menu of pages. Connection / PC and Spotify links are one form each.
+
 **Mode.** Every tab except Player has a tappable line: `PC`, `Speakers`, `Speakers: <room>`, `PC unreachable`, or `PC: not paired`. A live PC does not show its address there. The line opens **Settings → Connection / PC**, which still shows the address, port, and PIN. The tab bar is the phone's own strip: **Player, Now, Play, Queue, Library, Rooms, Reports, Settings**. It scrolls sideways so the later labels stay tappable. Android's built-in bar only keeps five and was greying the rest out. A control that needs the PC says so and offers **Open connection** instead of sitting there disabled.
 
 **What the phone can do.** Same delegates and action gate as the tray and MCP:
@@ -676,6 +678,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-11-19 | §6.6 phone Now: hide the Daily per-speaker check list while All speakers is on |
 | 2026-11-19 | Tray and phone show live ZoneGroupTopology separately from the Daily group preset. No auto-regroup |
 | 2026-11-20 | §6.6 phone: Player is the landing tab. Now keeps favorite slots and Sonos favorites. Queue and Settings are tabs. The mode line no longer shows the PC address. Grouped now and Regroup are on Settings → Speakers & Daily group and on Rooms |
+| 2026-11-20 | §6.6 phone: stacked lists collapse behind a header and chevron. The phone remembers open or closed. Player stays fully open |
 | 2026-07-15 | Library plan step 2: TagLib scanner → SQLite cache; rescan UI; MCP status/search/get |
 | 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |
