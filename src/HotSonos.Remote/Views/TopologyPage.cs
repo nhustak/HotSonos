@@ -1,4 +1,5 @@
 using HotSonos.Core;
+using HotSonos.Core.Models;
 using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote.Views;
