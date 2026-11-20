@@ -1,6 +1,6 @@
 # HotSonos on iPhone and iPad
 
-This is the setup for building the .NET MAUI remote for iOS and sending it to TestFlight. The app is `src/HotSonos.Remote`. Android and iOS share the id `com.hotsonos.remote`. The display name is **HotSonos**. The minimum iOS version is 15.0. The binary is universal: iPhone and iPad (`UIDeviceFamily` 1 and 2).
+This is the setup for building the .NET MAUI remote for iOS and sending it to TestFlight. The app is `src/HotSonos.Remote`. Android and iOS share the id `com.tangenttech.hotsonos`. The display name is **HotSonos**. The minimum iOS version is 15.0. The binary is universal: iPhone and iPad (`UIDeviceFamily` 1 and 2).
 
 Nothing in this file or in `codemagic.yaml` is a secret. The App Store Connect `.p8` key, the distribution certificate, and the provisioning profile stay in Codemagic and Apple. Do not commit them.
 
@@ -23,7 +23,7 @@ That environment group needs:
 | `APPLICATION_DISPLAY_VERSION` | No | Marketing version sent to Apple. Default in the workflow is `1.0.76`. Apple allows one to three integers separated by dots. `Directory.Build.props` is `1.0.0.76`, and that four-part string is not sent to Apple. |
 | `FALLBACK_BUILD_NUMBER` | No | Used only when TestFlight has no builds yet. Default is `1`. |
 
-You also need an Apple Distribution certificate and an App Store provisioning profile for `com.hotsonos.remote` in Codemagic code signing identities. The TestFlight workflow loads them with `ios_signing` (`distribution_type: app_store`).
+You also need an Apple Distribution certificate and an App Store provisioning profile for `com.tangenttech.hotsonos` in Codemagic code signing identities. The TestFlight workflow loads them with `ios_signing` (`distribution_type: app_store`).
 
 ## 1. Renew the Apple Developer membership
 
@@ -40,7 +40,7 @@ TestFlight is not available on a free Apple ID. If the membership has lapsed, re
 1. Open [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/identifiers/list).
 2. Add an identifier, type App IDs, type App.
 3. Description: `HotSonos`.
-4. Bundle ID: Explicit, `com.hotsonos.remote`.
+4. Bundle ID: Explicit, `com.tangenttech.hotsonos`.
 5. Do not enable Push Notifications. The iOS entitlements file is empty on purpose. A capability on the App ID without a matching entitlement (or the reverse) breaks signing.
 6. Do not enable **Multicast Networking** yet. That capability is `com.apple.developer.networking.multicast`. Apple approves it per team (see the next section). Turning it on before the entitlement is in the profile makes the TestFlight sign fail.
 7. Register.
@@ -63,7 +63,7 @@ When you want Find PC and SSDP to work on a device:
 <true/>
 ```
 
-5. In Codemagic, fetch a new App Store profile for `com.hotsonos.remote` so the profile contains the capability. The old profile will not sign the new entitlement.
+5. In Codemagic, fetch a new App Store profile for `com.tangenttech.hotsonos` so the profile contains the capability. The old profile will not sign the new entitlement.
 6. Run `ios-testflight` again.
 
 Until step 4, leave the entitlements file empty.
@@ -74,7 +74,7 @@ Codemagic cannot create the first app record for you.
 
 1. In App Store Connect, go to Apps, then the add button, then New App.
 2. Platform: iOS. Name: `HotSonos`. Primary language: your choice.
-3. Bundle ID: `com.hotsonos.remote`.
+3. Bundle ID: `com.tangenttech.hotsonos`.
 4. SKU: any unique string you will not change, for example `hotsonos-remote-ios`.
 5. User access: full access, unless you have a reason to limit it.
 6. Create the app. You do not need screenshots or a privacy policy URL for the first TestFlight upload. You will need them before App Store review.
@@ -91,7 +91,7 @@ Codemagic cannot create the first app record for you.
 7. Enter the Issuer ID and Key ID, upload the `.p8`, and save.
 8. Still in Team settings, open codemagic.yaml settings, then Code signing identities.
 9. On iOS certificates, generate a certificate. Reference name: anything unique, for example `hotsonos-distribution`. Type: Apple Distribution. Select the API key you just added. Apple allows only three active Apple Distribution certificates on the team. If generation fails because the team is at the limit, revoke an unused one or upload an existing `.p12` that you have the private key for.
-10. On iOS provisioning profiles, fetch or create an App Store profile whose bundle id is `com.hotsonos.remote`. It must include the distribution certificate from the previous step. Give it a reference name and save it. `ios_signing` in the workflow selects this profile by distribution type and bundle id, not by the reference name.
+10. On iOS provisioning profiles, fetch or create an App Store profile whose bundle id is `com.tangenttech.hotsonos`. It must include the distribution certificate from the previous step. Give it a reference name and save it. `ios_signing` in the workflow selects this profile by distribution type and bundle id, not by the reference name.
 
 ## 6. Connect the HotSonos repo
 
@@ -142,7 +142,7 @@ Android is not part of this layout. The iOS-only code is compiled out of the And
 - **No app record yet.** The IPA can build and then App Store Connect rejects the upload. Create the app in section 4 first.
 - **Agreement pending.** App Store Connect returns an error about agreements or a role that cannot upload. Accept the agreements and confirm the key is App Manager.
 - **Certificate limit.** Apple's "You already have a current Distribution certificate" means the team has three. Reuse an existing certificate you can export, or revoke one that is unused.
-- **Profile bundle id does not match.** `ios_signing` fetches profiles for `com.hotsonos.remote` only. A profile for a different id, or a development profile, is ignored and the keychain step exits because it cannot find a profile.
+- **Profile bundle id does not match.** `ios_signing` fetches profiles for `com.tangenttech.hotsonos` only. A profile for a different id, or a development profile, is ignored and the keychain step exits because it cannot find a profile.
 - **Multicast capability mismatch.** Do not enable Multicast Networking on the App ID unless `Entitlements.plist` contains `com.apple.developer.networking.multicast` and the profile was fetched after that. The file is empty until Apple approves the request.
 - **Marketing version rejected.** `APPLICATION_DISPLAY_VERSION` must look like `1.0.76` or `1.0.0`, not `1.0.0.76`.
 - **Build number already used.** The workflow adds one to the latest TestFlight build. Uploading the same number again fails. Re-run the workflow rather than reusing an IPA.

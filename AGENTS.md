@@ -23,7 +23,7 @@
 - `src/HotSonos.Core` — platform-agnostic Sonos local UPnP/SOAP client (discovery, transport, favorites). No Windows/WPF dependency so it stays console-testable.
 - `src/HotSonos.Harness` — console harness for proving Core against live speakers.
 - `src/HotSonos.App` — WPF system-tray app with global hotkeys + loopback MCP; references Core.
-- `src/HotSonos.Remote` — .NET MAUI remote (`net10.0-android`, minSdk 24; `net10.0-ios` for iPhone and iPad when `HotSonosRemoteTargetFrameworks` is set or the build is on macOS). Full control of the tray app over the LAN. Not in `HotSonos.slnx`. iOS setup: `docs/ios.md`.
+- `src/HotSonos.Remote` — .NET MAUI remote (`net10.0-android`, minSdk 24; `net10.0-ios` for iPhone and iPad when `HotSonosRemoteTargetFrameworks` is set or the build is on macOS). Android package and iOS bundle id: `com.tangenttech.hotsonos`. Full control of the tray app over the LAN. Not in `HotSonos.slnx`. iOS setup: `docs/ios.md`.
 - `src/HotSonos.Remote.Protocol` — shared phone DTOs, PIN compare, and Daily speaker-group edits.
 
 ## Sonos Control Notes

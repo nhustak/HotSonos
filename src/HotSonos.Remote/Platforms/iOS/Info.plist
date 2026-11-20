@@ -7,7 +7,7 @@
 	<key>CFBundleName</key>
 	<string>HotSonos</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.hotsonos.remote</string>
+	<string>com.tangenttech.hotsonos</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<!-- Matches SupportedOSPlatformVersion for ios in the remote csproj.
