@@ -37,7 +37,7 @@ sealed class PlayerPage : RemotePage
         HorizontalTextAlignment = TextAlignment.Center,
         LineBreakMode = LineBreakMode.TailTruncation,
     };
-    readonly Label _volume = RemoteUi.Muted("Volume");
+    readonly Label _volume = RemoteUi.Muted(PhoneVolume.Label(null, false));
     readonly Slider _slider = new() { Minimum = 0, Maximum = 100, Value = 20 };
     readonly GlyphView _playGlyph = new() { Kind = "play" };
     readonly Border _playButton;
@@ -53,6 +53,10 @@ sealed class PlayerPage : RemotePage
     int _applied = 20;
     int _pcStep = PhoneVolume.SpeakerStep;
     bool _muted;
+    bool _known;
+    bool _sampling;
+    bool _sampleAgain;
+    bool _forceSample;
     string? _artRevision;
     RemoteStatusResponse? _status;
 
@@ -72,12 +76,22 @@ sealed class PlayerPage : RemotePage
 
         _volume.FontSize = 18;
         _volume.TextColor = Swatches.Ink;
+        _volume.LineBreakMode = LineBreakMode.NoWrap;
+        _volume.MaxLines = 1;
         _volume.HorizontalTextAlignment = TextAlignment.Center;
         _volume.VerticalTextAlignment = TextAlignment.Center;
         _volume.HorizontalOptions = LayoutOptions.Fill;
         _volume.VerticalOptions = LayoutOptions.Center;
 
         _slider.DragStarted += (_, _) => _drag = true;
+        _slider.ValueChanged += (_, e) =>
+        {
+            if (!_drag)
+                return;
+            var percent = Math.Clamp((int)Math.Round(e.NewValue), 0, 100);
+            _shown = percent;
+            _volume.Text = PhoneVolume.Label(percent, _muted);
+        };
         _slider.DragCompleted += (_, _) =>
         {
             _drag = false;
@@ -151,15 +165,26 @@ sealed class PlayerPage : RemotePage
     protected override void OnShown()
     {
         base.OnShown();
+        PhoneVolumeKeys.Note = NoteHardware;
+        PhoneVolumeKeys.Refresh = () => _ = SampleAsync(force: true);
         _ = LoadStepAsync();
+        if (!_known)
+            _ = SampleAsync();
     }
 
-    protected override void OnLinkChanged() => _ = LoadStepAsync();
+    protected override void OnLinkChanged()
+    {
+        _known = false;
+        _ = LoadStepAsync();
+        _ = SampleAsync(force: true);
+    }
 
     protected override void OnHidden()
     {
         _holding = false;
         _repeat++;
+        PhoneVolumeKeys.Note = null;
+        PhoneVolumeKeys.Refresh = null;
     }
 
     protected override void OnSizeAllocated(double width, double height)
@@ -189,6 +214,7 @@ sealed class PlayerPage : RemotePage
 
         if (status?.Volume is int volume)
         {
+            _known = true;
             _muted = status.Muted == true;
             var keepLocal = _local && volume != _shown && DateTime.UtcNow < _acceptStatusAfter;
             if (_drag || keepLocal)
@@ -201,6 +227,8 @@ sealed class PlayerPage : RemotePage
                 Paint(volume);
             }
         }
+        else if (!_known && !_local && !_drag)
+            _ = SampleAsync();
 
         if (np?.ArtRevision != _artRevision)
             _ = LoadArtAsync(np?.ArtRevision, np?.HasArt == true);
@@ -287,12 +315,77 @@ sealed class PlayerPage : RemotePage
             _acceptStatusAfter = until;
     }
 
+    void NoteHardware(int direction)
+    {
+        if (!_known || _drag || _local)
+            return;
+        var step = PhoneVolume.ConfiguredStep(AppServices.Link.DrivePc, _pcStep);
+        var next = PhoneVolume.Next(_shown, direction, step);
+        _target = next;
+        _applied = next;
+        Paint(next);
+    }
+
     void Paint(int volume)
     {
+        _known = true;
         _shown = Math.Clamp(volume, 0, 100);
-        _volume.Text = _muted ? $"Volume {_shown}% · muted" : $"Volume {_shown}%";
+        _volume.Text = PhoneVolume.Label(_shown, _muted);
         if (!_drag)
             _slider.Value = _shown;
+    }
+
+    async Task SampleAsync(bool force = false)
+    {
+        if (force)
+            _forceSample = true;
+        if (_sampling)
+        {
+            _sampleAgain = true;
+            return;
+        }
+
+        _sampling = true;
+        try
+        {
+            do
+            {
+                _sampleAgain = false;
+                var forceThis = _forceSample;
+                _forceSample = false;
+                var (volume, muted) = await ReadHouseVolumeAsync().ConfigureAwait(true);
+                if (volume is not int n || _drag)
+                    continue;
+                if (_local && !forceThis)
+                    continue;
+                _muted = muted == true;
+                _local = false;
+                _applied = n;
+                _target = n;
+                Paint(n);
+            }
+            while (_sampleAgain);
+        }
+        catch (Exception)
+        {
+            // The next status poll tries again. The label stays on the last percent we showed.
+        }
+        finally
+        {
+            _sampling = false;
+        }
+    }
+
+    async Task<(int? Volume, bool? Muted)> ReadHouseVolumeAsync()
+    {
+        if (AppServices.Link.DrivePc)
+        {
+            var call = await AppServices.Client.SampleVolumeAsync(CancellationToken.None).ConfigureAwait(true);
+            return call.Value is { Ok: true } sample ? (sample.Volume, sample.Muted) : (null, null);
+        }
+
+        var snap = await AppServices.Link.Speakers.ReadSnapshotAsync(CancellationToken.None).ConfigureAwait(true);
+        return (snap.Volume, snap.Muted);
     }
 
     async Task LoadStepAsync()

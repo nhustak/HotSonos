@@ -219,4 +219,15 @@ public class PhoneVolumeTests
         Assert.Equal(2, PhoneVolume.ConfiguredStep(drivePc: true, pcVolumeStep: null));
         Assert.Equal(2, PhoneVolume.ConfiguredStep(drivePc: true, pcVolumeStep: 0));
     }
+
+    [Fact]
+    public void Label_AlwaysIncludesThePercent()
+    {
+        Assert.Equal("Volume …", PhoneVolume.Label(null, false));
+        Assert.NotEqual("Volume", PhoneVolume.Label(null, false));
+        Assert.Equal("Volume 20%", PhoneVolume.Label(20, false));
+        Assert.Equal("Volume 0%", PhoneVolume.Label(0, false));
+        Assert.Equal("Volume 100%", PhoneVolume.Label(140, false));
+        Assert.Equal("Volume 20% · muted", PhoneVolume.Label(20, true));
+    }
 }
