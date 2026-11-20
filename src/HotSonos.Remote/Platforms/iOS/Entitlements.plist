@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- UDP discovery needs com.apple.developer.networking.multicast:
+	     Find PC (broadcast/UDP 42343) and Sonos SSDP (239.255.255.250:1900).
+	     Apple must approve that entitlement before it can be listed here.
+	     Until then this file stays empty so App Store signing does not require
+	     the capability. A capability on the App ID without this key, or the
+	     key without the capability, breaks the TestFlight sign.
+	     Discovery misses fall back to typing the PC address. See docs/ios.md. -->
+</dict>
+</plist>

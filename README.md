@@ -19,7 +19,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 - **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Top bar: **Phone**. Tray: Phone…, Library…, Topology…, Logs…, Reports…, Debug…
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
-- **Phone:** Android app (`src/HotSonos.Remote`, .NET MAUI) opens **Connect** until a PC is saved. It then opens on **Player** (art, transport, and − / + volume) over `http://<pc>:42342` with header `X-HotSonos-Pin`, or straight on the speakers. The **Phone** button on the PC shows the address and PIN to type. Link: Auto, PC only, or Speakers only, under Settings → Connection / PC.
+- **Phone:** Android, iPhone, and iPad app (`src/HotSonos.Remote`, .NET MAUI, id `com.hotsonos.remote`) opens **Connect** until a PC is saved. It then opens on **Player** (art, transport, and − / + volume) over `http://<pc>:42342` with header `X-HotSonos-Pin`, or straight on the speakers. The **Phone** button on the PC shows the address and PIN to type. Link: Auto, PC only, or Speakers only, under Settings → Connection / PC. iOS TestFlight setup is [docs/ios.md](docs/ios.md).
 
 **Having issues (stutter, dead zones, flaky grouping)?** Make sure **SonosNet is off** — see [Turn off SonosNet](#turn-off-sonosnet) near the bottom.
 
@@ -248,6 +248,10 @@ adb install src\HotSonos.Remote\bin\Debug\net10.0-android\com.hotsonos.remote-Si
 
 Release publish writes `com.hotsonos.remote-Signed.aab` (and an APK) under `src\HotSonos.Remote\bin\Release\net10.0-android\publish\`. It is signed with the Play upload key from `%USERPROFILE%\.android-keys\hotsonos\` when that folder contains `hotsonos-upload.keystore` and `hotsonos-upload.password` (alias `hotsonos-upload`). Override the folder with `HOTSONOS_UPLOAD_KEY_DIR`. If the keystore is missing, Release uses the debug key. Do not commit the keystore.
 
+### iPhone and iPad
+
+The same project targets `net10.0-ios` on a Mac, or when you pass `-p:HotSonosRemoteTargetFrameworks=net10.0-ios`. Windows and Linux builds, including GitHub Actions, stay on Android. The store version is TestFlight via Codemagic. The steps (Apple Developer membership, App ID `com.hotsonos.remote`, App Store Connect API key, Codemagic placeholders) are in [docs/ios.md](docs/ios.md). Find PC and speaker search need an Apple multicast entitlement that is not in the app until Apple approves it; type the PC address and PIN until then. On iPad the Player column is centered. The iOS target has not been compiled in the change that added it.
+
 On the PC, open HotSonos and press **Phone** (or the tray item **Phone…**). The first phone screen is **Connect**. Type the address and the 6-digit PIN shown there (port **42342** if you leave it blank). **Find PC** uses a UDP announce on port 42343; an emulator is not on that subnet, so type the PC's 192.168 address. `10.0.2.2` is the PC loopback, and the listener is not bound there. The header on every request is `X-HotSonos-Pin`. The listener is plain HTTP and only binds the address that shares a network with a speaker.
 
 **Test and connect** stays in **PC only**. Settings → Connection / PC can switch to **Auto** (try the PC, then the speakers) or **Speakers only**. Each screen except Player has a tappable line (`PC`, `Speakers`, `Speakers: room`, `PC unreachable`, or `PC: not paired`) that opens those connection settings. The PC address is on that page, not on Player. Speakers only needs no PIN: the phone discovers ZonePlayer devices on the Wi-Fi (it holds an Android multicast lock) and sends the same UPnP calls as the tray app. HotSonos shuffle, tags, Daily groups, Reports, wake, and saved Spotify links say they need the PC, with a button back to connection, when the phone is on the speakers.
@@ -259,7 +263,7 @@ The phone polls now-playing every 2 seconds while it is open, and loads the othe
 |---|---|
 | `HotSonos.Core` | UPnP client (discovery, control, events, shuffle) |
 | `HotSonos.App` | Tray app: hotkeys, settings, library, tags, MCP, wake, phone listener |
-| `HotSonos.Remote` | Android (MAUI) full remote. Not in the Windows solution |
+| `HotSonos.Remote` | Android, iPhone, and iPad (MAUI) full remote. Not in the Windows solution. iOS build: `docs/ios.md` |
 | `HotSonos.Remote.Protocol` | Shared phone DTOs and Daily speaker-group rules |
 | `HotSonos.Harness` | Console tester |
 | `HotSonos.Core.Tests` | Offline unit tests |

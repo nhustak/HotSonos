@@ -59,6 +59,12 @@ sealed class PlayerPage : RemotePage
     bool _forceSample;
     string? _artRevision;
     RemoteStatusResponse? _status;
+    readonly Grid _layout;
+
+#if IOS
+    /// <summary>iPad Player column. iPhone stays full width. Android does not compile this.</summary>
+    const double IpadColumnWidth = 520;
+#endif
 
     public PlayerPage()
     {
@@ -150,16 +156,32 @@ sealed class PlayerPage : RemotePage
             Children = { _title, _artist, _album, transport, stepRow, _slider, volumeRow },
         };
 
-        var layout = new Grid
+        _layout = new Grid
         {
             BackgroundColor = Swatches.Bg,
             Padding = new Thickness(16, 8, 16, 8),
             RowDefinitions = { new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) },
         };
-        layout.Add(_artFrame);
+        _layout.Add(_artFrame);
         Grid.SetRow(controls, 1);
-        layout.Add(controls);
-        Content = layout;
+        _layout.Add(controls);
+#if IOS
+        // iPad only: a centered column. The host stays full-bleed so the sides match the page.
+        // iPhone leaves WidthRequest unset and fills the body. Android does not take this branch.
+        var host = new Grid
+        {
+            BackgroundColor = Swatches.Bg,
+            HorizontalOptions = LayoutOptions.Fill,
+            VerticalOptions = LayoutOptions.Fill,
+        };
+        _layout.HorizontalOptions = LayoutOptions.Fill;
+        _layout.VerticalOptions = LayoutOptions.Fill;
+        host.Add(_layout);
+        _layout.SizeChanged += (_, _) => FitPlayerColumn();
+        Content = host;
+#else
+        Content = _layout;
+#endif
     }
 
     protected override void OnShown()
@@ -190,13 +212,48 @@ sealed class PlayerPage : RemotePage
     protected override void OnSizeAllocated(double width, double height)
     {
         base.OnSizeAllocated(width, height);
+#if IOS
+        FitPlayerColumn();
+#else
         if (width <= 0 || height <= 0)
             return;
         var side = Math.Min(width - 48, height * 0.46);
         side = Math.Clamp(side, 160, 420);
         _artFrame.WidthRequest = side;
         _artFrame.HeightRequest = side;
+#endif
     }
+
+#if IOS
+    /// <summary>
+    /// The page body is hosted in the shell, so the column grid is what actually gets a size.
+    /// iPad caps that column. iPhone fills the width. Art sizing uses the column width.
+    /// </summary>
+    void FitPlayerColumn()
+    {
+        var height = _layout.Height;
+        if (height <= 0)
+            return;
+
+        var available = (_layout.Parent as VisualElement)?.Width ?? _layout.Width;
+        if (available <= 0)
+            return;
+
+        var tablet = DeviceInfo.Idiom == DeviceIdiom.Tablet && available > IpadColumnWidth;
+        var contentWidth = tablet ? IpadColumnWidth : available;
+        var desiredRequest = tablet ? IpadColumnWidth : -1;
+        if (Math.Abs(_layout.WidthRequest - desiredRequest) > 0.5)
+            _layout.WidthRequest = desiredRequest;
+        var align = tablet ? LayoutOptions.Center : LayoutOptions.Fill;
+        if (_layout.HorizontalOptions != align)
+            _layout.HorizontalOptions = align;
+
+        var side = Math.Min(contentWidth - 48, height * 0.46);
+        side = Math.Clamp(side, 160, 420);
+        _artFrame.WidthRequest = side;
+        _artFrame.HeightRequest = side;
+    }
+#endif
 
     Task Go(Func<SonosController, CancellationToken, Task> speakers, Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc) =>
         AppServices.Link.DrivePc ? Act(pc) : Speaker(speakers);

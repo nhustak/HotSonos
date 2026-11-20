@@ -37,7 +37,11 @@ sealed class ConnectionSettingsPage : RemotePage
             var found = await PcFinder.FindAsync(TimeSpan.FromSeconds(3), CancellationToken.None);
             if (found is null)
             {
+#if IOS
+                _connection.Status.Text = IosDiscovery.FindPcMiss;
+#else
                 _connection.Status.Text = "No PC answered. Type the address from the Phone window.";
+#endif
                 return;
             }
 
@@ -47,7 +51,11 @@ sealed class ConnectionSettingsPage : RemotePage
         }
         catch (Exception ex)
         {
+#if IOS
+            _connection.Status.Text = IosDiscovery.FindPcMiss;
+#else
             _connection.Status.Text = ex.Message;
+#endif
         }
     }
 

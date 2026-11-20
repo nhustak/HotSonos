@@ -130,11 +130,15 @@ sealed class PhoneLink
             {
                 using (MulticastHold.Acquire())
                     await Speakers.DiscoverAsync(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
-                Publish(outcome, Speakers.Zones.Count == 0 ? "No speakers answered." : null);
+                Publish(outcome, Speakers.Zones.Count == 0 ? NoSpeakersText : null);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+#if IOS
+                Publish(outcome, NoSpeakersText);
+#else
                 Publish(outcome, ex.Message);
+#endif
             }
 
             return;
@@ -145,6 +149,13 @@ sealed class PhoneLink
             : null;
         Publish(outcome, problem);
     }
+
+    static string NoSpeakersText =>
+#if IOS
+        IosDiscovery.SpeakersMiss;
+#else
+        "No speakers answered.";
+#endif
 
     void Publish(PhoneLinkOutcome outcome, string? problem)
     {
