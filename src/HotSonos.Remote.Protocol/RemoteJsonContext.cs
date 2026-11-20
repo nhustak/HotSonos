@@ -27,6 +27,8 @@ namespace HotSonos.Remote.Protocol;
 [JsonSerializable(typeof(RemoteTrackBody))]
 [JsonSerializable(typeof(RemoteVolumesResponse))]
 [JsonSerializable(typeof(RemoteTopologyResponse))]
+[JsonSerializable(typeof(RemoteTopologyGroupDto))]
+[JsonSerializable(typeof(RemoteTopologyRoomDto))]
 [JsonSerializable(typeof(RemoteDailyGroupsResponse))]
 [JsonSerializable(typeof(RemoteFavoritesResponse))]
 [JsonSerializable(typeof(RemoteSpotifyListResponse))]

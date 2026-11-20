@@ -3245,6 +3245,10 @@ public sealed class SonosManager
         return false;
     }
 
+    /// <summary>Play state of each live group, keyed by ZoneGroup id. Unknown when a coordinator does not answer.</summary>
+    public Task<IReadOnlyDictionary<string, string>> ReadGroupPlayStatesAsync(CancellationToken ct = default) =>
+        TopologyTransport.ReadAsync(_soap, LastTopology, ct);
+
     private void RebuildGroups()
     {
         LivePicture = LiveGrouping.Map(_zones.Select(z =>

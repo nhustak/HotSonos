@@ -184,7 +184,8 @@ public sealed partial class HotSonosRemoteHost
             return Results.Json(new RemoteCommandResponse(true, "Removed", null), RemoteApi.Json);
         });
 
-        app.MapGet("/api/topology", () => Results.Json(BuildTopology(state), RemoteApi.Json));
+        app.MapGet("/api/topology", async (HttpContext ctx) =>
+            Results.Json(await BuildTopologyAsync(state, ctx.RequestAborted).ConfigureAwait(false), RemoteApi.Json));
 
         app.MapPost("/api/topology/refresh", async (HttpContext ctx) =>
         {
@@ -711,7 +712,7 @@ public sealed partial class HotSonosRemoteHost
             s.PreferredHouseCoordinatorRoom);
     }
 
-    private static RemoteTopologyResponse BuildTopology(HotSonosMcpState state)
+    private static async Task<RemoteTopologyResponse> BuildTopologyAsync(HotSonosMcpState state, CancellationToken ct)
     {
         var settings = state.Settings().EnsureShape();
         var snap = state.Sonos.LastTopology;
@@ -728,6 +729,19 @@ public sealed partial class HotSonosRemoteHost
             .Select(c => new RemoteCoordinatorDto(c.Room, c.Ip, c.IsLeading))
             .ToList();
         var grouping = GroupingDisplay.From(state.Sonos, settings);
+        IReadOnlyDictionary<string, string> play = new Dictionary<string, string>();
+        if (snap is { Members.Count: > 0 })
+        {
+            try
+            {
+                play = await state.Sonos.ReadGroupPlayStatesAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                play = new Dictionary<string, string>();
+            }
+        }
+
         return new RemoteTopologyResponse(
             true,
             state.Sonos.ActiveRoom,
@@ -741,7 +755,29 @@ public sealed partial class HotSonosRemoteHost
             snap is null ? "No topology snapshot yet." : null,
             grouping.Summary,
             grouping.PresetLabel,
-            grouping.MatchesDaily);
+            grouping.MatchesDaily,
+            TopologyCards(snap, play));
+    }
+
+    private static List<RemoteTopologyGroupDto> TopologyCards(
+        SonosTopologySnapshot? snap,
+        IReadOnlyDictionary<string, string> play)
+    {
+        var inputs = snap?.Members.Select(m => new TopologyMemberInput(
+            m.RoomName,
+            m.GroupId,
+            m.IsCoordinator,
+            m.Invisible,
+            m.ChannelRole,
+            m.ProductName)) ?? [];
+        return TopologyLayout.Map(inputs)
+            .Select(card => new RemoteTopologyGroupDto(
+                card.GroupId,
+                card.CoordinatorRoom,
+                card.Ungrouped,
+                play.TryGetValue(card.GroupId, out var state) ? state : "Unknown",
+                card.Rooms.Select(r => new RemoteTopologyRoomDto(r.Room, r.IsCoordinator, r.Folded)).ToList()))
+            .ToList();
     }
 
     private static RemoteDailyGroupsResponse BuildDaily(HotSonosMcpState state)
