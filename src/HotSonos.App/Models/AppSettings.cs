@@ -350,6 +350,20 @@ public sealed class AppSettings
     public static bool IsValidRemotePin(string? pin) =>
         pin is { Length: 6 } && pin.All(char.IsDigit);
 
+    // ---- Phone wireless debugging (adb on this PC; not the remote PIN or listener) ----
+
+    /// <summary>
+    /// Wireless-debugging IP or hostname of the phone. Default 192.168.1.171
+    /// (reserved on the house router). Saved as <c>PhoneAdbHost</c>.
+    /// </summary>
+    public string PhoneAdbHost { get; set; } = Services.PhoneAdb.DefaultHost;
+
+    /// <summary>
+    /// Wireless-debugging port. The phone picks a new port after a reboot.
+    /// Default 34011. Saved as <c>PhoneAdbPort</c>.
+    /// </summary>
+    public int PhoneAdbPort { get; set; } = Services.PhoneAdb.DefaultPort;
+
     // ---- Music library roots (filesystem; for future scan/tags; not Sonos UPnP) ----
 
     /// <summary>
@@ -655,6 +669,9 @@ public sealed class AppSettings
         if (RemotePort is < 1024 or > 65535) RemotePort = 42342;
         if (!IsValidRemotePin(RemotePin))
             RemotePin = GenerateRemotePin();
+        var adb = Services.PhoneAdb.Coerce(PhoneAdbHost, PhoneAdbPort);
+        PhoneAdbHost = adb.Host;
+        PhoneAdbPort = adb.Port;
         TrayDoubleClickAction = (TrayDoubleClickAction ?? "").Trim().ToLowerInvariant() switch
         {
             TrayDoubleClickControl => TrayDoubleClickControl,

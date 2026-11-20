@@ -164,6 +164,8 @@ Match notes: content hash skipped (master often different encode/hi-res). Ambigu
 
 **Phone remote** (§6.6): first launch with no saved pairing opens **Connect** (find the PC on UDP 42343, or type the LAN address and PIN). Connecting uses **PC only** so every tab talks to the tray app. More is always available and holds the address, PIN, and link mode. Library folders and the shared master path can be set from the phone. LAN API stays on port **42342** with the 6-digit PIN. Client is `src/HotSonos.Remote` (.NET MAUI, not in `HotSonos.slnx`). Library groups (§6.2) stay the next product slice.
 
+**Phone wireless debugging** (PC Phone window only): `PhoneAdbHost` / `PhoneAdbPort` in `settings.json` (default `192.168.1.171` and `34011`) and `%LocalAppData%\HotSonos\phone-adb.txt` (`host:port`) for deploy scripts. **Connect** runs `adb connect`. The remote PIN, the listener, hotkeys, MCP, and the Android app are unchanged.
+
 ---
 
 ## 1. Overview
@@ -483,6 +485,8 @@ HotSonos shuffle, tags, Daily speaker presets, Reports, wake/nightly, and saved 
 
 **Not on the phone.** Hotkey capture, Quick Tag / Quick Play overlays, tray double-click, flyout, and Start with Windows are PC shell (they need the Windows session). Per-folder master maps that differ from each other stay on the PC; the phone can set one shared master path as text. There is no file-browse dialog. Bass/treble EQ is not on this surface. Playlist-from-filter is not shipped on the desktop either. Deleting audio files from disk stays on the PC. Spotify account linking still opens a browser on the PC. The phone cannot change the PIN, the port, or MCP.
 
+**Wireless debugging address (PC only).** The Phone window has a **Phone wireless debugging** section under the firewall commands. It shows the phone's adb wireless-debugging IP (default `192.168.1.171`, reserved on the router) and port (default `34011`; the phone assigns a new port after a reboot). **Connect** checks that the address is a non-empty IP or hostname and the port is 1–65535, saves `PhoneAdbHost` and `PhoneAdbPort` in `%LocalAppData%\HotSonos\settings.json`, writes `%LocalAppData%\HotSonos\phone-adb.txt` as one line `host:port` for deploy scripts, and runs `adb connect host:port` off the UI thread. adb is `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe` when that file exists, otherwise `adb` on PATH. The result line shows the adb text when it already says connected or failed, and otherwise prefixes Connected or Failed. A missing adb shows the path that was checked. Closing the window saves a valid edit. This section does not change the remote PIN, the listener, hotkeys, or MCP.
+
 ---
 
 ## 7. Later — Library intelligence (extends MCP)
@@ -625,7 +629,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 - **Concurrency**: exclusive gate for shuffle / fresh start / long wake play phases  
 - **GENA**: local callback; trusted LAN  
 - **Tests**: Core parsers offline; Harness for live speakers  
-- **Config today**: JSON settings at `%LocalAppData%\HotSonos\settings.json`  
+- **Config today**: JSON settings at `%LocalAppData%\HotSonos\settings.json`. Phone wireless debugging is `PhoneAdbHost` / `PhoneAdbPort` in that file, mirrored to `phone-adb.txt` (`host:port`) beside it.  
 - **Library roots (step 1)**: `SonosLibraryRoots`, `MasterLibraryMappings` (and legacy `MasterLibraryRoot`) in same JSON  
 - **Library cache (step 2)**: SQLite `%LocalAppData%\HotSonos\library.db` via `Microsoft.Data.Sqlite` + TagLib# — **rebuildable only**, never sole tag store  
 - **Hand-rolled UPnP**; no Sonos NuGet  
@@ -667,6 +671,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-11-18 | §6.6 phone is a full view: MAUI tabs, Phone pairing screen, restrictions removed. PIN and port 42342 kept |
 | 2026-11-18 | §6.6 phone also runs standalone on the speakers (Auto / PC only / Speakers only). PIN and port 42342 unchanged |
 | 2026-11-19 | §6.6 phone Now: hide the Daily per-speaker check list while All speakers is on |
+| 2026-11-20 | §6.6 Phone window: wireless debugging address (`PhoneAdbHost`, `PhoneAdbPort`, `phone-adb.txt`, adb connect). PIN and listener unchanged |
 | 2026-07-15 | Library plan step 2: TagLib scanner → SQLite cache; rescan UI; MCP status/search/get |
 | 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |

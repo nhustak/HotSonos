@@ -1,6 +1,8 @@
 using System.Windows;
+using HotSonos.App.Infrastructure;
 using HotSonos.App.Models;
 using HotSonos.App.Remote;
+using HotSonos.App.Services;
 using HotSonos.Remote.Protocol;
 
 namespace HotSonos.App;
@@ -11,13 +13,26 @@ public partial class PhonePairingWindow : Window
     private readonly Func<string?> _endpoint;
     private readonly Action _newPin;
     private readonly Action _firewall;
+    private readonly Action _saveSettings;
+    private bool _adbFieldsLoaded;
 
     public PhonePairingWindow(AppSettings settings, Func<string?> endpoint, Action newPin, Action firewall)
+        : this(settings, endpoint, newPin, firewall, () => new ConfigStore().Save(settings))
+    {
+    }
+
+    public PhonePairingWindow(
+        AppSettings settings,
+        Func<string?> endpoint,
+        Action newPin,
+        Action firewall,
+        Action saveSettings)
     {
         _settings = settings;
         _endpoint = endpoint;
         _newPin = newPin;
         _firewall = firewall;
+        _saveSettings = saveSettings;
         InitializeComponent();
         Refresh();
     }
@@ -50,6 +65,13 @@ public partial class PhonePairingWindow : Window
         }
 
         PinText.Text = settings.RemotePin ?? "";
+        if (!_adbFieldsLoaded)
+        {
+            AdbHostBox.Text = settings.PhoneAdbHost;
+            AdbPortBox.Text = settings.PhoneAdbPort.ToString();
+            _adbFieldsLoaded = true;
+        }
+
         FirewallText.Text =
             "New-NetFirewallRule -DisplayName \"HotSonos Remote\" -Direction Inbound -Protocol TCP " +
             $"-LocalPort {settings.RemotePort} -Action Allow -Profile Private" + Environment.NewLine +
@@ -76,5 +98,97 @@ public partial class PhonePairingWindow : Window
         if (pin.Length == 0)
             return;
         System.Windows.Clipboard.SetText(pin);
+    }
+
+    private async void AdbConnect_Click(object sender, RoutedEventArgs e)
+    {
+        AdbConnectButton.IsEnabled = false;
+        try
+        {
+            if (!PhoneAdb.TryParse(AdbHostBox.Text, AdbPortBox.Text, out var host, out var port, out var error))
+            {
+                ShowAdbResult(false, error ?? PhoneAdb.BadPortError);
+                return;
+            }
+
+            AdbHostBox.Text = host;
+            AdbPortBox.Text = port.ToString();
+            if (!TrySaveAdb(host, port, out var saveError))
+            {
+                ShowAdbResult(false, saveError ?? "Could not save settings.");
+                return;
+            }
+
+            var adb = PhoneAdb.FindAdb();
+            if (adb is null)
+            {
+                ShowAdbResult(false, PhoneAdb.NotFoundMessage());
+                return;
+            }
+
+            AdbResultText.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x60, 0x70, 0x7F));
+            AdbResultText.Text = "Connecting to " + PhoneAdb.FormatEndpoint(host, port) + "…";
+            var result = await Task.Run(() => PhoneAdb.ConnectAsync(adb, host, port));
+            if (!IsLoaded)
+                return;
+            ShowAdbResult(result.Connected, result.DisplayText);
+        }
+        catch (Exception ex)
+        {
+            if (IsLoaded)
+                ShowAdbResult(false, ex.Message);
+        }
+        finally
+        {
+            if (IsLoaded)
+                AdbConnectButton.IsEnabled = true;
+        }
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        try
+        {
+            if (PhoneAdb.TryParse(AdbHostBox.Text, AdbPortBox.Text, out var host, out var port, out _)
+                && (!string.Equals(host, _settings.PhoneAdbHost, StringComparison.Ordinal)
+                    || port != _settings.PhoneAdbPort))
+            {
+                TrySaveAdb(host, port, out _);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Phone wireless debugging address was not saved", ex);
+        }
+
+        base.OnClosed(e);
+    }
+
+    private bool TrySaveAdb(string host, int port, out string? error)
+    {
+        _settings.PhoneAdbHost = host;
+        _settings.PhoneAdbPort = port;
+        try
+        {
+            _saveSettings();
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = "Could not save settings. " + ex.Message;
+            return false;
+        }
+    }
+
+    private void ShowAdbResult(bool connected, string message)
+    {
+        var marker = connected ? "connected" : "failed";
+        AdbResultText.Text = message.Contains(marker, StringComparison.OrdinalIgnoreCase)
+            ? message
+            : (connected ? "Connected. " : "Failed. ") + message;
+        AdbResultText.Foreground = new System.Windows.Media.SolidColorBrush(connected
+            ? System.Windows.Media.Color.FromRgb(0x1C, 0x8E, 0x54)
+            : System.Windows.Media.Color.FromRgb(0xB4, 0x23, 0x18));
     }
 }

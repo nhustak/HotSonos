@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Phone"
-        Width="560" Height="640"
+        Width="560" Height="820"
         MinWidth="420" MinHeight="480"
         WindowStartupLocation="CenterOwner"
         FontFamily="Segoe UI" FontSize="13"
@@ -44,6 +44,21 @@
             <TextBox x:Name="FirewallText" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Padding="8" />
             <Button Content="Allow on private networks…" HorizontalAlignment="Left" Margin="0,10,0,0"
                     Padding="10,4" Click="Firewall_Click" />
+
+            <TextBlock Text="Phone wireless debugging" FontWeight="SemiBold" Margin="0,22,0,6" />
+            <TextBlock TextWrapping="Wrap" Foreground="#FF60707F" FontSize="12" Margin="0,0,0,8"
+                       Text="adb wireless-debugging address for this phone. The IP is reserved on the router (192.168.1.171). The port changes when the phone reboots. Connect saves it and runs adb connect. Deploy scripts read phone-adb.txt." />
+            <Border Background="White" BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="8" Padding="14">
+                <StackPanel>
+                    <TextBlock Text="IP or hostname" Foreground="#FF60707F" />
+                    <TextBox x:Name="AdbHostBox" Margin="0,2,0,10" Padding="8,6" FontSize="16" />
+                    <TextBlock Text="Port" Foreground="#FF60707F" />
+                    <TextBox x:Name="AdbPortBox" Margin="0,2,0,10" Padding="8,6" FontSize="16" />
+                    <Button x:Name="AdbConnectButton" Content="Connect" HorizontalAlignment="Left"
+                            Padding="10,4" Click="AdbConnect_Click" />
+                    <TextBlock x:Name="AdbResultText" TextWrapping="Wrap" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </Window>

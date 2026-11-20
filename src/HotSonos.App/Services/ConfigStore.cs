@@ -24,6 +24,7 @@ public sealed class ConfigStore
     /// <summary>Loads settings, or returns defaults if the file is missing/corrupt.</summary>
     public AppSettings Load()
     {
+        AppSettings? loaded = null;
         try
         {
             if (File.Exists(_path))
@@ -31,7 +32,7 @@ public sealed class ConfigStore
                 var json = File.ReadAllText(_path);
                 var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
                 if (settings is not null)
-                    return settings.EnsureShape();
+                    loaded = settings.EnsureShape();
             }
         }
         catch (Exception ex)
@@ -40,7 +41,9 @@ public sealed class ConfigStore
             AppLog.Warn($"Config load failed; using defaults ({_path})", ex);
         }
 
-        return AppSettings.CreateDefault();
+        loaded ??= AppSettings.CreateDefault();
+        TryWritePhoneAdbFile(loaded);
+        return loaded;
     }
 
     public void Save(AppSettings settings)
@@ -51,7 +54,8 @@ public sealed class ConfigStore
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
 
-            var json = JsonSerializer.Serialize(settings.EnsureShape(), JsonOptions);
+            settings = settings.EnsureShape();
+            var json = JsonSerializer.Serialize(settings, JsonOptions);
             File.WriteAllText(_path, json);
         }
         catch (Exception ex)
@@ -59,5 +63,20 @@ public sealed class ConfigStore
             AppLog.Error($"Config save failed ({_path})", ex);
             throw;
         }
+
+        TryWritePhoneAdbFile(settings);
+    }
+
+    /// <summary>
+    /// Sidecar for deploy scripts: <c>phone-adb.txt</c> next to settings.json, one line <c>host:port</c>.
+    /// A failure here does not fail load or save of settings.json.
+    /// </summary>
+    private void TryWritePhoneAdbFile(AppSettings settings)
+    {
+        var directory = System.IO.Path.GetDirectoryName(_path);
+        if (string.IsNullOrWhiteSpace(directory))
+            return;
+        if (!PhoneAdb.TryWriteAddressFile(directory, settings.PhoneAdbHost, settings.PhoneAdbPort, out var error))
+            AppLog.Warn($"Phone adb address file was not written ({error})");
     }
 }

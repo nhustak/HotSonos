@@ -10,5 +10,6 @@
     <Project Path="tests/HotSonos.Core.Tests/HotSonos.Core.Tests.csproj" />
     <Project Path="tests/HotSonos.Activity.Tests/HotSonos.Activity.Tests.csproj" />
     <Project Path="tests/HotSonos.Remote.Protocol.Tests/HotSonos.Remote.Protocol.Tests.csproj" />
+    <Project Path="tests/HotSonos.App.Tests/HotSonos.App.Tests.csproj" />
   </Folder>
 </Solution>
