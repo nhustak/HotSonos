@@ -92,15 +92,20 @@ static class RemoteUi
         {
             Padding = new Thickness(16, 12, 16, 28),
             Spacing = 6,
-            HorizontalOptions = LayoutOptions.Center,
         };
+#if ANDROID
+        // Chromebook and other wide windows center a column. A phone stays full bleed.
+        stack.HorizontalOptions = LayoutOptions.Center;
+#endif
         stack.Add(Heading(title));
         if (showChip)
             stack.Add(ModeChip());
         foreach (var section in sections)
             stack.Add(section);
         var scroll = new ScrollView { Content = stack, BackgroundColor = Swatches.Bg };
+#if ANDROID
         scroll.SizeChanged += (_, _) => Fit(stack, scroll.Width, RemoteWindow.PageColumnMax);
+#endif
         return scroll;
     }
 

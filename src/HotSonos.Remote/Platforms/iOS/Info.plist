@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>HotSonos</string>
+	<key>CFBundleName</key>
+	<string>HotSonos</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.hotsonos.remote</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<!-- Matches SupportedOSPlatformVersion for ios in the remote csproj.
+	     MAUI also writes this from that property at build time. -->
+	<key>MinimumOSVersion</key>
+	<string>15.0</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<!-- LAN control is plain HTTP to the house PC and speakers. No custom crypto.
+	     Declaring this avoids the TestFlight export-compliance question on each upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- iPhone (1) and iPad (2). -->
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleLightContent</string>
+	<key>XSAppIconAssets</key>
+	<string>Assets.xcassets/appicon.appiconset</string>
+	<!-- Shown when iOS asks for local network access. Required for the PC
+	     listener (TCP 42342), the UDP announce (42343), and Sonos SOAP. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Finding and controlling the HotSonos PC and Sonos speakers on the local network.</string>
+	<!-- No NSBonjourServices. HotSonos does not use mDNS. Find PC is a raw UDP
+	     probe on port 42343. Speaker search is SSDP to 239.255.255.250:1900. -->
+	<!-- Plain HTTP to LAN addresses (the PC on 42342 and speakers on 1400).
+	     This does not allow cleartext to the public internet. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

@@ -53,7 +53,9 @@ sealed class PlayerPage : RemotePage
     int _applied = 20;
     int _pcStep = PhoneVolume.SpeakerStep;
     readonly Grid _column;
+#if ANDROID
     readonly Grid _host;
+#endif
     bool _muted;
     bool _known;
     bool _sampling;
@@ -61,6 +63,11 @@ sealed class PlayerPage : RemotePage
     bool _forceSample;
     string? _artRevision;
     RemoteStatusResponse? _status;
+
+#if IOS
+    /// <summary>iPad Player column. iPhone stays full width. Android does not compile this.</summary>
+    const double IpadColumnWidth = 520;
+#endif
 
     public PlayerPage()
     {
@@ -164,6 +171,22 @@ sealed class PlayerPage : RemotePage
         _column.Add(_artFrame);
         Grid.SetRow(controls, 1);
         _column.Add(controls);
+#if IOS
+        // iPad only: a centered column. The host stays full-bleed so the sides match the page.
+        // iPhone leaves WidthRequest unset and fills the body.
+        var host = new Grid
+        {
+            BackgroundColor = Swatches.Bg,
+            HorizontalOptions = LayoutOptions.Fill,
+            VerticalOptions = LayoutOptions.Fill,
+        };
+        _column.HorizontalOptions = LayoutOptions.Fill;
+        _column.VerticalOptions = LayoutOptions.Fill;
+        host.Add(_column);
+        _column.SizeChanged += (_, _) => FitPlayerColumn();
+        Content = host;
+#elif ANDROID
+        // Chromebook and other wide windows: center a phone-width column. A phone fills the body.
         _host = new Grid { BackgroundColor = Swatches.Bg };
         _host.Add(_column);
         _host.SizeChanged += (_, _) =>
@@ -172,6 +195,9 @@ sealed class PlayerPage : RemotePage
                 Arrange(_host.Width, _host.Height);
         };
         Content = _host;
+#else
+        Content = _column;
+#endif
     }
 
     protected override void OnShown()
@@ -202,11 +228,23 @@ sealed class PlayerPage : RemotePage
     protected override void OnSizeAllocated(double width, double height)
     {
         base.OnSizeAllocated(width, height);
+#if IOS
+        FitPlayerColumn();
+#elif ANDROID
         // The shell reparents the body, so the page often has no size. Prefer the host that is on screen.
         if (_host.Width <= 0)
             Arrange(width, height);
+#else
+        if (width <= 0 || height <= 0)
+            return;
+        var side = Math.Min(width - 48, height * 0.46);
+        side = Math.Clamp(side, 160, 420);
+        _artFrame.WidthRequest = side;
+        _artFrame.HeightRequest = side;
+#endif
     }
 
+#if ANDROID
     void Arrange(double width, double height)
     {
         if (width <= 0 || height <= 0)
@@ -218,6 +256,38 @@ sealed class PlayerPage : RemotePage
         _artFrame.WidthRequest = side;
         _artFrame.HeightRequest = side;
     }
+#endif
+
+#if IOS
+    /// <summary>
+    /// The page body is hosted in the shell, so the column grid is what actually gets a size.
+    /// iPad caps that column. iPhone fills the width. Art sizing uses the column width.
+    /// </summary>
+    void FitPlayerColumn()
+    {
+        var height = _column.Height;
+        if (height <= 0)
+            return;
+
+        var available = (_column.Parent as VisualElement)?.Width ?? _column.Width;
+        if (available <= 0)
+            return;
+
+        var tablet = DeviceInfo.Idiom == DeviceIdiom.Tablet && available > IpadColumnWidth;
+        var contentWidth = tablet ? IpadColumnWidth : available;
+        var desiredRequest = tablet ? IpadColumnWidth : -1;
+        if (Math.Abs(_column.WidthRequest - desiredRequest) > 0.5)
+            _column.WidthRequest = desiredRequest;
+        var align = tablet ? LayoutOptions.Center : LayoutOptions.Fill;
+        if (_column.HorizontalOptions != align)
+            _column.HorizontalOptions = align;
+
+        var side = Math.Min(contentWidth - 48, height * 0.46);
+        side = Math.Clamp(side, 160, 420);
+        _artFrame.WidthRequest = side;
+        _artFrame.HeightRequest = side;
+    }
+#endif
 
     Task Go(Func<SonosController, CancellationToken, Task> speakers, Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc) =>
         AppServices.Link.DrivePc ? Act(pc) : Speaker(speakers);

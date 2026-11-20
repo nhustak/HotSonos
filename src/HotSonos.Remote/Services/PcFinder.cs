@@ -15,6 +15,24 @@ static class PcFinder
 {
     public static async Task<(string Host, int Port)?> FindAsync(TimeSpan wait, CancellationToken ct)
     {
+#if IOS
+        // A denied local-network prompt or a missing multicast entitlement throws
+        // instead of answering. The Connect page already has the address fields.
+        try
+        {
+            return await ProbeAsync(wait, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+#else
+        return await ProbeAsync(wait, ct).ConfigureAwait(false);
+#endif
+    }
+
+    static async Task<(string Host, int Port)?> ProbeAsync(TimeSpan wait, CancellationToken ct)
+    {
         using var hold = MulticastHold.Acquire();
         using var udp = new UdpClient(AddressFamily.InterNetwork);
         udp.EnableBroadcast = true;

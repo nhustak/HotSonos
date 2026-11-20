@@ -23,6 +23,10 @@ public partial class AppShell : ContentPage
     public AppShell()
     {
         InitializeComponent();
+#if IOS
+        // .NET 10 pages are edge-to-edge unless this is set. Android keeps the default.
+        SafeAreaEdges = Microsoft.Maui.SafeAreaEdges.Container;
+#endif
         _current = this;
         AppServices.Live.Start();
         _pages =
@@ -56,9 +60,12 @@ public partial class AppShell : ContentPage
         }
 
         Select(0);
+#if ANDROID
         SizeChanged += (_, _) => LayoutTabs(Width);
+#endif
     }
 
+#if ANDROID
     /// <summary>Phone widths keep the scrolling strip. A wide window shows every tab at a capped width.</summary>
     void LayoutTabs(double width)
     {
@@ -71,6 +78,7 @@ public partial class AppShell : ContentPage
         foreach (var tab in _tabs)
             tab.WidthRequest = spread ? each : -1;
     }
+#endif
 
     public static void OpenConnection()
     {
@@ -182,5 +190,24 @@ public partial class AppShell : ContentPage
         if (index < 0 || index >= _tabs.Length)
             return;
         _ = TabScroll.ScrollToAsync(_tabs[index], ScrollToPosition.MakeVisible, false);
+    }
+
+    protected override void OnSizeAllocated(double width, double height)
+    {
+        base.OnSizeAllocated(width, height);
+#if IOS
+        if (width <= 0)
+            return;
+        // The tab strip sits in a grid so a wide Android window can center it.
+        // Give that grid the viewport width or iPad centering has nothing to center in.
+        TabHost.MinimumWidthRequest = Math.Max(0, width);
+        // Eight labels fit on an iPad and sit in the middle. A phone keeps the
+        // scrolling strip aligned to the start, same as Android.
+        var measured = TabBar.Measure(double.PositiveInfinity, 80);
+        var fits = measured.Width > 0 && measured.Width <= width - 8;
+        var align = fits ? LayoutOptions.Center : LayoutOptions.Start;
+        if (TabBar.HorizontalOptions != align)
+            TabBar.HorizontalOptions = align;
+#endif
     }
 }

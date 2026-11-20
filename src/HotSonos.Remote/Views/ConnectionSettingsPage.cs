@@ -38,7 +38,11 @@ sealed class ConnectionSettingsPage : RemotePage
             var found = await PcFinder.FindAsync(TimeSpan.FromSeconds(3), CancellationToken.None);
             if (found is null)
             {
+#if IOS
+                _connection.Status.Text = HotSonos.Remote.IosDiscovery.FindPcMiss;
+#else
                 _connection.Status.Text = RemoteFailureText.FindPcMissed;
+#endif
                 return;
             }
 
@@ -48,9 +52,13 @@ sealed class ConnectionSettingsPage : RemotePage
         }
         catch (Exception ex)
         {
+#if IOS
+            _connection.Status.Text = HotSonos.Remote.IosDiscovery.FindPcMiss;
+#else
             _connection.Status.Text = string.IsNullOrWhiteSpace(ex.Message)
                 ? RemoteFailureText.FindPcMissed
                 : ex.Message + " " + RemoteFailureText.FindPcMissed;
+#endif
         }
     }
 

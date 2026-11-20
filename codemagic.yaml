@@ -1,0 +1,220 @@
+# HotSonos workflows build only src/HotSonos.Remote/HotSonos.Remote.csproj
+# for net10.0-ios. They do not restore HotSonos.slnx (that is the Windows app).
+# HotSonos.Core and HotSonos.Remote.Protocol are restored only because the
+# remote project references them. Both stay net10.0. Do not pass a global
+# TargetFrameworks property: that would retarget those libraries to net10.0-ios.
+#
+# Placeholders (replace before running ios-testflight; do not commit secrets):
+#   REPLACE_WITH_APP_STORE_CONNECT_INTEGRATION_NAME
+#     Codemagic Team settings > Team integrations > Developer Portal > the API key name.
+#   REPLACE_WITH_HOTSONOS_IOS_ENV_GROUP
+#     Codemagic environment variable group. Required variable: APP_STORE_APPLE_ID
+#     (numeric Apple ID of the App Store Connect app, not the bundle id).
+#     Optional: APPLICATION_DISPLAY_VERSION (one to three integers, default 1.0.76).
+#     Optional: FALLBACK_BUILD_NUMBER (used when TestFlight has no builds yet, default 1).
+
+workflows:
+  ios-testflight:
+    name: iOS TestFlight
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: src/HotSonos.Remote
+    integrations:
+      app_store_connect: REPLACE_WITH_APP_STORE_CONNECT_INTEGRATION_NAME
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: master
+          include: true
+        - pattern: "*"
+          include: false
+      cancel_previous_builds: true
+    when:
+      changeset:
+        includes:
+          - src/HotSonos.Remote/**
+          - src/HotSonos.Remote.Protocol/**
+          - codemagic.yaml
+    environment:
+      xcode: latest
+      groups:
+        - REPLACE_WITH_HOTSONOS_IOS_ENV_GROUP
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.hotsonos.remote
+      vars:
+        DOTNET_PATH: $CM_BUILD_DIR/.dotnet
+        DOTNET: $CM_BUILD_DIR/.dotnet/dotnet
+        BUNDLE_ID: com.hotsonos.remote
+        IOS_PROJECT: HotSonos.Remote.csproj
+    scripts:
+      - name: Install .NET 10
+        script: |
+          set -euo pipefail
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 10.0 --install-dir "$DOTNET_PATH"
+          echo "PATH=$DOTNET_PATH:\$PATH" >> "$CM_ENV"
+          echo "DOTNET_ROOT=$DOTNET_PATH" >> "$CM_ENV"
+          echo "DOTNET_CLI_TELEMETRY_OPTOUT=1" >> "$CM_ENV"
+          echo "DOTNET_NOLOGO=1" >> "$CM_ENV"
+          "$DOTNET" --version
+      - name: Install the MAUI iOS workload
+        script: |
+          set -euo pipefail
+          "$DOTNET" workload install maui-ios
+      - name: Restore the remote iOS project only
+        script: |
+          set -euo pipefail
+          # HotSonosRemoteTargetFrameworks is read only by the remote csproj.
+          # Do not pass TargetFrameworks globally: that would retarget Protocol and Core.
+          "$DOTNET" restore "$IOS_PROJECT" -p:HotSonosRemoteTargetFrameworks=net10.0-ios
+      - name: Initialize the keychain and read signing names
+        script: |
+          set -euo pipefail
+          # ios_signing has already fetched the App Store certificate and profile
+          # for com.hotsonos.remote. MAUI has no checked-in Xcode project, so
+          # xcode-project use-profiles cannot edit one. keychain initialize plus
+          # the CodesignKey / CodesignProvision properties below are the MAUI equivalent.
+          keychain initialize
+          keychain add-certificates
+
+          CERT_NAME="$(keychain list-certificates | jq -r '[.[] | select(.common_name | test("Distribution"))][0].common_name // empty')"
+          if [ -z "$CERT_NAME" ]; then
+            CERT_NAME="$(keychain list-certificates | jq -r '.[0].common_name // empty')"
+          fi
+          if [ -z "$CERT_NAME" ]; then
+            echo "No Apple Distribution certificate in the keychain."
+            echo "Generate or upload one in Codemagic code signing identities, using the App Store Connect API key."
+            exit 1
+          fi
+
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          PROFILE_NAME=""
+          if [ -d "$PROFILE_DIR" ]; then
+            while IFS= read -r -d '' profile; do
+              decoded="$(mktemp)"
+              security cms -D -i "$profile" > "$decoded"
+              app_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$decoded" || true)"
+              name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$decoded" || true)"
+              rm -f "$decoded"
+              case "$app_id" in
+                *"$BUNDLE_ID"*) PROFILE_NAME="$name"; break ;;
+              esac
+            done < <(find "$PROFILE_DIR" -name '*.mobileprovision' -print0)
+          fi
+          if [ -z "$PROFILE_NAME" ]; then
+            echo "No App Store provisioning profile for $BUNDLE_ID."
+            echo "Fetch or create one in Codemagic code signing identities."
+            exit 1
+          fi
+
+          echo "Using certificate: $CERT_NAME"
+          echo "Using profile: $PROFILE_NAME"
+          echo "CERT_NAME=$CERT_NAME" >> "$CM_ENV"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$CM_ENV"
+      - name: Publish the signed IPA
+        script: |
+          set -euo pipefail
+          if [ -z "${APP_STORE_APPLE_ID:-}" ]; then
+            echo "APP_STORE_APPLE_ID is not set."
+            echo "Add the numeric App Store Connect Apple ID to the env group REPLACE_WITH_HOTSONOS_IOS_ENV_GROUP."
+            exit 1
+          fi
+
+          LATEST_BUILD_NUMBER="$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID")"
+          if [ -z "$LATEST_BUILD_NUMBER" ] || [ "$LATEST_BUILD_NUMBER" = "null" ]; then
+            UPDATED_BUILD_NUMBER="${FALLBACK_BUILD_NUMBER:-1}"
+          else
+            UPDATED_BUILD_NUMBER="$((LATEST_BUILD_NUMBER + 1))"
+          fi
+          echo "TestFlight build number: $UPDATED_BUILD_NUMBER (previous: ${LATEST_BUILD_NUMBER:-none})"
+
+          DISPLAY_VERSION="${APPLICATION_DISPLAY_VERSION:-1.0.76}"
+          if ! [[ "$DISPLAY_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "APPLICATION_DISPLAY_VERSION must be one to three dot-separated integers. Got: $DISPLAY_VERSION"
+            echo "The product version in Directory.Build.props is 1.0.0.76, which Apple rejects. This workflow sends 1.0.76 unless the env group overrides it."
+            exit 1
+          fi
+
+          "$DOTNET" publish "$IOS_PROJECT" \
+            -f net10.0-ios \
+            -c Release \
+            --no-restore \
+            -p:HotSonosRemoteTargetFrameworks=net10.0-ios \
+            -p:BuildIpa=true \
+            -p:RuntimeIdentifier=ios-arm64 \
+            -p:ArchiveOnBuild=true \
+            -p:ApplicationVersion="$UPDATED_BUILD_NUMBER" \
+            -p:ApplicationDisplayVersion="$DISPLAY_VERSION" \
+            -p:CodesignKey="$CERT_NAME" \
+            -p:CodesignProvision="$PROFILE_NAME" \
+            -o "$CM_BUILD_DIR/artifacts/ios"
+    artifacts:
+      - artifacts/ios/**/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+
+  ios-build-check:
+    name: iOS build check
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: src/HotSonos.Remote
+    triggering:
+      events:
+        - pull_request
+      branch_patterns:
+        - pattern: "*"
+          include: true
+          source: true
+      cancel_previous_builds: true
+    when:
+      changeset:
+        includes:
+          - src/HotSonos.Remote/**
+          - src/HotSonos.Remote.Protocol/**
+          - codemagic.yaml
+    environment:
+      xcode: latest
+      vars:
+        DOTNET_PATH: $CM_BUILD_DIR/.dotnet
+        DOTNET: $CM_BUILD_DIR/.dotnet/dotnet
+        IOS_PROJECT: HotSonos.Remote.csproj
+    scripts:
+      - name: Install .NET 10
+        script: |
+          set -euo pipefail
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 10.0 --install-dir "$DOTNET_PATH"
+          echo "PATH=$DOTNET_PATH:\$PATH" >> "$CM_ENV"
+          echo "DOTNET_ROOT=$DOTNET_PATH" >> "$CM_ENV"
+          echo "DOTNET_CLI_TELEMETRY_OPTOUT=1" >> "$CM_ENV"
+          echo "DOTNET_NOLOGO=1" >> "$CM_ENV"
+          "$DOTNET" --version
+      - name: Install the MAUI iOS workload
+        script: |
+          set -euo pipefail
+          "$DOTNET" workload install maui-ios
+      - name: Restore the remote iOS project only
+        script: |
+          set -euo pipefail
+          "$DOTNET" restore "$IOS_PROJECT" -p:HotSonosRemoteTargetFrameworks=net10.0-ios
+      - name: Publish an unsigned iOS simulator build
+        script: |
+          set -euo pipefail
+          # Simulator publish verifies compilation without Apple credentials.
+          # An empty CodesignKey overrides the csproj development default.
+          "$DOTNET" publish "$IOS_PROJECT" \
+            -f net10.0-ios \
+            -c Release \
+            --no-restore \
+            -p:HotSonosRemoteTargetFrameworks=net10.0-ios \
+            -p:RuntimeIdentifier=iossimulator-arm64 \
+            -p:CodesignKey= \
+            -p:CodesignProvision= \
+            -p:EnableCodeSigning=false \
+            -o "$CM_BUILD_DIR/artifacts/ios-simulator"
+    artifacts:
+      - artifacts/ios-simulator/**/*.app
