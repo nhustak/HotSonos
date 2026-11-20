@@ -1,3 +1,4 @@
+using HotSonos.Core;
 using HotSonos.Core.Models;
 using HotSonos.Remote.Protocol;
 
@@ -115,12 +116,14 @@ sealed class RemoteLive
 
     static RemoteStatusResponse FromSpeakers(SonosHouseSnapshot snap)
     {
-        var groups = snap.Zones
-            .Select(z => new RemoteGroupDto(
-                z.RoomName,
-                z.IsCoordinator ? z.RoomName + " · lead" : z.RoomName,
-                1))
+        var picture = LiveGrouping.Map(snap.Zones.Select(z =>
+            new SpeakerMembership(z.RoomName, z.CoordinatorUuid, z.IsCoordinator)));
+        var groups = picture.Groups
+            .Select(g => new RemoteGroupDto(g.CoordinatorRoom, g.Label, g.Rooms.Count))
             .ToList();
+        var active = picture.Groups.FirstOrDefault(g =>
+            g.Rooms.Any(r => string.Equals(r, snap.ActiveRoom, StringComparison.OrdinalIgnoreCase)))?.Label
+            ?? snap.ActiveRoom;
         var now = snap.Now;
         RemoteNowPlayingDto? playing = now is null
             ? null
@@ -140,13 +143,16 @@ sealed class RemoteLive
             true,
             "speakers",
             snap.ActiveRoom,
-            snap.GroupLabel,
+            active,
             groups,
             [],
             playing,
             snap.Volume,
             snap.Muted,
             false,
-            false);
+            false,
+            picture.Groups.Count == 0 ? null : picture.Summary,
+            null,
+            null);
     }
 }

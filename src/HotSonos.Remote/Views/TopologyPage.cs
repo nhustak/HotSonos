@@ -1,3 +1,4 @@
+using HotSonos.Core;
 using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote.Views;
@@ -90,8 +91,7 @@ sealed class TopologyPage : RemotePage
         _suppressKeep = true;
         _keep.IsToggled = value.KeepHouseGrouped;
         _suppressKeep = false;
-        _status.Text = value.Error
-            ?? $"Active {value.ActiveRoom ?? "—"} · preferred {value.PreferredCoordinator ?? "—"}";
+        _status.Text = DescribeTopology(value);
 
         _groups.Clear();
         foreach (var group in value.Groups)
@@ -134,17 +134,15 @@ sealed class TopologyPage : RemotePage
     async Task LoadSpeakersAsync()
     {
         var house = AppServices.Link.Speakers;
-        _status.Text = house.Zones.Count == 0
+        var picture = LiveGrouping.Map(house.Zones.Select(z =>
+            new SpeakerMembership(z.RoomName, z.CoordinatorUuid, z.IsCoordinator)));
+        _status.Text = picture.Groups.Count == 0
             ? (AppServices.Link.Problem ?? "No speakers yet.")
-            : RemoteFailureText.PcRequired("Keep grouped, Daily regroup, and reboot");
+            : "Grouped now: " + picture.Summary + "\n" + RemoteFailureText.PcRequired("Keep grouped, Daily regroup, and reboot");
 
         _groups.Clear();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var zone in house.Zones.Where(z => z.IsCoordinator && seen.Add(z.CoordinatorUuid)))
-        {
-            var names = string.Join(" + ", house.Zones.Where(z => string.Equals(z.CoordinatorUuid, zone.CoordinatorUuid, StringComparison.OrdinalIgnoreCase)).Select(z => z.RoomName));
-            _groups.Add(RemoteUi.Muted(names));
-        }
+        foreach (var group in picture.Groups)
+            _groups.Add(RemoteUi.Muted(group.Rooms.Count > 1 && picture.Groups.Count == 1 ? LiveGrouping.AllSpeakers : group.Label));
 
         _members.Clear();
         foreach (var zone in house.Zones)
@@ -185,6 +183,22 @@ sealed class TopologyPage : RemotePage
                 slider,
                 mute));
         }
+    }
+
+    static string DescribeTopology(RemoteTopologyResponse value)
+    {
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(value.LiveGrouping))
+            lines.Add("Grouped now: " + value.LiveGrouping);
+        if (!string.IsNullOrWhiteSpace(value.DailyGroupPreset))
+            lines.Add("Daily group preset: " + value.DailyGroupPreset);
+        if (value.GroupedAsDaily == false)
+            lines.Add(LiveGrouping.DriftMessage);
+        if (lines.Count == 0 && !string.IsNullOrWhiteSpace(value.Error))
+            lines.Add(value.Error);
+        if (lines.Count == 0)
+            lines.Add($"Active {value.ActiveRoom ?? "—"} · preferred {value.PreferredCoordinator ?? "—"}");
+        return string.Join("\n", lines);
     }
 
     async Task LeadAsync(string room)

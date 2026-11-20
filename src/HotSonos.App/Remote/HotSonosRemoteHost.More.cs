@@ -2,6 +2,7 @@ using HotSonos.App.Infrastructure;
 using HotSonos.App.Library;
 using HotSonos.App.Mcp;
 using HotSonos.App.Models;
+using HotSonos.App.Services;
 using HotSonos.Core;
 using HotSonos.Core.Models;
 using HotSonos.Remote.Protocol;
@@ -726,6 +727,7 @@ public sealed partial class HotSonosRemoteHost
         var coordinators = state.Sonos.GetCoordinatorCandidates()
             .Select(c => new RemoteCoordinatorDto(c.Room, c.Ip, c.IsLeading))
             .ToList();
+        var grouping = GroupingDisplay.From(state.Sonos, settings);
         return new RemoteTopologyResponse(
             true,
             state.Sonos.ActiveRoom,
@@ -736,7 +738,10 @@ public sealed partial class HotSonosRemoteHost
             coordinators,
             state.Sonos.OfflineSpeakers.ToList(),
             snap?.VanishedRooms.ToList() ?? [],
-            snap is null ? "No topology snapshot yet." : null);
+            snap is null ? "No topology snapshot yet." : null,
+            grouping.Summary,
+            grouping.PresetLabel,
+            grouping.MatchesDaily);
     }
 
     private static RemoteDailyGroupsResponse BuildDaily(HotSonosMcpState state)

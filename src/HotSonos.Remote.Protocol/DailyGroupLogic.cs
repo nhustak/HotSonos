@@ -118,6 +118,23 @@ public static class DailyGroupLogic
     }
 
     /// <summary>
+    /// The saved Daily preset, named as a setting. An empty room list is All speakers,
+    /// the same fallback the tray uses when nothing is checked. This is not live topology.
+    /// </summary>
+    public static string DescribePreset(bool allSpeakers, IEnumerable<string>? rooms, IEnumerable<DailyPresetModel>? presets)
+    {
+        if (allSpeakers)
+            return "All speakers";
+
+        var list = Normalize(rooms);
+        if (list.Count == 0)
+            return "All speakers";
+
+        var name = presets?.FirstOrDefault(p => SameRooms(p.Rooms, list))?.Name?.Trim();
+        return string.IsNullOrEmpty(name) ? string.Join(", ", list) : name;
+    }
+
+    /// <summary>
     /// Phone Now screen: the per-speaker check list is how a subset is picked.
     /// When All speakers is on, hide it. The switch and the All speakers line are the state.
     /// A named group (All off) keeps the list so rooms can be changed.
