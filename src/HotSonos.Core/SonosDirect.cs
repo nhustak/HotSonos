@@ -78,6 +78,22 @@ public sealed class SonosDirect
         return new SonosHouseSnapshot(zone?.RoomName, picture.Summary, Zones, now, volume, muted);
     }
 
+    public SonosTopologySnapshot? LastTopology { get; private set; }
+
+    /// <summary>Full ZoneGroupState from a speaker we already found, including Subs and other bonded units.</summary>
+    public async Task<SonosTopologySnapshot> RefreshTopologyAsync(CancellationToken ct = default)
+    {
+        var ip = ActiveZone?.IpAddress ?? Zones.FirstOrDefault()?.IpAddress;
+        if (string.IsNullOrWhiteSpace(ip))
+            return LastTopology ?? new SonosTopologySnapshot();
+        var snap = await _discovery.GetTopologySnapshotFromAsync(ip, ct).ConfigureAwait(false);
+        LastTopology = snap;
+        return snap;
+    }
+
+    public Task<IReadOnlyDictionary<string, string>> ReadGroupPlayStatesAsync(CancellationToken ct = default) =>
+        TopologyTransport.ReadAsync(_soap, LastTopology, ct);
+
     public async Task<IReadOnlyList<SonosSpeakerVolume>> ReadVolumesAsync(CancellationToken ct = default)
     {
         var rooms = Zones

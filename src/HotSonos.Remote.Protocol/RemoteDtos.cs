@@ -22,7 +22,21 @@ public sealed record RemoteTopologyResponse(
     string? Error,
     string? LiveGrouping = null,
     string? DailyGroupPreset = null,
-    bool? GroupedAsDaily = null);
+    bool? GroupedAsDaily = null,
+    IReadOnlyList<RemoteTopologyGroupDto>? Layout = null);
+
+/// <summary>One live group, or one room that is playing on its own. Bonded units are folded under a room.</summary>
+public sealed record RemoteTopologyGroupDto(
+    string GroupId,
+    string CoordinatorRoom,
+    bool Ungrouped,
+    string? PlayState,
+    IReadOnlyList<RemoteTopologyRoomDto> Rooms);
+
+public sealed record RemoteTopologyRoomDto(
+    string Room,
+    bool IsCoordinator,
+    IReadOnlyList<string> Folded);
 
 public sealed record RemoteMemberDto(
     string Room,

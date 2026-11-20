@@ -961,9 +961,12 @@ public sealed class SonosManager
     /// Reads ZoneGroupState from a speaker we already know. Updates the live grouping
     /// without <see cref="TopologyChanged"/>, so a heartbeat cannot auto-regroup.
     /// </summary>
-    public async Task PullZoneGroupStateAsync(CancellationToken ct = default)
+    public async Task PullZoneGroupStateAsync(CancellationToken ct = default, bool wait = false)
     {
-        if (!await _refreshGate.WaitAsync(0, ct).ConfigureAwait(false))
+        var acquired = wait
+            ? await _refreshGate.WaitAsync(TimeSpan.FromSeconds(4), ct).ConfigureAwait(false)
+            : await _refreshGate.WaitAsync(0, ct).ConfigureAwait(false);
+        if (!acquired)
             return;
 
         try
@@ -1012,9 +1015,15 @@ public sealed class SonosManager
 
             var vanishedNow = SonosDiscovery.ParseVanishedRooms(stateXml);
 
-            // Heavy monitor: full member graph + event log (expensive on GENA floods).
-            // Heartbeat only refreshes the visible grouping. It does not append the event trail.
-            if (!fromHeartbeat && _settings().EnsureShape().TopologyMonitorEnabled)
+            // Heartbeat and an explicit pull keep the bonded snapshot (Sub, pair mate) for the phone.
+            // A GENA flood does not: that path only records the full graph when the monitor is on.
+            if (fromHeartbeat)
+            {
+                var full = SonosDiscovery.ParseTopologySnapshot(stateXml);
+                if (full.Members.Count > 0)
+                    _lastTopology = full;
+            }
+            else if (_settings().EnsureShape().TopologyMonitorEnabled)
             {
                 var snap = SonosDiscovery.ParseTopologySnapshot(stateXml);
                 _lastTopology = snap;
@@ -3244,6 +3253,10 @@ public sealed class SonosManager
         }
         return false;
     }
+
+    /// <summary>Play state of each live group, keyed by ZoneGroup id. Unknown when a coordinator does not answer.</summary>
+    public Task<IReadOnlyDictionary<string, string>> ReadGroupPlayStatesAsync(CancellationToken ct = default) =>
+        TopologyTransport.ReadAsync(_soap, LastTopology, ct);
 
     private void RebuildGroups()
     {

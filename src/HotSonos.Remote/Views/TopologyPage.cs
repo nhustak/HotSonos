@@ -1,4 +1,5 @@
 using HotSonos.Core;
+using HotSonos.Core.Models;
 using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote.Views;
@@ -10,7 +11,11 @@ sealed class TopologyPage : RemotePage
     readonly VerticalStackLayout _groups = new();
     readonly VerticalStackLayout _members = new();
     readonly VerticalStackLayout _volumes = new();
+    readonly RefreshView _refresh = new() { RefreshColor = Swatches.Accent };
     bool _suppressKeep;
+    bool _loading;
+    bool _loadQueued;
+    string? _seenKey;
 
     public TopologyPage()
     {
@@ -30,7 +35,7 @@ sealed class TopologyPage : RemotePage
             await Act(ct => AppServices.Client.KeepGroupedAsync(e.Value, ct), _status);
         };
 
-        Content = RemoteUi.Page(
+        var page = RemoteUi.Page(
             "Rooms",
             _status,
             RemoteUi.Section(
@@ -48,9 +53,20 @@ sealed class TopologyPage : RemotePage
                 RemoteUi.Button("Refresh", LoadAsync),
                 RemoteUi.Button("Regroup Daily group", RegroupAsync, danger: true),
                 RemoteUi.Button("Reboot all speakers", () => RebootAsync(null, true), danger: true)),
-            RemoteUi.Section(PhoneSections.RoomsGroups, "Groups", _groups),
+            RemoteUi.Section(PhoneSections.RoomsGroups, "Topology", _groups),
             RemoteUi.Section(PhoneSections.RoomsSpeakers, "Speakers", _members),
             RemoteUi.Section(PhoneSections.RoomsVolume, "Volume per room", _volumes));
+        _refresh.Content = page;
+        _refresh.Command = new Command(() => _ = LoadAsync());
+        Content = _refresh;
+    }
+
+    protected override void OnStatus(RemoteStatusResponse? status)
+    {
+        var key = (status?.LiveGrouping ?? "") + "|" + (status?.NowPlaying?.State ?? "");
+        if (_seenKey is not null && string.Equals(key, _seenKey, StringComparison.Ordinal))
+            return;
+        _ = LoadAsync();
     }
 
     protected override void OnShown()
@@ -62,6 +78,33 @@ sealed class TopologyPage : RemotePage
     protected override void OnLinkChanged() => _ = LoadAsync();
 
     async Task LoadAsync()
+    {
+        if (_loading)
+        {
+            _loadQueued = true;
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            await LoadCoreAsync();
+            var live = AppServices.Live.Status;
+            _seenKey = (live?.LiveGrouping ?? "") + "|" + (live?.NowPlaying?.State ?? "");
+        }
+        finally
+        {
+            _loading = false;
+            _refresh.IsRefreshing = false;
+            if (_loadQueued)
+            {
+                _loadQueued = false;
+                _ = LoadAsync();
+            }
+        }
+    }
+
+    async Task LoadCoreAsync()
     {
         if (!AppServices.Link.DrivePc)
         {
@@ -93,17 +136,13 @@ sealed class TopologyPage : RemotePage
         _suppressKeep = false;
         _status.Text = DescribeTopology(value);
 
-        _groups.Clear();
-        foreach (var group in value.Groups)
-            _groups.Add(RemoteUi.Muted($"{group.Label} · {group.Members}"));
+        ShowCards(value.Layout, value.Offline, value.Vanished);
 
         _members.Clear();
-        foreach (var member in value.Members)
+        foreach (var member in value.Members.Where(m => !m.Invisible))
         {
             var room = member.Room;
-            var label = member.Invisible ? $"{room} ({member.Role ?? member.Product ?? "bonded"})" : room;
-            if (member.IsCoordinator && !member.Invisible)
-                label += " · coordinator";
+            var label = member.IsCoordinator ? room + " · coordinator" : room;
             var row = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(new GridLength(2, GridUnitType.Star)), new ColumnDefinition(), new ColumnDefinition() } };
             var name = RemoteUi.Muted(label);
             var lead = RemoteUi.Button("Lead", () => RegroupRoomAsync(room));
@@ -134,15 +173,43 @@ sealed class TopologyPage : RemotePage
     async Task LoadSpeakersAsync()
     {
         var house = AppServices.Link.Speakers;
-        var picture = LiveGrouping.Map(house.Zones.Select(z =>
-            new SpeakerMembership(z.RoomName, z.CoordinatorUuid, z.IsCoordinator)));
-        _status.Text = picture.Groups.Count == 0
-            ? (AppServices.Link.Problem ?? "No speakers yet.")
-            : "Grouped now: " + picture.Summary + "\n" + RemoteFailureText.PcRequired("Keep grouped, Daily regroup, and reboot");
+        SonosTopologySnapshot snap;
+        IReadOnlyDictionary<string, string> play;
+        try
+        {
+            snap = await house.RefreshTopologyAsync(CancellationToken.None);
+            play = await house.ReadGroupPlayStatesAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            snap = house.LastTopology ?? new SonosTopologySnapshot();
+            play = new Dictionary<string, string>();
+            if (snap.Members.Count == 0)
+                _status.Text = ex.Message;
+        }
 
-        _groups.Clear();
-        foreach (var group in picture.Groups)
-            _groups.Add(RemoteUi.Muted(group.Rooms.Count > 1 && picture.Groups.Count == 1 ? LiveGrouping.AllSpeakers : group.Label));
+        var cards = TopologyLayout.Map(snap.Members.Select(m => new TopologyMemberInput(
+                m.RoomName, m.GroupId, m.IsCoordinator, m.Invisible, m.ChannelRole, m.ProductName)))
+            .Select(card => new RemoteTopologyGroupDto(
+                card.GroupId,
+                card.CoordinatorRoom,
+                card.Ungrouped,
+                play.TryGetValue(card.GroupId, out var state) ? state : "Unknown",
+                card.Rooms.Select(r => new RemoteTopologyRoomDto(r.Room, r.IsCoordinator, r.Folded)).ToList()))
+            .ToList();
+        if (cards.Count > 0)
+            _status.Text = "Grouped now: " + string.Join("; ", cards.Select(DescribeCard))
+                + "\n" + RemoteFailureText.PcRequired("Keep grouped, Daily regroup, and reboot");
+        else
+        {
+            var picture = LiveGrouping.Map(house.Zones.Select(z =>
+                new SpeakerMembership(z.RoomName, z.CoordinatorUuid, z.IsCoordinator)));
+            _status.Text = picture.Groups.Count == 0
+                ? (AppServices.Link.Problem ?? "No speakers yet.")
+                : "Grouped now: " + picture.Summary + "\n" + RemoteFailureText.PcRequired("Keep grouped, Daily regroup, and reboot");
+        }
+
+        ShowCards(cards, [], snap.VanishedRooms);
 
         _members.Clear();
         foreach (var zone in house.Zones)
@@ -183,6 +250,77 @@ sealed class TopologyPage : RemotePage
                 slider,
                 mute));
         }
+    }
+
+    void ShowCards(
+        IReadOnlyList<RemoteTopologyGroupDto>? layout,
+        IReadOnlyList<string> offline,
+        IReadOnlyList<string> vanished)
+    {
+        _groups.Clear();
+        if (layout is null || layout.Count == 0)
+        {
+            _groups.Add(RemoteUi.Muted("No topology yet. Pull down to refresh."));
+            return;
+        }
+
+        foreach (var card in layout)
+            _groups.Add(Card(card));
+
+        var gone = offline.Concat(vanished)
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (gone.Count > 0)
+            _groups.Add(RemoteUi.Muted("Offline: " + string.Join(", ", gone)));
+    }
+
+    static View Card(RemoteTopologyGroupDto card)
+    {
+        var title = card.Ungrouped
+            ? card.CoordinatorRoom
+            : string.Join(" + ", card.Rooms.Select(r => r.Room));
+        var play = string.IsNullOrWhiteSpace(card.PlayState) ? "Unknown" : card.PlayState;
+        var kind = card.Ungrouped
+            ? "On its own · " + play
+            : "Coordinator: " + card.CoordinatorRoom + " · " + play;
+        var body = new VerticalStackLayout { Spacing = 2 };
+        if (!card.Ungrouped)
+        {
+            foreach (var room in card.Rooms)
+            {
+                body.Add(RemoteUi.Muted(room.IsCoordinator ? room.Room + " · coordinator" : room.Room));
+                foreach (var folded in room.Folded)
+                    body.Add(FoldedLine(folded));
+            }
+        }
+        else
+        {
+            foreach (var folded in card.Rooms.SelectMany(r => r.Folded))
+                body.Add(FoldedLine(folded));
+        }
+
+        return RemoteUi.Card(
+            new Label { Text = title, TextColor = Swatches.Ink, FontAttributes = FontAttributes.Bold, FontSize = 16 },
+            RemoteUi.Muted(kind),
+            body);
+    }
+
+    static Label FoldedLine(string folded) =>
+        new()
+        {
+            Text = "    " + folded,
+            TextColor = Swatches.Muted,
+            FontSize = 13,
+        };
+
+    static string DescribeCard(RemoteTopologyGroupDto card)
+    {
+        if (card.Ungrouped)
+            return card.CoordinatorRoom;
+        var names = string.Join(" + ", card.Rooms.Select(r => r.Room));
+        var folded = card.Rooms.SelectMany(r => r.Folded).ToList();
+        return folded.Count == 0 ? names : names + " (+ " + string.Join(", ", folded) + ")";
     }
 
     static string DescribeTopology(RemoteTopologyResponse value)

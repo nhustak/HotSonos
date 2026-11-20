@@ -476,7 +476,7 @@ The phone is a view of the tray app with the same control. PC mode does not disc
 - **Settings → Library:** folder list (add a UNC path, Daily checkboxes, Discover from Sonos, one shared master folder), create / rename / delete tags, rescan, write-tags-to-master. The Library tab still searches and can toggle a tag on a track
 - **Settings → Wake & nightly:** wake now / cancel and the nightly re-sync
 - **Settings → About:** heard-outside-the-library list, recent log lines, failure diagnostic
-- **Rooms:** **Grouped now**, the Daily group preset, and the drift line, plus members, regroup, set coordinator, keep house grouped, reboot one speaker or all, per-room volume and mute
+- **Rooms:** live ZoneGroupTopology. Each card is one real group or one room on its own, with the coordinator, play state (Playing, Paused, Stopped), and bonded units such as a Sub folded under that room. **Grouped now**, the Daily group preset, and the drift line stay. When `groupedAsDaily` is false the line says **Not grouped as Daily group, tap Regroup**; **Regroup** asks first and joins the preset. `GET /api/topology` pulls `GetZoneGroupState` before it answers, so pull-down, **Refresh**, and a change in the grouping line or the playback state are a new snapshot plus each coordinator's transport, not only the last cached picture. Keep house grouped, set coordinator, reboot, and per-room volume stay on this tab
 - **Reports:** Song Play History, Music, Event Log (`activity.db`)
 
 Reboot, wipe queue, rescan, regroup, fresh start, and tag delete ask for confirmation on the phone before the request is sent.
@@ -685,6 +685,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-11-20 | §6.6 phone Player: − and + step house volume by the hardware-key volume step. The number updates immediately. Slider, Mute, and Level all stay |
 | 2026-11-20 | §6.6 Phone window: wireless adb IP, connect port, optional pair. Code is not saved |
 | 2026-11-20 | §6.6 phone: stacked lists collapse behind a header and chevron. The phone remembers open or closed. Player stays fully open |
+| 2026-11-20 | §6.6 phone Rooms: live topology cards with coordinator, folded Sub, play state, and Regroup when that differs from the Daily group |
 | 2026-07-15 | Library plan step 2: TagLib scanner → SQLite cache; rescan UI; MCP status/search/get |
 | 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |
