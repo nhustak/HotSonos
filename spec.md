@@ -255,7 +255,8 @@ Sonos speakers expose a local UPnP/SOAP server on **TCP 1400**, discoverable via
 - **`Windows/`** — Settings, now-playing flyout  
 
 ### Config & packaging
-- Settings: `%LocalAppData%\HotSonos\settings.json`  
+- Settings: `%LocalAppData%\HotSonos\settings.json` (`PhoneAdbHost`, `PhoneAdbPort` for wireless adb)
+- Phone adb endpoint: `%LocalAppData%\HotSonos\phone-adb.txt` (`host:port`, rewritten whenever settings are saved)
 - Play history (shuffle exclude only): `%LocalAppData%\HotSonos\play-history.json`  
 - Activity / Reports: `%LocalAppData%\HotSonos\activity.db`  
 - Logs: `%LocalAppData%\HotSonos\logs\hotsonos-yyyyMMdd.log` (7-day retention)  
@@ -490,6 +491,8 @@ HotSonos shuffle, tags, Daily speaker presets, Reports, wake/nightly, and saved 
 
 **Not on the phone.** Hotkey capture, Quick Tag / Quick Play overlays, tray double-click, flyout, and Start with Windows are PC shell (they need the Windows session). Per-folder master maps that differ from each other stay on the PC; the phone can set one shared master path as text. There is no file-browse dialog. Bass/treble EQ is not on this surface. Playlist-from-filter is not shipped on the desktop either. Deleting audio files from disk stays on the PC. Spotify account linking still opens a browser on the PC. The phone cannot change the PIN, the port, or MCP.
 
+**Wireless debugging (PC only).** The Phone window has a **Phone wireless debugging** section for deploying the Android app over Wi-Fi. It edits the phone adb IP (default `192.168.1.171`) and the connect port (default `34011`, which changes when the phone reboots). **Pair** runs `adb pair host:pairPort` with the 6-digit code from the phone. **Connect** runs `adb connect host:port`. Both save the IP and connect port first. Pairing port and pairing code are typed when the phone shows them and are not settings. The code is one-time: it is not written to `settings.json`, `phone-adb.txt`, or the log, and the command line shown in the window redacts it. Settings properties: `PhoneAdbHost` and `PhoneAdbPort`. The same save writes `host:port` to `%LocalAppData%\HotSonos\phone-adb.txt` so deploy scripts can read it. adb is `%LocalAppData%\Android\Sdk\platform-tools\adb.exe`, or `adb` on PATH. This does not change the remote PIN, the listener on 42342, hotkeys, or MCP on `127.0.0.1:42341`.
+
 ---
 
 ## 7. Later — Library intelligence (extends MCP)
@@ -657,6 +660,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | Master dual-write | Optional (default on) when twin matched/linked under the **mapped** master root for that Sonos path |
 | MCP | Loopback debug/ops + control + library status/search/tags/master |
 | Phone remote | Full-control LAN client of the tray app (port 42342, 6-digit PIN, .NET MAUI) and a standalone speaker client (Auto / PC only / Speakers only). MCP stays loopback. |
+| Phone wireless debugging | Phone window: adb IP + connect port (`PhoneAdbHost`, `PhoneAdbPort`, `phone-adb.txt`). Pairing code is one-time and is not stored. |
 | Library management | Later; dry-run + confirm |
 
 ---
@@ -676,6 +680,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-11-19 | §6.6 phone Now: hide the Daily per-speaker check list while All speakers is on |
 | 2026-11-19 | Tray and phone show live ZoneGroupTopology separately from the Daily group preset. No auto-regroup |
 | 2026-11-20 | §6.6 phone: Player is the landing tab. Now keeps favorite slots and Sonos favorites. Queue and Settings are tabs. The mode line no longer shows the PC address. Grouped now and Regroup are on Settings → Speakers & Daily group and on Rooms |
+| 2026-11-20 | §6.6 Phone window: wireless adb IP, connect port, optional pair. Code is not saved |
 | 2026-07-15 | Library plan step 2: TagLib scanner → SQLite cache; rescan UI; MCP status/search/get |
 | 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |
