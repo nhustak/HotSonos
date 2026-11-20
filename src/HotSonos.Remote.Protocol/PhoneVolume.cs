@@ -21,4 +21,16 @@ public static class PhoneVolume
         var delta = direction < 0 ? -Normalize(step) : Normalize(step);
         return Math.Clamp(current + delta, 0, 100);
     }
+
+    /// <summary>
+    /// Player line between − and +. A missing percent is not shown as the bare word "Volume":
+    /// the status cache is empty until something samples, and the label waits on that read.
+    /// </summary>
+    public static string Label(int? percent, bool muted)
+    {
+        if (percent is not int value)
+            return "Volume …";
+        var n = Math.Clamp(value, 0, 100);
+        return muted ? $"Volume {n}% · muted" : $"Volume {n}%";
+    }
 }

@@ -20,17 +20,29 @@ public class MainActivity : MauiAppCompatActivity
             && (AppServices.Link.OnPc ? AppServices.Connection.IsPaired : AppServices.Link.Speakers.Zones.Count > 0))
         {
             if (e.Action == KeyEventActions.Down && e.RepeatCount == 0)
-            {
-                var direction = e.KeyCode == Keycode.VolumeUp ? 1 : -1;
-                if (AppServices.Link.OnPc)
-                    _ = AppServices.Client.StepVolumeAsync(direction, CancellationToken.None);
-                else
-                    _ = AppServices.Link.Speakers.StepHouseVolumeAsync(direction * PhoneVolume.SpeakerStep, CancellationToken.None);
-            }
+                _ = StepFromKeyAsync(e.KeyCode == Keycode.VolumeUp ? 1 : -1);
 
             return true;
         }
 
         return base.DispatchKeyEvent(e);
+    }
+
+    static async Task StepFromKeyAsync(int direction)
+    {
+        MainThread.BeginInvokeOnMainThread(() => PhoneVolumeKeys.Note?.Invoke(direction));
+        try
+        {
+            if (AppServices.Link.OnPc)
+                await AppServices.Client.StepVolumeAsync(direction, CancellationToken.None).ConfigureAwait(false);
+            else
+                await AppServices.Link.Speakers.StepHouseVolumeAsync(direction * PhoneVolume.SpeakerStep, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // The Player re-reads below and shows whatever the house still is.
+        }
+
+        MainThread.BeginInvokeOnMainThread(() => PhoneVolumeKeys.Refresh?.Invoke());
     }
 }
