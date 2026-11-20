@@ -52,6 +52,8 @@ sealed class PlayerPage : RemotePage
     int _target = 20;
     int _applied = 20;
     int _pcStep = PhoneVolume.SpeakerStep;
+    readonly Grid _column;
+    readonly Grid _host;
     bool _muted;
     bool _known;
     bool _sampling;
@@ -83,6 +85,7 @@ sealed class PlayerPage : RemotePage
         _volume.HorizontalOptions = LayoutOptions.Fill;
         _volume.VerticalOptions = LayoutOptions.Center;
 
+        RemoteInput.OmitFromTabOrder(_slider);
         _slider.DragStarted += (_, _) => _drag = true;
         _slider.ValueChanged += (_, e) =>
         {
@@ -150,16 +153,25 @@ sealed class PlayerPage : RemotePage
             Children = { _title, _artist, _album, transport, stepRow, _slider, volumeRow },
         };
 
-        var layout = new Grid
+        _column = new Grid
         {
             BackgroundColor = Swatches.Bg,
             Padding = new Thickness(16, 8, 16, 8),
+            HorizontalOptions = LayoutOptions.Center,
+            VerticalOptions = LayoutOptions.Fill,
             RowDefinitions = { new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) },
         };
-        layout.Add(_artFrame);
+        _column.Add(_artFrame);
         Grid.SetRow(controls, 1);
-        layout.Add(controls);
-        Content = layout;
+        _column.Add(controls);
+        _host = new Grid { BackgroundColor = Swatches.Bg };
+        _host.Add(_column);
+        _host.SizeChanged += (_, _) =>
+        {
+            if (_host.Width > 0 && _host.Height > 0)
+                Arrange(_host.Width, _host.Height);
+        };
+        Content = _host;
     }
 
     protected override void OnShown()
@@ -190,9 +202,18 @@ sealed class PlayerPage : RemotePage
     protected override void OnSizeAllocated(double width, double height)
     {
         base.OnSizeAllocated(width, height);
+        // The shell reparents the body, so the page often has no size. Prefer the host that is on screen.
+        if (_host.Width <= 0)
+            Arrange(width, height);
+    }
+
+    void Arrange(double width, double height)
+    {
         if (width <= 0 || height <= 0)
             return;
-        var side = Math.Min(width - 48, height * 0.46);
+        var column = RemoteWindow.Column(width, RemoteWindow.PlayerColumnMax);
+        RemoteUi.Fit(_column, width, RemoteWindow.PlayerColumnMax);
+        var side = Math.Min(column - 48, height * 0.46);
         side = Math.Clamp(side, 160, 420);
         _artFrame.WidthRequest = side;
         _artFrame.HeightRequest = side;
@@ -461,17 +482,7 @@ sealed class PlayerPage : RemotePage
             Content = new Grid { Children = { glyph } },
         };
         SemanticProperties.SetDescription(button, description);
-        var tap = new TapGestureRecognizer();
-        tap.Tapped += async (_, _) =>
-        {
-            try { await click().ConfigureAwait(true); }
-            catch (Exception ex)
-            {
-                if (Application.Current?.MainPage is Page page)
-                    await page.DisplayAlert("HotSonos", ex.Message, "OK");
-            }
-        };
-        button.GestureRecognizers.Add(tap);
+        RemoteInput.MakeActivable(button, click);
         return button;
     }
 

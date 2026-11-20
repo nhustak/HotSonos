@@ -1,3 +1,4 @@
+using HotSonos.Remote.Protocol;
 using HotSonos.Remote.Views;
 
 namespace HotSonos.Remote;
@@ -55,6 +56,20 @@ public partial class AppShell : ContentPage
         }
 
         Select(0);
+        SizeChanged += (_, _) => LayoutTabs(Width);
+    }
+
+    /// <summary>Phone widths keep the scrolling strip. A wide window shows every tab at a capped width.</summary>
+    void LayoutTabs(double width)
+    {
+        if (width <= 0 || _tabs.Length == 0)
+            return;
+        var each = RemoteWindow.TabButtonWidth(width, _tabs.Length);
+        var spread = each > 0;
+        TabBar.HorizontalOptions = spread ? LayoutOptions.Center : LayoutOptions.Start;
+        TabHost.MinimumWidthRequest = Math.Max(0, TabScroll.Width);
+        foreach (var tab in _tabs)
+            tab.WidthRequest = spread ? each : -1;
     }
 
     public static void OpenConnection()

@@ -6,7 +6,11 @@ using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote;
 
-/// <summary>UDP probe for the tray app. The emulator is a different subnet, so a miss there is expected.</summary>
+/// <summary>
+/// UDP probe for the tray app. A miss is expected on an emulator (different subnet) and on
+/// ChromeOS, where the Android container is NAT'd and UDP 42343 often never reaches the PC.
+/// The typed address on Connect and Settings → Connection / PC is the way in.
+/// </summary>
 static class PcFinder
 {
     public static async Task<(string Host, int Port)?> FindAsync(TimeSpan wait, CancellationToken ct)

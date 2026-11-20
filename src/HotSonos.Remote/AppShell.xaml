@@ -8,7 +8,9 @@
         <ContentView x:Name="Body" />
         <ScrollView x:Name="TabScroll" Grid.Row="1" Orientation="Horizontal"
                     BackgroundColor="#1C2430" HorizontalScrollBarVisibility="Never">
-            <HorizontalStackLayout x:Name="TabBar" Padding="4,6,4,10" Spacing="0" />
+            <Grid x:Name="TabHost">
+                <HorizontalStackLayout x:Name="TabBar" Padding="4,6,4,10" Spacing="0" />
+            </Grid>
         </ScrollView>
     </Grid>
 </ContentPage>

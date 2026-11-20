@@ -92,13 +92,26 @@ static class RemoteUi
         {
             Padding = new Thickness(16, 12, 16, 28),
             Spacing = 6,
+            HorizontalOptions = LayoutOptions.Center,
         };
         stack.Add(Heading(title));
         if (showChip)
             stack.Add(ModeChip());
         foreach (var section in sections)
             stack.Add(section);
-        return new ScrollView { Content = stack, BackgroundColor = Swatches.Bg };
+        var scroll = new ScrollView { Content = stack, BackgroundColor = Swatches.Bg };
+        scroll.SizeChanged += (_, _) => Fit(stack, scroll.Width, RemoteWindow.PageColumnMax);
+        return scroll;
+    }
+
+    /// <summary>Phone width stays full bleed. A wider window centers the column.</summary>
+    public static void Fit(View view, double available, double max)
+    {
+        var column = RemoteWindow.Column(available, max);
+        if (column <= 0)
+            return;
+        if (double.IsNaN(view.WidthRequest) || Math.Abs(view.WidthRequest - column) > 0.5)
+            view.WidthRequest = column;
     }
 
     /// <summary>Tappable line on every screen: PC, Speakers, Speakers: room, or PC unreachable. Opens Connection / PC.</summary>
@@ -196,15 +209,16 @@ static class RemoteUi
         Grid.SetColumn(heading, 1);
         header.Add(heading);
 
-        var tap = new TapGestureRecognizer();
-        tap.Tapped += (_, _) =>
+        chevron.InputTransparent = true;
+        heading.InputTransparent = true;
+        RemoteInput.MakeActivable(header, () =>
         {
             var next = !body.IsVisible;
             body.IsVisible = next;
             chevron.Text = next ? "▼" : "▶";
             AppServices.Sections.Write(key, next);
-        };
-        header.GestureRecognizers.Add(tap);
+            return Task.CompletedTask;
+        });
 
         return new VerticalStackLayout
         {
