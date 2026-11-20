@@ -847,6 +847,7 @@ public partial class MainWindow : Window
     private void OnTopologyUiTopologyChanged() =>
         Dispatcher.BeginInvoke(() =>
         {
+            RefreshLiveGrouping();
             if (!_settings.TopologyMonitorEnabled) return;
             if (MainTabs.SelectedItem != TopologyTab) return;
             _topologyUiDirty = true;
@@ -4221,6 +4222,34 @@ public partial class MainWindow : Window
         {
             _suppressDailySpeakerUi = false;
         }
+
+        RefreshLiveGrouping();
+    }
+
+    /// <summary>Control tab and tray share this: live topology, then the Daily preset, then drift.</summary>
+    public void RefreshLiveGrouping()
+    {
+        if (ControlLiveGroupingText is null)
+            return;
+
+        var grouping = GroupingDisplay.From(_sonos, _settings);
+        ControlLiveGroupingText.Text = string.IsNullOrWhiteSpace(grouping.Summary)
+            ? "Grouped now: discovering…"
+            : "Grouped now: " + grouping.Summary;
+        var drift = grouping.MatchesDaily == false;
+        if (ControlGroupingDriftText is not null)
+        {
+            ControlGroupingDriftText.Text = drift ? LiveGrouping.DriftMessage : "";
+            ControlGroupingDriftText.Visibility = drift ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (ControlRegroupButton is not null)
+            ControlRegroupButton.Visibility = drift ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void ControlRegroup_Click(object sender, RoutedEventArgs e)
+    {
+        await RunBusyAsync(sender, "⏳ Regrouping…", TopologyRegroupAsync);
     }
 
     private void ControlDailyAllSpeakersCheck_Changed(object sender, RoutedEventArgs e)

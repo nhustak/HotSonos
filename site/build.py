@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 """Builds the static HotSonos site. Edit the page bodies below, then run: python3 build.py
 Logo lives in ONE file: assets/logo.png. To swap it, replace assets/logo.png and run make-icons.py."""
+import html
 import pathlib
+import urllib.parse
 SITE="https://hotsonos.com"
+# Privacy and the footer point at GitHub, not an inbox. This is the address
+# on Nick Hustak's commits in this repo — not a new contact.
+CONTACT="nhustak@gmail.com"
+ALPHA_HREF=html.escape("mailto:"+CONTACT+"?"+urllib.parse.urlencode({
+    "subject":"HotSonos Android alpha request",
+    "body":"I'd like to join the HotSonos Android internal alpha.\n\nName:\n\nGoogle account email on my Android phone (needed for Play internal testing):\n",
+},quote_via=urllib.parse.quote))
 REL="https://github.com/nhustak/HotSonos/releases/latest"
 REPO="https://github.com/nhustak/HotSonos"
 def head(title,desc,path):
@@ -58,6 +67,7 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 <h1>Your whole house of Sonos, <span class="g">one hotkey away.</span></h1>
 <p class="lead">HotSonos lives in the Windows system tray and gives you instant, global keyboard shortcuts for shuffle, play/pause, skip, and whole-house volume — talking to your speakers directly over your local network. No cloud, no Sonos account.</p>
 <div class="ctas"><a class="btn btn-primary" href="{REL}">Download for Windows</a><a class="btn btn-ghost" href="{REPO}">View on GitHub</a></div>
+<p class="soon-row"><span class="soon">Android: coming soon</span><span class="soon">iPhone: coming soon</span><a class="btn btn-ghost" href="{ALPHA_HREF}">Request alpha access</a></p>
 <p class="small" style="margin-top:14px">Per-user MSI installer, .NET runtime included.</p>
 </div>
 <img class="hero-logo" src="/assets/logo.png" alt="HotSonos logo" width="320" height="320">
@@ -108,8 +118,8 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 </div>
 <div class="dl" style="margin-top:14px">
 <div class="ico" style="width:72px;height:72px;font-size:2rem;border-radius:16px">📱</div>
-<div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos Remote for Android</strong> <span class="eyebrow" style="margin:0 0 0 6px">Coming soon</span><br><span class="small">Control HotSonos from your phone on the same Wi-Fi.</span></div>
-<button class="btn btn-ghost" type="button" disabled aria-disabled="true">Coming soon</button>
+<div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos Remote for Android</strong> <span class="eyebrow" style="margin:0 0 0 6px">Coming soon</span><br><span class="small">Android remote app: coming to internal testing soon.<br>Control HotSonos from your phone on the same Wi-Fi.</span></div>
+<a class="btn btn-ghost" href="{ALPHA_HREF}">Request alpha access</a>
 </div>
 <p class="small" style="margin-top:14px">The installer isn't code-signed yet, so Windows SmartScreen may ask you to choose <em>More info → Run anyway</em>.</p>
 </div></section>

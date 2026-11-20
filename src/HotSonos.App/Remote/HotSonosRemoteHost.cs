@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using HotSonos.App.Infrastructure;
 using HotSonos.App.Mcp;
 using HotSonos.App.Models;
+using HotSonos.App.Services;
 using HotSonos.Core.Models;
 using HotSonos.Remote.Protocol;
 using Microsoft.AspNetCore.Builder;
@@ -227,6 +228,7 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
         app.MapGet("/api/status", () =>
         {
             var settings = state.Settings().EnsureShape();
+            var grouping = GroupingDisplay.From(state.Sonos, settings);
             var np = state.GetLastNowPlaying();
             var artUri = np?.AlbumArtUri;
             return Results.Json(new RemoteStatusResponse(
@@ -253,7 +255,10 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
                 state.Sonos.HouseLogicalVolume,
                 state.Sonos.HouseMuted,
                 state.Wake?.IsActive == true,
-                hooks.IsBusy()), RemoteApi.Json);
+                hooks.IsBusy(),
+                grouping.Summary,
+                grouping.PresetLabel,
+                grouping.MatchesDaily), RemoteApi.Json);
         });
 
         app.MapGet("/api/art", async (HttpContext ctx) =>

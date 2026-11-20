@@ -37,6 +37,7 @@ public sealed class TrayController : IDisposable
         Action CopyRemoteEndpoint,
         Action DoubleClick,
         Action OpenPhone,
+        Action RegroupDaily,
         Action Exit);
 
     private readonly NotifyIcon _notifyIcon;
@@ -46,6 +47,9 @@ public sealed class TrayController : IDisposable
     private readonly string _versionLabel;
 
     private readonly ToolStripMenuItem _roomMenu;
+    private readonly ToolStripMenuItem _groupedItem;
+    private readonly ToolStripMenuItem _dailyPresetItem;
+    private readonly ToolStripMenuItem _driftItem;
     private readonly ToolStripMenuItem _favoritesMenu;
     private readonly ToolStripMenuItem _offlineItem;
     private readonly ToolStripMenuItem _stopWakeItem;
@@ -59,6 +63,15 @@ public sealed class TrayController : IDisposable
         _menu = new ContextMenuStrip();
 
         _menu.Items.Add(new ToolStripMenuItem(versionLabel) { Enabled = false });
+        _groupedItem = new ToolStripMenuItem("Grouped now: (discovering…)") { Enabled = false };
+        _dailyPresetItem = new ToolStripMenuItem("Daily group preset: All speakers") { Enabled = false };
+        _driftItem = new ToolStripMenuItem(HotSonos.Core.LiveGrouping.DriftMessage, null, (_, _) => _callbacks.RegroupDaily())
+        {
+            Visible = false,
+        };
+        _menu.Items.Add(_groupedItem);
+        _menu.Items.Add(_dailyPresetItem);
+        _menu.Items.Add(_driftItem);
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Open HotSonos", null, (_, _) => _callbacks.OpenSettings());
         _menu.Items.Add("Phone…", null, (_, _) => _callbacks.OpenPhone());
@@ -125,6 +138,22 @@ public sealed class TrayController : IDisposable
             try { _callbacks.OpenSettings(); }
             catch { /* never let tray UI take down the process */ }
         };
+    }
+
+    /// <summary>
+    /// House grouping from ZoneGroupTopology, kept apart from the Daily preset.
+    /// <paramref name="matchesDaily"/> false shows the Regroup item. Null hides it
+    /// (no speakers yet). Regroup runs only when that item is clicked.
+    /// </summary>
+    public void UpdateLiveGrouping(string? summary, string? dailyPreset, bool? matchesDaily)
+    {
+        _groupedItem.Text = string.IsNullOrWhiteSpace(summary)
+            ? "Grouped now: (discovering…)"
+            : "Grouped now: " + summary;
+        _dailyPresetItem.Text = string.IsNullOrWhiteSpace(dailyPreset)
+            ? "Daily group preset: All speakers"
+            : "Daily group preset: " + dailyPreset;
+        _driftItem.Visible = matchesDaily == false;
     }
 
     /// <summary>

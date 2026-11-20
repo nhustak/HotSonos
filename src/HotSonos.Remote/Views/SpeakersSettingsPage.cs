@@ -1,3 +1,4 @@
+using HotSonos.Core;
 using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote.Views;
@@ -5,7 +6,10 @@ namespace HotSonos.Remote.Views;
 sealed class SpeakersSettingsPage : RemotePage
 {
     readonly Label _status = RemoteUi.Muted("");
-    readonly Label _daily = RemoteUi.Muted("Daily group");
+    readonly Label _live = new() { TextColor = Swatches.Ink, FontSize = 16, FontAttributes = FontAttributes.Bold };
+    readonly Label _drift = new() { Text = LiveGrouping.DriftMessage, TextColor = Swatches.Danger, IsVisible = false };
+    readonly Button _regroup;
+    readonly Label _daily = RemoteUi.Muted("Daily group preset");
     readonly Switch _allSpeakers = new();
     readonly VerticalStackLayout _roomChecks = new();
     readonly VerticalStackLayout _speakerPick = new() { Spacing = 6, IsVisible = false };
@@ -52,6 +56,8 @@ sealed class SpeakersSettingsPage : RemotePage
             await LoadDailyAsync();
         };
 
+        _regroup = RemoteUi.Button("Regroup", RegroupDailyAsync, danger: true);
+        _regroup.IsVisible = false;
         var saveGroup = RemoteUi.Button("Save checked rooms as a group", SavePresetAsync);
         _speakerPick.Add(_roomChecks);
         _speakerPick.Add(_presetName);
@@ -61,11 +67,15 @@ sealed class SpeakersSettingsPage : RemotePage
             "Speakers & Daily group",
             RemoteUi.Back(),
             _status,
+            _live,
+            _drift,
+            _regroup,
             RemoteUi.Muted("Room"),
             _rooms,
             _roomEmpty,
             RemoteUi.Card(
-                RemoteUi.Muted("Daily speaker group"),
+                RemoteUi.Muted("Daily group preset"),
+                RemoteUi.Muted("Saved for shuffle, Fresh start, and Regroup. Not who is grouped right now."),
                 _daily,
                 new HorizontalStackLayout
                 {
@@ -86,7 +96,32 @@ sealed class SpeakersSettingsPage : RemotePage
 
     protected override void OnLinkChanged() => _ = LoadDailyAsync();
 
-    protected override void OnStatus(RemoteStatusResponse? status) => ApplyRooms(status);
+    protected override void OnStatus(RemoteStatusResponse? status)
+    {
+        ApplyLive(status);
+        ApplyRooms(status);
+    }
+
+    void ApplyLive(RemoteStatusResponse? status)
+    {
+        var summary = status?.LiveGrouping;
+        _live.IsVisible = !string.IsNullOrWhiteSpace(summary);
+        _live.Text = string.IsNullOrWhiteSpace(summary) ? "" : "Grouped now: " + summary;
+        var drift = status?.GroupedAsDaily == false;
+        _drift.IsVisible = drift;
+        _regroup.IsVisible = drift && AppServices.Link.DrivePc;
+        if (!string.IsNullOrWhiteSpace(status?.DailyGroupPreset))
+            _daily.Text = "Daily group preset: " + status.DailyGroupPreset;
+    }
+
+    async Task RegroupDailyAsync()
+    {
+        if (!PcOnly("Regroup"))
+            return;
+        if (!await Confirm("Regroup", "Join the Daily group preset? Playback pauses while the group is built. This does not start a new shuffle."))
+            return;
+        await Act(ct => AppServices.Client.RegroupAsync(null, ct), _status);
+    }
 
     async Task LoadDailyAsync()
     {
@@ -115,9 +150,9 @@ sealed class SpeakersSettingsPage : RemotePage
         _allSpeakers.IsToggled = _groups.AllSpeakers;
         _suppressAll = false;
         ApplySpeakerChecklist(_groups.AllSpeakers);
-        _daily.Text = _groups.AllSpeakers
-            ? "All speakers join Daily shuffle, Fresh start, and regroup."
-            : (_groups.ActivePreset ?? $"{_groups.Rooms.Count} rooms") + " · unchecked rooms stay out.";
+        _daily.Text = "Daily group preset: " + (_groups.AllSpeakers
+            ? "All speakers"
+            : (_groups.ActivePreset ?? string.Join(", ", _groups.Rooms)));
 
         _presets.Clear();
         foreach (var preset in _groups.Presets)
@@ -200,7 +235,7 @@ sealed class SpeakersSettingsPage : RemotePage
     {
         _statusResponse = status;
         var groups = status?.Groups ?? [];
-        var key = string.Join("|", groups.Select(g => g.Room));
+        var key = string.Join("|", groups.Select(g => $"{g.Room}={g.Label}:{g.Members}"));
         if (key == _roomKey)
             return;
         _roomKey = key;

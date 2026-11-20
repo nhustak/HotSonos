@@ -102,6 +102,20 @@ public class DailyGroupLogicTests
     }
 
     [Fact]
+    public void DescribePreset_NamesTheSettingNotTheLiveGroup()
+    {
+        var presets = new[]
+        {
+            new DailyPresetModel { Name = "Downstairs", Rooms = ["Kitchen", "Office"] },
+        };
+
+        Assert.Equal("All speakers", DailyGroupLogic.DescribePreset(true, ["Kitchen"], presets));
+        Assert.Equal("All speakers", DailyGroupLogic.DescribePreset(false, [], presets));
+        Assert.Equal("Downstairs", DailyGroupLogic.DescribePreset(false, ["Office", "Kitchen"], presets));
+        Assert.Equal("Den, Office", DailyGroupLogic.DescribePreset(false, ["Office", "Den", "Office"], presets));
+    }
+
+    [Fact]
     public void SetAll_SeedsARoomOnlyWhenTheCustomListIsEmpty()
     {
         var model = new DailyGroupModel { AllSpeakers = true, Rooms = ["Kitchen"] };
