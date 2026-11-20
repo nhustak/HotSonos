@@ -25,7 +25,8 @@ public class PhoneLinkPolicyTests
     [Fact]
     public void Banner_NamesThePcOrTheRoom()
     {
-        Assert.Equal("PC: 192.168.1.20", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, "192.168.1.20", "Kitchen"));
+        Assert.Equal("PC", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, "192.168.1.20", "Kitchen"));
+        Assert.Equal("PC", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Pc, "192.168.1.129:42342", null));
         Assert.Equal("Speakers: Kitchen", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Speakers, "192.168.1.20", "Kitchen"));
         Assert.Equal("Speakers", PhoneLinkPolicy.Banner(PhoneLinkOutcome.Speakers, "192.168.1.20", "  "));
         Assert.Equal("PC unreachable", PhoneLinkPolicy.Banner(PhoneLinkOutcome.PcDown, "192.168.1.20", "Kitchen"));
