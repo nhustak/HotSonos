@@ -82,10 +82,15 @@ sealed class PlayerPage : RemotePage
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 18 },
             WidthRequest = 280,
             HeightRequest = 280,
+            MinimumWidthRequest = 280,
+            MinimumHeightRequest = 280,
             HorizontalOptions = LayoutOptions.Center,
-            VerticalOptions = LayoutOptions.Center,
+            VerticalOptions = LayoutOptions.Start,
             Content = _art,
         };
+        Tighten(_title);
+        Tighten(_artist);
+        Tighten(_album);
 
         _volume.FontSize = 16;
         _volume.TextColor = Swatches.Ink;
@@ -159,11 +164,30 @@ sealed class PlayerPage : RemotePage
         SemanticProperties.SetDescription(quickTag, "Quick tag");
         _tagStatus.HorizontalTextAlignment = TextAlignment.Center;
 
-        var controls = new VerticalStackLayout
+        var meta = new VerticalStackLayout
         {
-            Spacing = 8,
+            Spacing = 1,
+            Margin = new Thickness(0, 4, 0, 0),
+            Padding = 0,
+            Children = { _title, _artist, _album },
+        };
+        // Art is a fixed square above the text. A star row used to center that square and
+        // paint it over the title when the controls (slider, Quick tag) needed the rest of the screen.
+        var block = new VerticalStackLayout
+        {
+            Spacing = 6,
             Padding = new Thickness(4, 0, 4, 4),
-            Children = { _title, _artist, _album, transport, stepRow, _slider, level, quickTag, _tagStatus },
+            HorizontalOptions = LayoutOptions.Fill,
+            VerticalOptions = LayoutOptions.Start,
+            Children = { _artFrame, meta, transport, stepRow, _slider, level, quickTag, _tagStatus },
+        };
+        var scroll = new ScrollView
+        {
+            Content = block,
+            BackgroundColor = Swatches.Bg,
+            HorizontalOptions = LayoutOptions.Fill,
+            VerticalOptions = LayoutOptions.Fill,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Never,
         };
 
         _column = new Grid
@@ -172,11 +196,8 @@ sealed class PlayerPage : RemotePage
             Padding = new Thickness(16, 8, 16, 8),
             HorizontalOptions = LayoutOptions.Center,
             VerticalOptions = LayoutOptions.Fill,
-            RowDefinitions = { new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) },
         };
-        _column.Add(_artFrame);
-        Grid.SetRow(controls, 1);
-        _column.Add(controls);
+        _column.Add(scroll);
 #if IOS
         // iPad only: a centered column. The host stays full-bleed so the sides match the page.
         // iPhone leaves WidthRequest unset and fills the body.
@@ -243,10 +264,7 @@ sealed class PlayerPage : RemotePage
 #else
         if (width <= 0 || height <= 0)
             return;
-        var side = Math.Min(width - 48, height * 0.46);
-        side = Math.Clamp(side, 160, 420);
-        _artFrame.WidthRequest = side;
-        _artFrame.HeightRequest = side;
+        ApplyArt(RemoteWindow.ArtSide(width, height));
 #endif
     }
 
@@ -257,10 +275,7 @@ sealed class PlayerPage : RemotePage
             return;
         var column = RemoteWindow.Column(width, RemoteWindow.PlayerColumnMax);
         RemoteUi.Fit(_column, width, RemoteWindow.PlayerColumnMax);
-        var side = Math.Min(column - 48, height * 0.46);
-        side = Math.Clamp(side, 160, 420);
-        _artFrame.WidthRequest = side;
-        _artFrame.HeightRequest = side;
+        ApplyArt(RemoteWindow.ArtSide(column, height));
     }
 #endif
 
@@ -288,12 +303,28 @@ sealed class PlayerPage : RemotePage
         if (_column.HorizontalOptions != align)
             _column.HorizontalOptions = align;
 
-        var side = Math.Min(contentWidth - 48, height * 0.46);
-        side = Math.Clamp(side, 160, 420);
-        _artFrame.WidthRequest = side;
-        _artFrame.HeightRequest = side;
+        ApplyArt(RemoteWindow.ArtSide(contentWidth, height));
     }
 #endif
+
+    void ApplyArt(double side)
+    {
+        if (side <= 0)
+            return;
+        _artFrame.WidthRequest = side;
+        _artFrame.HeightRequest = side;
+        _artFrame.MinimumWidthRequest = side;
+        _artFrame.MinimumHeightRequest = side;
+    }
+
+    static void Tighten(Label label)
+    {
+        label.Margin = new Thickness(0);
+        label.Padding = new Thickness(0);
+        label.MaxLines = 1;
+        label.LineHeight = 1.05;
+        label.VerticalTextAlignment = TextAlignment.Start;
+    }
 
     Task Go(Func<SonosController, CancellationToken, Task> speakers, Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc) =>
         AppServices.Link.DrivePc ? Act(pc) : Speaker(speakers);

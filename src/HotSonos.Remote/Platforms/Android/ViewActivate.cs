@@ -16,8 +16,80 @@ static class ViewActivate
     public static void Install()
     {
         RemoteInput.Activate = Wire;
+        RemoteInput.Hold = Hold;
         RemoteInput.SkipTab = Skip;
         ButtonFeedback.Install();
+    }
+
+    static readonly ConditionalWeakTable<MauiView, HoldListener> Held = new();
+    static long _lastHold;
+
+    static void Hold(MauiView view, Func<Task> hold)
+    {
+        void Hook()
+        {
+            if (view.Handler?.PlatformView is not AView native)
+                return;
+            if (Held.TryGetValue(view, out var existing) && ReferenceEquals(existing.Native, native))
+                return;
+
+            var listener = new HoldListener(native, hold);
+            Held.AddOrUpdate(view, listener);
+            native.LongClickable = true;
+            native.Clickable = true;
+            native.SetOnLongClickListener(listener);
+            native.SetOnContextClickListener(listener);
+        }
+
+        view.HandlerChanged += (_, _) => Hook();
+        Hook();
+    }
+
+    static void FireHold(Func<Task> hold)
+    {
+        var now = Environment.TickCount64;
+        if (now - _lastHold < 700)
+            return;
+        _lastHold = now;
+        _ = RunHoldAsync(hold);
+    }
+
+    static async Task RunHoldAsync(Func<Task> hold)
+    {
+        try
+        {
+            await hold().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            if (Application.Current?.MainPage is Page page)
+                await page.DisplayAlert("HotSonos", ex.Message, "OK");
+        }
+    }
+
+    sealed class HoldListener : Java.Lang.Object, AView.IOnLongClickListener, AView.IOnContextClickListener
+    {
+        readonly Func<Task> _hold;
+
+        public HoldListener(AView native, Func<Task> hold)
+        {
+            Native = native;
+            _hold = hold;
+        }
+
+        public AView Native { get; }
+
+        public bool OnLongClick(AView? v)
+        {
+            FireHold(_hold);
+            return true;
+        }
+
+        public bool OnContextClick(AView? v)
+        {
+            FireHold(_hold);
+            return true;
+        }
     }
 
     static void Skip(VisualElement view)

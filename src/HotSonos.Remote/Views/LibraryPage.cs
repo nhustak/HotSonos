@@ -95,20 +95,9 @@ sealed class LibraryPage : RemotePage
 
     View SpeakerCard(SonosLibraryTrack track)
     {
-        var play = RemoteUi.Button("Play", () => Speaker((s, ct) => s.InsertLibraryUriAndPlayNowAsync(track.Uri, track.Title, track.Artist, ct), _status));
-        var queue = RemoteUi.Button("Queue", () => Speaker(async (s, ct) => { await s.InsertLibraryUriNextAsync(track.Uri, track.Title, track.Artist, ct); }, _status));
-        var wipe = RemoteUi.Button("Wipe queue", () => WipeSpeakerAsync(track), danger: true);
-        var row = new Grid
-        {
-            ColumnSpacing = 6,
-            ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() },
-        };
-        Grid.SetColumn(play, 0);
-        Grid.SetColumn(queue, 1);
-        Grid.SetColumn(wipe, 2);
-        row.Add(play);
-        row.Add(queue);
-        row.Add(wipe);
+        var play = RemoteUi.Button(LibraryRowActions.Play, () => Speaker((s, ct) => s.InsertLibraryUriAndPlayNowAsync(track.Uri, track.Title, track.Artist, ct), _status));
+        var wipe = RemoteUi.Button(LibraryRowActions.Wipe, () => WipeSpeakerAsync(track), danger: true);
+        var row = ActionRow(play, wipe);
         return RemoteUi.Card(
             new Label { Text = track.Title, TextColor = Swatches.Ink, FontAttributes = FontAttributes.Bold },
             RemoteUi.Muted($"{track.Artist} · {track.Album}"),
@@ -124,20 +113,9 @@ sealed class LibraryPage : RemotePage
 
     View TrackCard(RemoteTrackDto track)
     {
-        var play = RemoteUi.Button("Play", () => Act(ct => AppServices.Client.PlayTrackAsync(track.Path, track.Title, track.Artist, ct), _status));
-        var queue = RemoteUi.Button("Queue", () => Act(ct => AppServices.Client.QueueTrackAsync(track.Path, track.Title, track.Artist, ct), _status));
-        var wipe = RemoteUi.Button("Wipe queue", () => WipeAsync(track), danger: true);
-        var row = new Grid
-        {
-            ColumnSpacing = 6,
-            ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() },
-        };
-        Grid.SetColumn(play, 0);
-        Grid.SetColumn(queue, 1);
-        Grid.SetColumn(wipe, 2);
-        row.Add(play);
-        row.Add(queue);
-        row.Add(wipe);
+        var play = RemoteUi.Button(LibraryRowActions.Play, () => Act(ct => AppServices.Client.PlayTrackAsync(track.Path, track.Title, track.Artist, ct), _status));
+        var wipe = RemoteUi.Button(LibraryRowActions.Wipe, () => WipeAsync(track), danger: true);
+        var row = ActionRow(play, wipe);
         return RemoteUi.Card(
             new Label { Text = track.Title ?? track.Path, TextColor = Swatches.Ink, FontAttributes = FontAttributes.Bold },
             RemoteUi.Muted($"{track.Artist} · {track.Album}"),
@@ -169,5 +147,19 @@ sealed class LibraryPage : RemotePage
             return;
         await Act(ct => AppServices.Client.ToggleTagAsync(track.Path, tag.Key, ct), _status);
         await SearchAsync(reset: true);
+    }
+
+    static Grid ActionRow(View play, View wipe)
+    {
+        var row = new Grid
+        {
+            ColumnSpacing = 6,
+            ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition() },
+        };
+        Grid.SetColumn(play, 0);
+        Grid.SetColumn(wipe, 1);
+        row.Add(play);
+        row.Add(wipe);
+        return row;
     }
 }
