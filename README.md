@@ -28,11 +28,11 @@ Shipped on Windows:
 - Tags, genres, folders, Quick Tag / Quick Play, favorite slots, wake-to-music, now-playing flyout, library cache, and loopback MCP. Details are under [Features](#features).
 - [hotsonos.com](https://hotsonos.com) ([#4](https://github.com/nhustak/HotSonos/pull/4)), the Sonos trademark line on every page ([#34](https://github.com/nhustak/HotSonos/pull/34)), and the own-library positioning ([#39](https://github.com/nhustak/HotSonos/pull/39)).
 
-**Android — a first-class peer of the Windows app.** Phone, tablet, and Chromebook. It plays your library on the speakers directly. No PC is required. It can also act as a remote for the tray app.
+**Android (phone, tablet, Chromebook): full HotSonos. Can also remote-control the PC. Alpha coming soon.**
 
 Shipped in this repo:
 
-- Android and Chromebook (`src/HotSonos.Remote`, `com.tangenttech.hotsonos`): standalone on the speakers, and it can also act as a remote ([#5](https://github.com/nhustak/HotSonos/pull/5), [#7](https://github.com/nhustak/HotSonos/pull/7), [#25](https://github.com/nhustak/HotSonos/pull/25)).
+- Android and Chromebook (`src/HotSonos.Remote`, `com.tangenttech.hotsonos`) ([#5](https://github.com/nhustak/HotSonos/pull/5), [#7](https://github.com/nhustak/HotSonos/pull/7), [#25](https://github.com/nhustak/HotSonos/pull/25)).
 - QR pairing from the PC Phone window, `hotsonos://pair` ([#30](https://github.com/nhustak/HotSonos/pull/30)).
 - Quick tag, and previous as the left-pointing mirror of next ([#32](https://github.com/nhustak/HotSonos/pull/32)).
 - Compact Library, Rooms long-press, and About ([#33](https://github.com/nhustak/HotSonos/pull/33)).
@@ -41,10 +41,7 @@ Shipped in this repo:
 - Phone Regroup confirms, press feedback, and the watch's next track ([#38](https://github.com/nhustak/HotSonos/pull/38)).
 - Also in the tree: Player as the landing screen ([#16](https://github.com/nhustak/HotSonos/pull/16)), − / + and the volume percent ([#22](https://github.com/nhustak/HotSonos/pull/22), [#23](https://github.com/nhustak/HotSonos/pull/23)), collapsible lists ([#19](https://github.com/nhustak/HotSonos/pull/19)), phone topology ([#20](https://github.com/nhustak/HotSonos/pull/20)), the 40dp mute icon ([#29](https://github.com/nhustak/HotSonos/pull/29)), and wireless adb on the PC Phone window ([#18](https://github.com/nhustak/HotSonos/pull/18)).
 
-Not a public release yet:
-
-- **Android alpha — coming soon.** The app is in the repo. The site does not offer an alpha download.
-- **iPhone and iPad — early prototype.** It plays your library on the speakers directly. No PC is required. It can also act as a remote. The `net10.0-ios` target and the Codemagic / TestFlight notes are in the repo ([#24](https://github.com/nhustak/HotSonos/pull/24), [docs/ios.md](docs/ios.md)). That target has not been compiled in this repo, and the Apple multicast entitlement is not in the app.
+**iPhone and iPad: full HotSonos, early prototype.** `net10.0-ios` and the Codemagic / TestFlight notes are in the repo ([#24](https://github.com/nhustak/HotSonos/pull/24), [docs/ios.md](docs/ios.md)). That target has not been compiled here. The Apple multicast entitlement is not in the app.
 
 **Still open** ([spec.md](spec.md) §0 library plan). Not in the code:
 
@@ -265,7 +262,7 @@ dotnet run --project src/HotSonos.Harness -- --room "Living Room" shuffle
 
 ### Android
 
-The Android app is a first-class peer of the Windows tray app. It is .NET MAUI (`src/HotSonos.Remote`, package `com.tangenttech.hotsonos`, minSdk 24) and plays your library on the speakers directly. No PC is required. It can also act as a remote for the Windows tray app. The same package runs on a phone, a tablet, and a Chromebook. It is not in `HotSonos.slnx`, so the Windows solution does not need the Android workload. A build with this package does not replace an install of the previous id `com.hotsonos.remote`.
+Android (phone, tablet, Chromebook): full HotSonos. Can also remote-control the PC. Alpha coming soon. .NET MAUI (`src/HotSonos.Remote`, package `com.tangenttech.hotsonos`, minSdk 24). It is not in `HotSonos.slnx`, so the Windows solution does not need the Android workload. A build with this package does not replace an install of the previous id `com.hotsonos.remote`.
 
 The saved PC address, port, and PIN live in the app's private preferences for `com.tangenttech.hotsonos`. A normal update of that same id keeps them. Changing the application id installs a different app, and the saved pairing is wiped (that is what happened moving off `com.hotsonos.remote`). Uninstalling does the same. The camera is not required: Scan QR is hidden when there is no camera, and Chromebooks without one can still install the package.
 
@@ -284,17 +281,17 @@ Release publish writes `com.tangenttech.hotsonos-Signed.aab` (and an APK) under 
 
 ### iPhone and iPad
 
-iPhone and iPad support is an early prototype. It plays your library on the speakers directly. No PC is required. It can also act as a remote for the Windows tray app. The same project targets `net10.0-ios` on a Mac, or when you pass `-p:HotSonosRemoteTargetFrameworks=net10.0-ios`. Windows and Linux builds, including GitHub Actions, stay on Android. The store path is TestFlight via Codemagic. The steps (Apple Developer membership, App ID `com.tangenttech.hotsonos`, App Store Connect API key, Codemagic placeholders) are in [docs/ios.md](docs/ios.md). Find PC and speaker search need an Apple multicast entitlement that is not in the app until Apple approves it; type the PC address and PIN until then. On iPad the Player column is centered. The iOS target has not been compiled in the change that added it.
+iPhone and iPad: full HotSonos, early prototype. The same project targets `net10.0-ios` on a Mac, or when you pass `-p:HotSonosRemoteTargetFrameworks=net10.0-ios`. Windows and Linux builds, including GitHub Actions, stay on Android. The store path is TestFlight via Codemagic. The steps (Apple Developer membership, App ID `com.tangenttech.hotsonos`, App Store Connect API key, Codemagic placeholders) are in [docs/ios.md](docs/ios.md). Find PC and speaker search need an Apple multicast entitlement that is not in the app until Apple approves it; type the PC address and PIN until then. On iPad the Player column is centered. The iOS target has not been compiled in the change that added it.
 
-Pairing with the PC is only that optional remote. Standalone playback does not use it. On the PC, open HotSonos and press **Phone** (or the tray item **Phone…**). The window shows the address, the port, the 6-digit PIN, and a QR code once HotSonos is listening. The code is a `hotsonos://pair?host=<ip>&port=42342&pin=<pin>` link. **Copy link** puts that on the clipboard. The first phone screen is **Connect**. **Scan QR** (when the phone has a camera), opening that link, or **Paste pairing link** saves the host, port, and PIN and tests the PC. You can still type the address and PIN (port **42342** if you leave it blank) and press **Test and connect**. The same Scan QR and paste actions are under **Settings → Connection / PC**. **Find PC** uses a UDP announce on port 42343; an emulator is not on that subnet, so scan, paste, or type the PC's 192.168 address. `10.0.2.2` is the PC loopback, and the listener is not bound there. The header on every request is `X-HotSonos-Pin`. The listener is plain HTTP and only binds the address that shares a network with a speaker.
+On the PC, open HotSonos and press **Phone** (or the tray item **Phone…**). The window shows the address, the port, the 6-digit PIN, and a QR code once HotSonos is listening. The code is a `hotsonos://pair?host=<ip>&port=42342&pin=<pin>` link. **Copy link** puts that on the clipboard. The first phone screen is **Connect**. **Scan QR** (when the phone has a camera), opening that link, or **Paste pairing link** saves the host, port, and PIN and tests the PC. You can still type the address and PIN (port **42342** if you leave it blank) and press **Test and connect**. The same Scan QR and paste actions are under **Settings → Connection / PC**. **Find PC** uses a UDP announce on port 42343; an emulator is not on that subnet, so scan, paste, or type the PC's 192.168 address. `10.0.2.2` is the PC loopback, and the listener is not bound there. The header on every request is `X-HotSonos-Pin`. The listener is plain HTTP and only binds the address that shares a network with a speaker.
 
-On the speakers, no PIN is needed: the app discovers ZonePlayer devices on the Wi-Fi (it holds an Android multicast lock) and sends the same UPnP calls as the tray app. It can also act as a remote. Settings → Connection / PC is **Speakers only**, **Auto** (try the PC, then the speakers), or **PC only**. **Test and connect** saves a PC and stays in **PC only**. Each screen except Player has a tappable line (`PC`, `Speakers`, `Speakers: room`, `PC unreachable`, or `PC: not paired`) that opens those connection settings. The PC address is on that page, not on Player. HotSonos shuffle, tags, Daily groups, Reports, wake, and saved Spotify links say they need the PC, with a button back to connection, when the app is on the speakers.
+On the speakers, no PIN is needed: the app discovers ZonePlayer devices on the Wi-Fi (it holds an Android multicast lock) and sends the same UPnP calls as the tray app. Settings → Connection / PC is **Speakers only**, **Auto** (try the PC, then the speakers), or **PC only**. **Test and connect** saves a PC and stays in **PC only**. Each screen except Player has a tappable line (`PC`, `Speakers`, `Speakers: room`, `PC unreachable`, or `PC: not paired`) that opens those connection settings. The PC address is on that page, not on Player. HotSonos shuffle, tags, Daily groups, Reports, wake, and saved Spotify links say they need the PC, with a button back to connection, when the app is on the speakers.
 
 The phone polls now-playing every 2 seconds while it is open, and loads the other tabs when you open them. It checks the PC again when the app resumes. Player has **Quick tag** for the playing library track (the Quick tag hotkey). That button needs the PC. Reboot, regroup, fresh start, rescan, wiping the queue, deleting a tag, and leaving or leading a group ask you to confirm first.
 
 ### ChromeOS
 
-A Chromebook runs the same Android app: it plays your library on the speakers directly, and it can also act as a remote. The window is resizable and not locked to portrait, and resizing it does not restart the activity. A phone-width window keeps the phone Player. A wider window centers that column (album art stays square, transport and Level all stay a phone size, and Mute stays the 40dp speaker icon on the volume line) and keeps the bottom tab bar. Once the window is wide enough for every tab, they sit in one row instead of scrolling.
+The same APK runs on a Chromebook. The window is resizable and not locked to portrait, and resizing it does not restart the activity. A phone-width window keeps the phone Player. A wider window centers that column (album art stays square, transport and Level all stay a phone size, and Mute stays the 40dp speaker icon on the volume line) and keeps the bottom tab bar. Once the window is wide enough for every tab, they sit in one row instead of scrolling.
 
 Keyboard and mouse, when a text field is not focused: **Space** play/pause, **Left** / **Right** (or media previous / next) skip, **Up** / **Down** or **+** / **-** change volume by the same step as the hardware volume keys, **M** mute. Media play, pause, next, and previous work even while typing. **Enter** activates the focused control. Buttons light up under the pointer. The wheel scrolls lists, and scrolls the tab strip sideways when the pointer is over it.
 
@@ -325,7 +322,7 @@ Accept the debugging prompt on the Chromebook. `100.115.92.2` is the Android con
 |---|---|
 | `HotSonos.Core` | UPnP client (discovery, control, events, shuffle) |
 | `HotSonos.App` | Tray app: hotkeys, settings, library, tags, MCP, wake, phone listener |
-| `HotSonos.Remote` | Android and ChromeOS app. Plays the library on the speakers with no PC. Can also act as a remote for the tray app. iPhone and iPad: early prototype, the same way. Not in the Windows solution. iOS build: `docs/ios.md` |
+| `HotSonos.Remote` | Android (phone, tablet, Chromebook): full HotSonos. Can also remote-control the PC. Alpha coming soon. iPhone and iPad: full HotSonos, early prototype. Not in the Windows solution. iOS build: `docs/ios.md` |
 | `HotSonos.Wear` | Wear OS companion (Kotlin). Same application id as the phone. No PIN. Build and adb-over-Wi-Fi install: `docs/wear.md` |
 | `HotSonos.Remote.Protocol` | Shared phone DTOs and Daily speaker-group rules |
 | `HotSonos.Harness` | Console tester |
@@ -345,7 +342,7 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 - **Control shuffle From** — `ControlShuffleSource` = `all` | `folder:{path}` | `tag:{key}` | `genre:{name}`; genres gated by `ShowGenresInPlaySources`.  
 - **Library** — filesystem scan under discovered UNC roots; optional master match for dual-write.  
 - **MCP** — Kestrel loopback host inside the tray process.
-- **Phone** — Android and ChromeOS play the library on the speakers with no PC. They can also act as a remote for the tray app: a second Kestrel host on the speaker subnet, port 42342, PIN on every route, including `GET` / `POST /api/now/tags` for Quick tag. It calls the same action gate as MCP. iPhone and iPad support is an early prototype and works the same way.  
+- **Phone** — Android (phone, tablet, Chromebook): full HotSonos. Can also remote-control the PC: a second Kestrel host on the speaker subnet, port 42342, PIN on every route, including `GET` / `POST /api/now/tags` for Quick tag. It calls the same action gate as MCP. iPhone and iPad: full HotSonos, early prototype.  
 - **GENA** — optional speaker push (now-playing, topology, volume). **Options → Use speaker push events (GENA)**; `HOTSONOS_GENA=1` still forces on. Off = poll only.  
 - **Volume** — house logical % for ±; per-room offsets on absolute write (Level all / Wake / ±); Speakers sliders show raw Sonos %.
 
