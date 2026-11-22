@@ -6,7 +6,7 @@
 
 **Version 1.0.0.70** · [Releases](https://github.com/nhustak/HotSonos/releases) · [CI](https://github.com/nhustak/HotSonos/actions/workflows/build.yml) · [Spec / roadmap](spec.md)
 
-Windows system-tray utility for controlling a Sonos system with global keyboard shortcuts. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
+The Windows tray app is **available now**. Open source ([MIT](LICENSE)), maintained by [Nick Hustak](https://github.com/nhustak).
 
 Some people treat AI as evil when it comes to writing software. This project is built with **Grok**, **Claude**, and **Codex**. If that bothers you, go write your own.
 
@@ -16,12 +16,41 @@ It talks to your speakers entirely over the **local network** (UPnP/SOAP) — no
 
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
 
-### Product direction
-- **Today:** history-aware shuffle (**All**, **folder**, **tag**, or **genre** from Control), transport/volume hotkeys, favorite slots (Sonos / tag / genre / folder), wake-to-music, live topology, local library cache, flat tag catalog (`HOTSONOS_TAGS`), Control play list, Quick Tag / Quick Play, optional **hide genres**, loopback MCP for agents.
-- **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Top bar: **Phone**. Tray: Phone…, Library…, Topology…, Logs…, Reports…, Debug…
-- **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
-- **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
-- **Phone:** Android and ChromeOS app (`src/HotSonos.Remote`, .NET MAUI, id `com.tangenttech.hotsonos`) works as a remote for this tray app or standalone on the speakers. It opens **Connect** until a PC is saved, then **Player**: art, a left-pointing previous icon (the mirror of next), play/pause, next, and − / percent / + with the mute icon on that line. Remote calls use `http://<pc>:42342` and header `X-HotSonos-Pin`. The **Phone** window shows a QR code (`hotsonos://pair?host=<ip>&port=42342&pin=<pin>`) plus the address and PIN. The phone can scan that code, open the link, paste it, or type the address. **Quick tag** on Player and on the tray Control now-playing card tags the playing library track (same as the Quick tag hotkey). Link: Auto, PC only, or Speakers only, under Settings → Connection / PC. Android publishes a media session so a paired Pixel Watch and the lock screen show now playing and can play, pause, skip, and set volume (Settings → **Show media controls (watch, lock screen)**, on by default). A Wear OS companion (`src/HotSonos.Wear`, [docs/wear.md](docs/wear.md)) shows the same basics on the watch itself and talks to the phone over Bluetooth, with no PIN. iPhone and iPad support is an early prototype (Codemagic / TestFlight, [docs/ios.md](docs/ios.md)). A normal update keeps the saved pairing. Changing the app id wipes it.
+### Status
+
+**Windows — available now.** Tray app for your own music library (local files shared to Sonos). History-aware shuffle, top-up, exclusions, and Restart fresh use that library. They do not shuffle Spotify, Apple Music, or other streaming services. Play, pause, skip, and volume are speaker commands, so they still control the group while something else is playing. Tabs: **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Top bar: **Phone**. Tray: Phone…, Library…, Topology…, Logs…, Reports…, Debug… MCP, while the app is running: `http://127.0.0.1:42341/mcp`.
+
+Shipped on Windows:
+
+- History-aware shuffle from **All**, a **folder**, a **tag**, or a **genre**; Daily mix folders; top-up that does not re-queue a track still waiting ([#36](https://github.com/nhustak/HotSonos/pull/36)).
+- Saved Daily speaker groups ([#3](https://github.com/nhustak/HotSonos/pull/3)) and live grouping separate from that preset ([#15](https://github.com/nhustak/HotSonos/pull/15)).
+- Reports: song play history, music, and an event log ([#2](https://github.com/nhustak/HotSonos/pull/2)).
+- Tags, genres, folders, Quick Tag / Quick Play, favorite slots, wake-to-music, now-playing flyout, library cache, and loopback MCP. Details are under [Features](#features).
+- [hotsonos.com](https://hotsonos.com) ([#4](https://github.com/nhustak/HotSonos/pull/4)), the Sonos trademark line on every page ([#34](https://github.com/nhustak/HotSonos/pull/34)), and the own-library positioning ([#39](https://github.com/nhustak/HotSonos/pull/39)).
+
+**Mobile — separate from the Windows release.** Nothing here is the Windows download.
+
+Shipped in this repo:
+
+- Android and Chromebook app (`src/HotSonos.Remote`, `com.tangenttech.hotsonos`): a remote for the tray app, or standalone on the speakers ([#5](https://github.com/nhustak/HotSonos/pull/5), [#7](https://github.com/nhustak/HotSonos/pull/7), [#25](https://github.com/nhustak/HotSonos/pull/25)). Same package on a Chromebook.
+- QR pairing from the PC Phone window, `hotsonos://pair` ([#30](https://github.com/nhustak/HotSonos/pull/30)).
+- Quick tag, and previous as the left-pointing mirror of next ([#32](https://github.com/nhustak/HotSonos/pull/32)).
+- Compact Library, Rooms long-press, and About ([#33](https://github.com/nhustak/HotSonos/pull/33)).
+- Android media session for a paired watch and the lock screen ([#35](https://github.com/nhustak/HotSonos/pull/35)).
+- Wear OS companion (`src/HotSonos.Wear`, [docs/wear.md](docs/wear.md)): now playing and transport over the Wearable Data Layer, no PIN ([#37](https://github.com/nhustak/HotSonos/pull/37)).
+- Phone Regroup confirms, press feedback, and the watch's next track ([#38](https://github.com/nhustak/HotSonos/pull/38)).
+- Also in the tree: Player as the landing screen ([#16](https://github.com/nhustak/HotSonos/pull/16)), − / + and the volume percent ([#22](https://github.com/nhustak/HotSonos/pull/22), [#23](https://github.com/nhustak/HotSonos/pull/23)), collapsible lists ([#19](https://github.com/nhustak/HotSonos/pull/19)), phone topology ([#20](https://github.com/nhustak/HotSonos/pull/20)), the 40dp mute icon ([#29](https://github.com/nhustak/HotSonos/pull/29)), and wireless adb on the PC Phone window ([#18](https://github.com/nhustak/HotSonos/pull/18)).
+
+Not a public release yet:
+
+- **Android alpha — coming soon.** The app is in the repo. The site does not offer an alpha download.
+- **iPhone and iPad — early prototype.** The `net10.0-ios` target and the Codemagic / TestFlight notes are in the repo ([#24](https://github.com/nhustak/HotSonos/pull/24), [docs/ios.md](docs/ios.md)). That target has not been compiled in this repo, and the Apple multicast entitlement is not in the app.
+
+**Still open** ([spec.md](spec.md) §0 library plan). Not in the code:
+
+- Playlist create from a library filter, then play it on Sonos (step 6).
+- Optional Sonos `SQ:` playlist create (step 7).
+- Optional BPM analysis that only suggests a tempo (step 8). A BPM number can already be written with the other file tags. Nothing analyzes the audio to suggest one.
 
 **Having issues (stutter, dead zones, flaky grouping)?** Make sure **SonosNet is off** — see [Turn off SonosNet](#turn-off-sonosnet) near the bottom.
 
