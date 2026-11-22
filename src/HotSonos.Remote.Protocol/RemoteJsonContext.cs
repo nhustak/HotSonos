@@ -52,6 +52,8 @@ namespace HotSonos.Remote.Protocol;
 [JsonSerializable(typeof(RemoteTagRenameBody))]
 [JsonSerializable(typeof(RemoteTagToggleBody))]
 [JsonSerializable(typeof(RemoteTagSetBody))]
+[JsonSerializable(typeof(RemoteNowTagsResponse))]
+[JsonSerializable(typeof(RemoteNowTagDto))]
 [JsonSerializable(typeof(RemoteSpotifyBody))]
 public partial class RemoteJsonContext : JsonSerializerContext
 {

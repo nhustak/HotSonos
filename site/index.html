@@ -39,7 +39,7 @@
 <h1>Your whole house of Sonos, <span class="g">one hotkey away.</span></h1>
 <p class="lead">HotSonos lives in the Windows system tray and gives you instant, global keyboard shortcuts for shuffle, play/pause, skip, and whole-house volume — talking to your speakers directly over your local network. No cloud, no Sonos account.</p>
 <div class="ctas"><a class="btn btn-primary" href="https://github.com/nhustak/HotSonos/releases/latest">Download for Windows</a><a class="btn btn-ghost" href="https://github.com/nhustak/HotSonos">View on GitHub</a></div>
-<p class="soon-row"><span class="soon">Android: coming soon</span><span class="soon">iPhone: coming soon</span><a class="btn btn-ghost" href="mailto:nhustak@gmail.com?subject=HotSonos%20Android%20alpha%20request&amp;body=I%27d%20like%20to%20join%20the%20HotSonos%20Android%20internal%20alpha.%0A%0AName%3A%0A%0AGoogle%20account%20email%20on%20my%20Android%20phone%20%28needed%20for%20Play%20internal%20testing%29%3A%0A">Request alpha access</a></p>
+<p class="soon-row"><span class="soon">Android: alpha</span><span class="soon">iPhone: coming soon</span><button class="btn btn-ghost" type="button" disabled>Alpha access — coming soon</button></p>
 <p class="small" style="margin-top:14px">Per-user MSI installer, .NET runtime included.</p>
 </div>
 <img class="hero-logo" src="/assets/logo.png" alt="HotSonos logo" width="320" height="320">
@@ -59,7 +59,7 @@
 <div class="card"><div class="ico">☀️</div><h3>Wake to music</h3><p>Schedule music to start in a room with a gentle volume ramp, from a favorite or a shuffle, optionally expanding to the whole house.</p></div>
 <div class="card"><div class="ico">🤖</div><h3>Local MCP server</h3><p>An optional loopback MCP endpoint on this PC lets AI assistants search your library and control playback.</p></div>
 </div>
-<p class="small" style="margin-top:22px">Also: favorite slots with their own hotkeys, Restart fresh (re-sync speakers and reshuffle), live speaker monitoring with auto-rejoin, and a phone remote for Android that's in progress.</p>
+<p class="small" style="margin-top:22px">Also: favorite slots with their own hotkeys, Restart fresh (re-sync speakers and reshuffle), live speaker monitoring with auto-rejoin, and an Android app that works as a remote for this Windows app or on its own with the speakers.</p>
 </div></section>
 
 <section class="alt" id="screens"><div class="wrap">
@@ -90,8 +90,8 @@
 </div>
 <div class="dl" style="margin-top:14px">
 <div class="ico" style="width:72px;height:72px;font-size:2rem;border-radius:16px">📱</div>
-<div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos Remote for Android</strong> <span class="eyebrow" style="margin:0 0 0 6px">Coming soon</span><br><span class="small">Android remote app: coming to internal testing soon.<br>Control HotSonos from your phone on the same Wi-Fi.</span></div>
-<a class="btn btn-ghost" href="mailto:nhustak@gmail.com?subject=HotSonos%20Android%20alpha%20request&amp;body=I%27d%20like%20to%20join%20the%20HotSonos%20Android%20internal%20alpha.%0A%0AName%3A%0A%0AGoogle%20account%20email%20on%20my%20Android%20phone%20%28needed%20for%20Play%20internal%20testing%29%3A%0A">Request alpha access</a>
+<div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos for Android</strong> <span class="eyebrow" style="margin:0 0 0 6px">Alpha</span><br><span class="small">The Android app works either as a remote for the Windows tray app or standalone, talking to the speakers on your Wi-Fi with no PC. Same package on a Chromebook. Public install is not open yet.</span></div>
+<button class="btn btn-ghost" type="button" disabled>Alpha access — coming soon</button>
 </div>
 <p class="small" style="margin-top:14px">The installer isn't code-signed yet, so Windows SmartScreen may ask you to choose <em>More info → Run anyway</em>.</p>
 </div></section>
@@ -111,7 +111,7 @@
 <details><summary>Does HotSonos need a Sonos account or the internet?</summary><p>No. It finds and controls your speakers directly on your local network, the same way the speakers talk to each other. There's no HotSonos account and no HotSonos server.</p></details>
 <details><summary>Does it replace the Sonos app?</summary><p>No — it sits alongside it. Use the Sonos app for setup and music services; use HotSonos for fast, keyboard-first everyday control.</p></details>
 <details><summary>How does the shuffle avoid repeats?</summary><p>As songs play or you skip them, HotSonos remembers them and leaves them out of the next batch (by default, roughly the last couple of weeks). If you've heard most of your library, it loosens that rule so music keeps playing.</p></details>
-<details><summary>Is there a Mac or phone version?</summary><p>HotSonos is Windows-only. An Android remote that controls the HotSonos app on your PC over your home network is in progress.</p></details>
+<details><summary>Is there a Mac or phone version?</summary><p>The Windows tray app is the full HotSonos. The Android app (package com.tangenttech.hotsonos, including Chromebooks) works either as a remote for that tray app or standalone on the speakers. iPhone and iPad are in progress through TestFlight.</p></details>
 <details><summary>My speakers stutter or drop out of groups. Can HotSonos help?</summary><p>Restart fresh re-discovers and regroups speakers and starts a new shuffle. If problems persist, the README explains why turning off SonosNet and choosing a 5 GHz group coordinator often helps.</p></details>
 <details><summary>Why does Windows warn me when I install it?</summary><p>The MSI isn't code-signed yet. SmartScreen may show a prompt; choose More info → Run anyway.</p></details>
 <details><summary>Is it free?</summary><p>Yes. HotSonos is open source under the MIT license. The source and every release are on <a href="https://github.com/nhustak/HotSonos">GitHub</a>.</p></details>

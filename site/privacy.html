@@ -34,7 +34,7 @@
 
 <main class="doc">
 <h1>Privacy</h1>
-<p class="small">Last updated November 18, 2026</p>
+<p class="small">Last updated November 22, 2026</p>
 <p>HotSonos is a Windows tray app that runs on your own PC. It has no HotSonos account, no HotSonos server, no analytics, no ads, and no telemetry. The developer never receives your data.</p>
 
 <h2>What stays on your PC</h2>
@@ -62,8 +62,12 @@
 <h2>Local MCP server (optional)</h2>
 <p>When turned on, the MCP endpoint for AI assistants listens only on this PC's loopback address (<code>127.0.0.1</code>). Other devices on your network can't reach it. Any AI assistant you connect to it is governed by that assistant's own privacy policy.</p>
 
-<h2>Phone remote (Android, in progress)</h2>
-<p>The Android remote is a remote control for the HotSonos app on your PC; it does not talk to your speakers or to the internet. It connects to your PC's local network address and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only.</p>
+<h2>Android app (remote or standalone)</h2>
+<p>The Android app (the same package on a Chromebook) works in either of two ways, both on your local network. It does not talk to the internet.</p>
+<ul>
+<li><strong>Remote for the Windows tray app.</strong> It connects to your PC's local network address and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only.</li>
+<li><strong>Standalone.</strong> With no PC, it finds the Sonos speakers on your Wi-Fi and controls them directly. That path does not use the PIN and does not reach the tray app. Library tags, HotSonos shuffle, and reports still need the PC.</li>
+</ul>
 
 <h2>This website</h2>
 <p>hotsonos.com is a static site with no cookies, trackers, or analytics. Like any web server, it may keep standard access logs (such as IP address and pages requested) for security and troubleshooting. Download links go to GitHub, which has its own privacy policy.</p>

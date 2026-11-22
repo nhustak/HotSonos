@@ -52,4 +52,5 @@ footer a{color:var(--muted)}footer a:hover{color:var(--text)}
 @media (max-width:900px){.hero .wrap,.two{grid-template-columns:1fr}.hero-logo{order:-1;width:180px;justify-self:start}.grid{grid-template-columns:1fr 1fr}nav a.hide-sm{display:none}}
 @media (max-width:600px){.grid{grid-template-columns:1fr}nav a{margin-left:14px}.hero{padding-top:56px}}
 .btn[disabled]{opacity:.55;cursor:not-allowed;font:inherit;font-weight:650}
+.btn[disabled]:hover{transform:none;color:var(--text);border-color:var(--line);box-shadow:none}
 section[id]{scroll-margin-top:72px}
