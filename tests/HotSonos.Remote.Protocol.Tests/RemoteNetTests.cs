@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace HotSonos.Remote.Protocol.Tests;
 
 public class RemoteNetTests
@@ -98,5 +100,40 @@ public class RemoteNetTests
         Assert.False(RemoteNet.IsSixDigitPin("42815"));
         Assert.False(RemoteNet.IsSixDigitPin("04281A"));
         Assert.False(RemoteNet.IsSixDigitPin(null));
+    }
+
+    [Theory]
+    [InlineData("10.0.0.1", true)]
+    [InlineData("10.255.255.255", true)]
+    [InlineData("172.16.0.1", true)]
+    [InlineData("172.31.255.255", true)]
+    [InlineData("172.15.255.255", false)]
+    [InlineData("172.32.0.1", false)]
+    [InlineData("192.168.0.1", true)]
+    [InlineData("192.168.255.255", true)]
+    [InlineData("192.167.1.1", false)]
+    [InlineData("192.169.1.1", false)]
+    [InlineData("169.254.1.1", true)]
+    [InlineData("127.0.0.1", true)]
+    [InlineData("127.255.255.1", true)]
+    [InlineData("8.8.8.8", false)]
+    [InlineData("1.1.1.1", false)]
+    [InlineData("100.64.0.1", false)]
+    [InlineData("0.0.0.0", false)]
+    [InlineData("255.255.255.255", false)]
+    public void IsPrivateLan_ClassifiesIpv4(string text, bool allowed) =>
+        Assert.Equal(allowed, RemoteNet.IsPrivateLan(IPAddress.Parse(text)));
+
+    [Fact]
+    public void IsPrivateLan_ClassifiesIpv6AndMappedAddresses()
+    {
+        Assert.False(RemoteNet.IsPrivateLan(null));
+        Assert.True(RemoteNet.IsPrivateLan(IPAddress.IPv6Loopback));
+        Assert.True(RemoteNet.IsPrivateLan(IPAddress.Parse("fe80::1")));
+        Assert.True(RemoteNet.IsPrivateLan(IPAddress.Parse("fc00::1")));
+        Assert.True(RemoteNet.IsPrivateLan(IPAddress.Parse("fd12:3456::1")));
+        Assert.False(RemoteNet.IsPrivateLan(IPAddress.Parse("2001:db8::1")));
+        Assert.True(RemoteNet.IsPrivateLan(IPAddress.Parse("::ffff:192.168.1.9")));
+        Assert.False(RemoteNet.IsPrivateLan(IPAddress.Parse("::ffff:8.8.8.8")));
     }
 }

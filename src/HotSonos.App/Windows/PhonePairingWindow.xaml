@@ -48,6 +48,21 @@
             <TextBlock TextWrapping="Wrap" Foreground="#FF60707F" FontSize="12" Margin="0,8,0,0"
                        Text="The phone sends this PIN on every request. The listener stays on the PC address that shares a network with a speaker. An Android emulator must use that 192.168 address. 10.0.2.2 is the PC loopback, and HotSonos does not listen there. MCP stays on 127.0.0.1." />
 
+            <TextBlock Text="Pairing password" FontWeight="SemiBold" Margin="0,18,0,6" />
+            <TextBlock TextWrapping="Wrap" Foreground="#FF60707F" FontSize="12" Margin="0,0,0,8"
+                       Text="The phone can pair with this when you are not at the PC. Changing it signs every phone out." />
+            <Border Background="White" BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="8" Padding="14">
+                <StackPanel>
+                    <TextBlock Text="New password" Foreground="#FF60707F" />
+                    <PasswordBox x:Name="PairPasswordBox" Margin="0,2,0,10" Padding="6,4" />
+                    <TextBlock Text="Confirm" Foreground="#FF60707F" />
+                    <PasswordBox x:Name="PairPasswordConfirmBox" Margin="0,2,0,10" Padding="6,4" />
+                    <Button x:Name="ChangePairPasswordButton" Content="Change password" HorizontalAlignment="Left"
+                            Padding="10,4" Click="ChangePairPassword_Click" />
+                    <TextBlock x:Name="PairPasswordStatus" TextWrapping="Wrap" Foreground="#FF60707F" FontSize="12" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
             <TextBlock Text="Windows Firewall" FontWeight="SemiBold" Margin="0,18,0,6" />
             <TextBlock TextWrapping="Wrap" Foreground="#FF60707F" FontSize="12" Margin="0,0,0,8"
                        Text="A phone on Wi-Fi needs inbound TCP for the remote, and UDP so the phone can find this PC. Private networks only. HotSonos does not change Public. From an elevated PowerShell, or use the button:" />

@@ -1,5 +1,6 @@
 using HotSonos.Core;
 using HotSonos.Remote.Protocol;
+using HotSonos.Remote.Views;
 
 namespace HotSonos.Remote;
 
@@ -114,7 +115,7 @@ sealed class PhoneLink
                 var call = await AppServices.Client.GetStatusAsync(limit.Token).ConfigureAwait(false);
                 reachable = call.Kind == RemoteCallKind.Ok;
                 if (!reachable)
-                    miss = call.Detail;
+                    miss = PairingPrompt.Miss(call, call.Detail ?? "Cannot reach the PC.");
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {

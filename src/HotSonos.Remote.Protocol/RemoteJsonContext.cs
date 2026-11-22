@@ -7,6 +7,8 @@ namespace HotSonos.Remote.Protocol;
     PropertyNameCaseInsensitive = true)]
 [JsonSerializable(typeof(RemoteStatusResponse))]
 [JsonSerializable(typeof(RemoteCommandResponse))]
+[JsonSerializable(typeof(RemotePairRequest))]
+[JsonSerializable(typeof(RemotePairResponse))]
 [JsonSerializable(typeof(RemoteVolumeSampleResponse))]
 [JsonSerializable(typeof(RemoteSourcesResponse))]
 [JsonSerializable(typeof(RemoteSearchResponse))]

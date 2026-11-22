@@ -34,6 +34,9 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 {
     private static readonly HttpClient ArtHttp = new() { Timeout = TimeSpan.FromSeconds(5) };
 
+    /// <summary>Survives a rebind. A new process starts a fresh window.</summary>
+    private static readonly PairingLockout PairingLock = new();
+
     private readonly object _artGate = new();
     private string? _artUri;
     private byte[]? _artBytes;
@@ -134,24 +137,29 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         _app.Use(async (ctx, next) =>
         {
-            var settings = state.Settings().EnsureShape();
-            var provided = ctx.Request.Headers[RemoteApi.PinHeader].ToString();
-            if (!RemoteNet.PinMatches(provided, settings.RemotePin))
+            // POST /api/pair is the one route without the house PIN. It checks the pairing password.
+            if (!IsPairRoute(ctx.Request))
             {
-                ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                await ctx.Response.WriteAsJsonAsync(
-                    new RemoteCommandResponse(false, null, "unauthorized"),
-                    RemoteApi.Json).ConfigureAwait(false);
-                return;
+                var settings = state.Settings().EnsureShape();
+                var provided = ctx.Request.Headers[RemoteApi.PinHeader].ToString();
+                if (!RemoteNet.PinMatches(provided, settings.RemotePin))
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    await ctx.Response.WriteAsJsonAsync(
+                        new RemoteCommandResponse(false, null, "unauthorized"),
+                        RemoteApi.Json).ConfigureAwait(false);
+                    return;
+                }
             }
 
             // One line per phone action, including routes that forget to log themselves.
             // Status and art are the 2-second poll, not an action.
+            // Pairing logs its own outcome line (no password) from the route.
             var path = ctx.Request.Path.Value ?? "";
             var poll = HttpMethods.IsGet(ctx.Request.Method)
                 && (path.Equals("/api/status", StringComparison.OrdinalIgnoreCase)
                     || path.Equals("/api/art", StringComparison.OrdinalIgnoreCase));
-            if (!poll)
+            if (!poll && !IsPairRoute(ctx.Request))
                 AppLog.Info($"Remote {ctx.Request.Method} {path}");
 
             await next().ConfigureAwait(false);
@@ -234,6 +242,50 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
     private void MapRoutes(WebApplication app, HotSonosMcpState state, RemoteHooks hooks)
     {
+        app.MapPost("/api/pair", async (HttpContext ctx) =>
+        {
+            var remote = ctx.Connection.RemoteIpAddress;
+            var body = await ReadJson<RemotePairRequest>(ctx).ConfigureAwait(false);
+            var settings = state.Settings().EnsureShape();
+            var stored = new PairingPasswordRecord(
+                settings.PairingPasswordSalt ?? "",
+                settings.PairingPasswordIterations,
+                settings.PairingPasswordHash ?? "");
+            var decision = PairingAttempt.Evaluate(remote, body?.Password, stored, settings.RemotePin, PairingLock);
+            var ip = FormatPairIp(remote);
+            switch (decision.Kind)
+            {
+                case PairingAttemptKind.Forbidden:
+                    AppLog.Info($"Pairing rejected from {ip}");
+                    return PairJson(new RemotePairResponse(false, null, 0, null, null, decision.Error), StatusCodes.Status403Forbidden);
+                case PairingAttemptKind.Locked:
+                    AppLog.Info($"Pairing locked from {ip}");
+                    if (decision.RetryAfter > TimeSpan.Zero)
+                    {
+                        var seconds = Math.Max(1, (int)decision.RetryAfter.TotalSeconds);
+                        ctx.Response.Headers["Retry-After"] = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    }
+
+                    return PairJson(new RemotePairResponse(false, null, 0, null, null, decision.Error), StatusCodes.Status429TooManyRequests);
+                case PairingAttemptKind.Unauthorized:
+                    AppLog.Info($"Pairing failed from {ip}");
+                    return PairJson(new RemotePairResponse(false, null, 0, null, null, decision.Error), StatusCodes.Status401Unauthorized);
+                case PairingAttemptKind.Ok:
+                    AppLog.Info($"Pairing succeeded from {ip}");
+                    var host = PairHost(ctx);
+                    var port = ctx.Connection.LocalPort > 0 ? ctx.Connection.LocalPort : settings.RemotePort;
+                    string? link = null;
+                    if (PhonePairLink.TryFormat(host, port, decision.Pin, out var formatted, out _))
+                        link = formatted;
+                    return PairJson(new RemotePairResponse(true, host, port, decision.Pin, link, null), StatusCodes.Status200OK);
+                default:
+                    AppLog.Info($"Pairing failed from {ip}");
+                    return PairJson(
+                        new RemotePairResponse(false, null, 0, null, null, decision.Error ?? "Could not pair."),
+                        StatusCodes.Status500InternalServerError);
+            }
+        });
+
         app.MapGet("/api/status", () =>
         {
             var settings = state.Settings().EnsureShape();
@@ -535,6 +587,36 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
             return (null, "image/jpeg");
         }
     }
+
+    private static bool IsPairRoute(HttpRequest request)
+    {
+        if (!HttpMethods.IsPost(request.Method))
+            return false;
+        var path = request.Path.Value?.TrimEnd('/') ?? "";
+        return path.Equals("/api/pair", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatPairIp(IPAddress? address)
+    {
+        if (address is null)
+            return "unknown";
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+        return address.ToString();
+    }
+
+    private static string PairHost(HttpContext ctx)
+    {
+        var local = ctx.Connection.LocalIpAddress;
+        if (local is null)
+            return "";
+        if (local.IsIPv4MappedToIPv6)
+            local = local.MapToIPv4();
+        return local.ToString();
+    }
+
+    private static IResult PairJson(RemotePairResponse body, int statusCode) =>
+        Results.Json(body, RemoteApi.Json, statusCode: statusCode);
 
     private static async Task<T?> ReadJson<T>(HttpContext ctx) where T : class
     {

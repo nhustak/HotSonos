@@ -83,6 +83,44 @@ public static class RemoteNet
         return Convert.ToHexString(hash)[..12].ToLowerInvariant();
     }
 
+    /// <summary>
+    /// True for loopback, IPv4 link-local, RFC1918, IPv6 link-local, and IPv6 unique-local.
+    /// IPv4-mapped IPv6 is unwrapped first. Anything else is rejected.
+    /// </summary>
+    public static bool IsPrivateLan(IPAddress? address)
+    {
+        if (address is null)
+            return false;
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+        if (IPAddress.IsLoopback(address))
+            return true;
+
+        var bytes = address.GetAddressBytes();
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            if (bytes[0] == 10)
+                return true;
+            if (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
+                return true;
+            if (bytes[0] == 192 && bytes[1] == 168)
+                return true;
+            if (bytes[0] == 169 && bytes[1] == 254)
+                return true;
+            return false;
+        }
+
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            if (address.IsIPv6LinkLocal)
+                return true;
+            // fc00::/7 unique local.
+            return (bytes[0] & 0xFE) == 0xFC;
+        }
+
+        return false;
+    }
+
     /// <summary>Fixed-time compare. A wrong length still does not throw and does not match.</summary>
     public static bool PinMatches(string? provided, string? expected)
     {
@@ -218,6 +256,18 @@ public sealed record RemoteNowTagsResponse(
 public sealed record RemoteNowTagDto(string Key, string Label, bool On);
 
 public sealed record RemoteCommandResponse(bool Ok, string? Message, string? Error);
+
+/// <summary>Body of <c>POST /api/pair</c>. The password is not stored.</summary>
+public sealed record RemotePairRequest(string? Password);
+
+/// <summary>Same host, port, and PIN the QR code carries. <see cref="Link"/> is that <c>hotsonos://pair</c> URL.</summary>
+public sealed record RemotePairResponse(
+    bool Ok,
+    string? Host,
+    int Port,
+    string? Pin,
+    string? Link,
+    string? Error);
 
 public sealed record RemoteVolumeSampleResponse(bool Ok, int? Volume, bool? Muted, string? Error);
 

@@ -44,6 +44,7 @@ public static class PhoneSections
     public const string AboutHeard = "about.heard";
     public const string AboutLog = "about.log";
     public const string ReportFilters = "reports.filters";
+    public const string ConnectPin = "connect.pin";
 
     public static bool DefaultOpen(string key) => key switch
     {

@@ -102,7 +102,7 @@ sealed class LibrarySettingsPage : RemotePage
         var config = call.Value;
         if (config is null)
         {
-            _folderNotes.Add(RemoteUi.Muted(call.Detail ?? "Could not load library settings."));
+            _folderNotes.Add(RemoteUi.Muted(PairingPrompt.Miss(call, "Could not load library settings.")));
             return;
         }
 
@@ -179,6 +179,12 @@ sealed class LibrarySettingsPage : RemotePage
             Roots = _roots.Select(r => new RemoteLibraryRootBody { Path = r.Path, InDaily = r.Daily.IsToggled }).ToList(),
         };
         var call = await AppServices.Client.SaveLibraryConfigAsync(body, CancellationToken.None);
+        if (call.Kind == RemoteCallKind.Unauthorized)
+        {
+            _status.Text = PairingPrompt.Miss(call, "Could not save.");
+            return;
+        }
+
         _status.Text = call.Value?.Error ?? call.Value?.Note ?? call.Detail ?? (call.Kind == RemoteCallKind.Ok ? "Saved." : "Could not save.");
         if (call.Kind == RemoteCallKind.Ok && call.Value?.Ok == true)
             await LoadConfigAsync();
@@ -195,6 +201,12 @@ sealed class LibrarySettingsPage : RemotePage
         if (!await Confirm("Discover from Sonos", "Replace the library folder list with the folders Sonos has indexed?"))
             return;
         var call = await AppServices.Client.DiscoverLibraryAsync(CancellationToken.None);
+        if (call.Kind == RemoteCallKind.Unauthorized)
+        {
+            _status.Text = PairingPrompt.Miss(call, "Discover failed.");
+            return;
+        }
+
         _status.Text = call.Value?.Error ?? call.Value?.Note ?? call.Detail ?? "Discover finished.";
         await LoadConfigAsync();
     }

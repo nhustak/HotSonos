@@ -143,7 +143,7 @@ sealed class SpeakersSettingsPage : RemotePage
         _groups = call.Value;
         if (_groups is null)
         {
-            _status.Text = call.Detail ?? "Could not load the Daily group.";
+            _status.Text = PairingPrompt.Miss(call, "Could not load the Daily group.");
             return;
         }
 

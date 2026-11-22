@@ -22,6 +22,7 @@ public class PhoneSectionTests
         Assert.False(PhoneSections.DefaultOpen(PhoneSections.LibraryTags));
         Assert.False(PhoneSections.DefaultOpen(PhoneSections.Nightly));
         Assert.False(PhoneSections.DefaultOpen(PhoneSections.AboutHeard));
+        Assert.False(PhoneSections.DefaultOpen(PhoneSections.ConnectPin));
         Assert.False(PhoneSections.DefaultOpen("not-a-section"));
     }
 

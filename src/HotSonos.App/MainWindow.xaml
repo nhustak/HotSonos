@@ -1326,6 +1326,8 @@
                         </StackPanel>
                         <TextBlock x:Name="RemoteEndpointText" Text="URL: (not listening yet)"
                                    Margin="0,6,0,0" TextWrapping="Wrap" />
+                        <TextBlock Text="Pairing password is on the Phone window. Changing it signs every phone out."
+                                   Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
                         <TextBlock Text="The phone sends the PIN. Windows Firewall must allow HotSonos on Private networks. Public stays closed."
                                    Foreground="#FF60707F" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
                         <Button Content="Allow on private networks…" HorizontalAlignment="Left" Margin="0,8,0,0"
