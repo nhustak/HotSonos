@@ -75,7 +75,25 @@
 
   <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     <PackageReference Include="Xamarin.AndroidX.Media" Version="1.7.1.2" />
+    <PackageReference Include="Xamarin.GooglePlayServices.Wearable" Version="119.0.0.5" />
+    <!-- Wearable pulls AndroidX.Core 1.17, which pulls Compose runtime annotations
+         as both an Android aar and a JVM jar. R8 rejects the duplicate class.
+         The Android aar is the copy the phone package needs. -->
+    <PackageReference Include="Xamarin.AndroidX.Compose.Runtime.Annotation.Jvm" Version="1.10.0.1">
+      <ExcludeAssets>all</ExcludeAssets>
+    </PackageReference>
   </ItemGroup>
+
+  <!-- Debug phone builds share the Wear companion keystore so the Data Layer
+       accepts messages. An install signed with another debug key must be
+       uninstalled first. Release signing above is unchanged. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' And $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' And Exists('$(MSBuildThisFileDirectory)../HotSonos.Wear/debug.keystore')">
+    <AndroidKeyStore>true</AndroidKeyStore>
+    <AndroidSigningKeyStore>$(MSBuildThisFileDirectory)../HotSonos.Wear/debug.keystore</AndroidSigningKeyStore>
+    <AndroidSigningKeyAlias>androiddebugkey</AndroidSigningKeyAlias>
+    <AndroidSigningStorePass>android</AndroidSigningStorePass>
+    <AndroidSigningKeyPass>android</AndroidSigningKeyPass>
+  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />

@@ -76,3 +76,37 @@ jobs:
       # if a future image is macOS, where the csproj also lists net10.0-ios.
       - name: Build phone
         run: dotnet build src/HotSonos.Remote/HotSonos.Remote.csproj -c Release -f net10.0-android --nologo
+
+  wear:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+
+      - name: Install Android platform
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platforms;android-36" "build-tools;35.0.0" "build-tools;36.0.0"
+
+      - name: Build watch
+        working-directory: src/HotSonos.Wear
+        run: chmod +x ./gradlew && ./gradlew assembleDebug --no-daemon
+
+      - name: Upload watch APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: HotSonos-wear-debug
+          path: src/HotSonos.Wear/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
