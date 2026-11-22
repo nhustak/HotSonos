@@ -52,27 +52,27 @@ FOOT=f'''<footer><div class="wrap">
 </body>
 </html>
 '''
-DESC="HotSonos is a free Windows tray app that controls your Sonos speakers with global hotkeys: history-aware shuffle, whole-house volume, grouping, now playing, and play reports. Local network only."
-INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
+DESC="HotSonos is a free Windows tray app for your own music library on Sonos: history-aware shuffle, whole-house volume, grouping, now playing, and play reports. Local files, local network."
+INDEX=head("HotSonos — global hotkeys for your music library",DESC,"/")+f'''
 <main>
 <section class="hero" style="border-top:0"><div class="wrap">
 <div>
 <span class="eyebrow">Free · Open source · Windows 10/11</span>
-<h1>Your whole house of Sonos, <span class="g">one hotkey away.</span></h1>
-<p class="lead">HotSonos lives in the Windows system tray and gives you instant, global keyboard shortcuts for shuffle, play/pause, skip, and whole-house volume — talking to your speakers directly over your local network. No cloud, no Sonos account.</p>
+<h1>Your music library, <span class="g">one hotkey away.</span></h1>
+<p class="lead">HotSonos lives in the Windows system tray and gives you global hotkeys for the music files you share to Sonos: history-aware shuffle, play/pause, skip, and whole-house volume, over your local network. No cloud and no Sonos account. Shuffle does not work with Spotify, Apple Music, or other streaming services.</p>
 <div class="ctas"><a class="btn btn-primary" href="{REL}">Download for Windows</a><a class="btn btn-ghost" href="{REPO}">View on GitHub</a></div>
-<p class="soon-row"><span class="soon">Android: remote or standalone</span><span class="soon">iPhone and iPad: in early development</span><button class="btn btn-ghost" type="button" disabled>Alpha access — coming soon</button></p>
-<p class="small" style="margin-top:10px">The Android app works either as a remote for the Windows tray app or on its own with the speakers. iPhone and iPad support is in early development.</p>
+<p style="margin:14px 0 0;color:var(--muted)">Windows tray app: available now. Android (phone, tablet, Chromebook), as a remote for the tray app or standalone: alpha coming soon.</p>
+<p style="margin:8px 0 0;color:var(--muted)">iPhone and iPad: early prototype.</p>
 <p class="small" style="margin-top:14px">Per-user MSI installer, .NET runtime included.</p>
 </div>
 <img class="hero-logo" src="/assets/logo.png" alt="HotSonos logo" width="320" height="320">
 </div></section>
 
 <section id="features"><div class="wrap">
-<h2>Everything the Sonos app makes you click through</h2>
-<p class="sub">Built for people who listen all day and want music to just start — the right speakers, the right volume, nothing you heard this morning.</p>
+<h2>For your own music library</h2>
+<p class="sub">Local files you already share to Sonos. HotSonos groups your speakers and shuffles that library, leaving out songs you've heard recently. Shuffle, top-up, exclusions, and Restart fresh do not work with Spotify, Apple Music, or other streaming services.</p>
 <div class="grid">
-<div class="card"><div class="ico">🔀</div><h3>History-aware shuffle</h3><p>Groups your speakers and builds a short random mix from your library, leaving out songs you've heard recently. When it runs low, a fresh batch is added automatically.</p></div>
+<div class="card"><div class="ico">🔀</div><h3>History-aware shuffle</h3><p>Groups your speakers and builds a short random mix from your own music library, leaving out songs you've heard recently. When it runs low, a fresh batch is added automatically. Streaming services are not part of that mix.</p></div>
 <div class="card"><div class="ico">⌨️</div><h3>Global hotkeys</h3><p>Shuffle, play/pause, next, previous, volume up/down, and mute from any app. Every shortcut is re-bindable.</p></div>
 <div class="card"><div class="ico">🔉</div><h3>Whole-house volume</h3><p>One "house" volume level for every room, with per-room offsets for amp-fed speakers, plus a one-click Level all.</p></div>
 <div class="card"><div class="ico">🔗</div><h3>Grouping &amp; Daily groups</h3><p>Shuffle to all speakers or a checked subset of rooms, save named Daily speaker groups, and pick which room leads the group.</p></div>
@@ -82,7 +82,8 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 <div class="card"><div class="ico">☀️</div><h3>Wake to music</h3><p>Schedule music to start in a room with a gentle volume ramp, from a favorite or a shuffle, optionally expanding to the whole house.</p></div>
 <div class="card"><div class="ico">🤖</div><h3>Local MCP server</h3><p>An optional loopback MCP endpoint on this PC lets AI assistants search your library and control playback.</p></div>
 </div>
-<p class="small" style="margin-top:22px">Also: favorite slots with their own hotkeys, Restart fresh (re-sync speakers and reshuffle), live speaker monitoring with auto-rejoin, and an Android app that works as a remote for the Windows tray app or standalone. iPhone and iPad support is in early development.</p>
+<p class="small" style="margin-top:22px">Also: favorite slots with their own hotkeys, Restart fresh (re-sync speakers and reshuffle), live speaker monitoring with auto-rejoin, and an Android app that works as a remote for the Windows tray app or standalone: alpha coming soon.</p>
+<p class="small" style="margin-top:8px">iPhone and iPad: early prototype.</p>
 </div></section>
 
 <section class="alt" id="screens"><div class="wrap">
@@ -113,10 +114,10 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 </div>
 <div class="dl" style="margin-top:14px">
 <div class="ico" style="width:72px;height:72px;font-size:2rem;border-radius:16px">📱</div>
-<div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos for Android</strong><br><span class="small">The Android app (including on a Chromebook) works either as a remote for the Windows tray app or standalone, on the same Wi-Fi. iPhone and iPad support is in early development.</span></div>
-<button class="btn btn-ghost" type="button" disabled>Alpha access — coming soon</button>
+<div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos for Android</strong><br><span class="small">The Android app (including on a Chromebook) works either as a remote for the Windows tray app or standalone, on the same Wi-Fi. Alpha access coming soon.</span></div>
 </div>
 <p class="small" style="margin-top:14px">The installer isn't code-signed yet, so Windows SmartScreen may ask you to choose <em>More info → Run anyway</em>.</p>
+<p class="small" style="margin-top:8px">iPhone and iPad: early prototype.</p>
 </div></section>
 
 <section id="requirements"><div class="wrap two">
@@ -132,9 +133,10 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 <section class="alt" id="faq"><div class="wrap">
 <h2>FAQ</h2>
 <details><summary>Does HotSonos need a Sonos account or the internet?</summary><p>No. It finds and controls your speakers directly on your local network, the same way the speakers talk to each other. There's no HotSonos account and no HotSonos server.</p></details>
-<details><summary>Does it replace the Sonos app?</summary><p>No — it sits alongside it. Use the Sonos app for setup and music services; use HotSonos for fast, keyboard-first everyday control.</p></details>
+<details><summary>Does it work with Spotify or other streaming services?</summary><p>HotSonos is built for your own music library on Sonos: local files shared to your speakers. History-aware shuffle, top-up, exclusions, and Restart fresh reshuffle use that library. They do not work with Spotify, Apple Music, or other streaming services. Play, pause, skip, and volume are sent straight to the speakers, so they still control the group while something else is already playing.</p></details>
+<details><summary>Does it replace the Sonos app?</summary><p>No — it sits alongside it. Use the Sonos app for setup and music services. Use HotSonos for keyboard-first control of your own music library.</p></details>
 <details><summary>How does the shuffle avoid repeats?</summary><p>As songs play or you skip them, HotSonos remembers them and leaves them out of the next batch (by default, roughly the last couple of weeks). If you've heard most of your library, it loosens that rule so music keeps playing.</p></details>
-<details><summary>Is there a Mac or phone version?</summary><p>The tray app is Windows. The Android app works either as a remote for that tray app or standalone, talking to your speakers on the same Wi-Fi. It also runs on a Chromebook. iPhone and iPad support is in early development. There is no Mac app.</p></details>
+<details><summary>Is there a Mac or phone version?</summary><p>The tray app is Windows. The Android app works either as a remote for that tray app or standalone, talking to your speakers on the same Wi-Fi. It also runs on a Chromebook, and alpha access is coming soon.</p><p>iPhone and iPad: early prototype. There is no Mac app.</p></details>
 <details><summary>My speakers stutter or drop out of groups. Can HotSonos help?</summary><p>Restart fresh re-discovers and regroups speakers and starts a new shuffle. If problems persist, the README explains why turning off SonosNet and choosing a 5 GHz group coordinator often helps.</p></details>
 <details><summary>Why does Windows warn me when I install it?</summary><p>The MSI isn't code-signed yet. SmartScreen may show a prompt; choose More info → Run anyway.</p></details>
 <details><summary>Is it free?</summary><p>Yes. HotSonos is open source under the MIT license. The source and every release are on <a href="{REPO}">GitHub</a>.</p></details>
@@ -174,7 +176,8 @@ PRIV=head("Privacy — HotSonos","How HotSonos handles your data: it runs on you
 <p>When turned on, the MCP endpoint for AI assistants listens only on this PC's loopback address (<code>127.0.0.1</code>). Other devices on your network can't reach it. Any AI assistant you connect to it is governed by that assistant's own privacy policy.</p>
 
 <h2>Android app (remote or standalone)</h2>
-<p>The Android app, including on a Chromebook, works in two ways. As a remote, it connects to the HotSonos tray app on your PC over your local network and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only. Standalone, the app talks to your Sonos speakers on the same Wi-Fi and does not contact the PC. It does not use a HotSonos account or a HotSonos server. iPhone and iPad support is in early development.</p>
+<p>The Android app, including on a Chromebook, works in two ways. As a remote, it connects to the HotSonos tray app on your PC over your local network and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only. Standalone, the app talks to your Sonos speakers on the same Wi-Fi and does not contact the PC. It does not use a HotSonos account or a HotSonos server. Android alpha access is coming soon.</p>
+<p>iPhone and iPad: early prototype.</p>
 
 <h2>This website</h2>
 <p>hotsonos.com is a static site with no cookies, trackers, or analytics. Like any web server, it may keep standard access logs (such as IP address and pages requested) for security and troubleshooting. Download links go to GitHub, which has its own privacy policy.</p>

@@ -10,7 +10,9 @@ Windows system-tray utility for controlling a Sonos system with global keyboard 
 
 Some people treat AI as evil when it comes to writing software. This project is built with **Grok**, **Claude**, and **Codex**. If that bothers you, go write your own.
 
-HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/SOAP) — no cloud, no Sonos account, no internet round-trips. It lives in the system tray and gives you instant, global hotkeys for the things the Sonos apps make you click through: shuffle your whole library to every speaker, play/pause, skip, and whole-house volume — plus a live now-playing flyout, **tags as dynamic playlists**, and automatic speaker re-sync.
+HotSonos is for people who play their **own music library** on Sonos: local files shared to the speakers, not Spotify, Apple Music, or other streaming services. History-aware shuffle, top-up, exclusions, and Restart fresh reshuffle use that library only. Play, pause, skip, and volume are speaker commands, so they still control the group while something else is playing.
+
+It talks to your speakers entirely over the **local network** (UPnP/SOAP) — no cloud, no Sonos account, no internet round-trips. It lives in the system tray and gives you instant, global hotkeys for shuffle across the house, play/pause, skip, and whole-house volume — plus a live now-playing flyout, **tags as dynamic playlists**, and automatic speaker re-sync.
 
 > Built for Windows 10/11 on .NET 10 (WPF). Works with Sonos S1/S2 players on the same LAN.
 
@@ -19,7 +21,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 - **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Top bar: **Phone**. Tray: Phone…, Library…, Topology…, Logs…, Reports…, Debug…
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
-- **Phone:** Android and ChromeOS app (`src/HotSonos.Remote`, .NET MAUI, id `com.tangenttech.hotsonos`) works as a remote for this tray app or standalone on the speakers. It opens **Connect** until a PC is saved, then **Player**: art, a left-pointing previous icon (the mirror of next), play/pause, next, and − / percent / + with the mute icon on that line. Remote calls use `http://<pc>:42342` and header `X-HotSonos-Pin`. The **Phone** window shows a QR code (`hotsonos://pair?host=<ip>&port=42342&pin=<pin>`) plus the address and PIN. The phone can scan that code, open the link, paste it, or type the address. **Quick tag** on Player and on the tray Control now-playing card tags the playing library track (same as the Quick tag hotkey). Link: Auto, PC only, or Speakers only, under Settings → Connection / PC. Android publishes a media session so a paired Pixel Watch and the lock screen show now playing and can play, pause, skip, and set volume (Settings → **Show media controls (watch, lock screen)**, on by default). A Wear OS companion (`src/HotSonos.Wear`, [docs/wear.md](docs/wear.md)) shows the same basics on the watch itself and talks to the phone over Bluetooth, with no PIN. iPhone and iPad support is in early development (Codemagic / TestFlight, [docs/ios.md](docs/ios.md)). A normal update keeps the saved pairing. Changing the app id wipes it.
+- **Phone:** Android and ChromeOS app (`src/HotSonos.Remote`, .NET MAUI, id `com.tangenttech.hotsonos`) works as a remote for this tray app or standalone on the speakers. It opens **Connect** until a PC is saved, then **Player**: art, a left-pointing previous icon (the mirror of next), play/pause, next, and − / percent / + with the mute icon on that line. Remote calls use `http://<pc>:42342` and header `X-HotSonos-Pin`. The **Phone** window shows a QR code (`hotsonos://pair?host=<ip>&port=42342&pin=<pin>`) plus the address and PIN. The phone can scan that code, open the link, paste it, or type the address. **Quick tag** on Player and on the tray Control now-playing card tags the playing library track (same as the Quick tag hotkey). Link: Auto, PC only, or Speakers only, under Settings → Connection / PC. Android publishes a media session so a paired Pixel Watch and the lock screen show now playing and can play, pause, skip, and set volume (Settings → **Show media controls (watch, lock screen)**, on by default). A Wear OS companion (`src/HotSonos.Wear`, [docs/wear.md](docs/wear.md)) shows the same basics on the watch itself and talks to the phone over Bluetooth, with no PIN. iPhone and iPad support is an early prototype (Codemagic / TestFlight, [docs/ios.md](docs/ios.md)). A normal update keeps the saved pairing. Changing the app id wipes it.
 
 **Having issues (stutter, dead zones, flaky grouping)?** Make sure **SonosNet is off** — see [Turn off SonosNet](#turn-off-sonosnet) near the bottom.
 
@@ -28,7 +30,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 ## Features
 
 ### 🔀 History-aware library shuffle
-Groups speakers and builds a short random mix from your music library, leaves out songs you’ve already heard recently, and plays that list straight through. When the list is almost done, it adds another fresh batch the same way. That starts music quickly and keeps the day from repeating what you already listened to.
+Groups speakers and builds a short random mix from your own music library (local files Sonos already indexes), leaves out songs you’ve already heard recently, and plays that list straight through. When the list is almost done, it adds another fresh batch the same way. That starts music quickly and keeps the day from repeating what you already listened to. This does not shuffle Spotify, Apple Music, or other streaming services.
 
 **Control → Shuffle** is no longer “always everything.” Use the **From** dropdown, then **Start shuffle now**:
 
@@ -253,7 +255,7 @@ Release publish writes `com.tangenttech.hotsonos-Signed.aab` (and an APK) under 
 
 ### iPhone and iPad
 
-iPhone and iPad support is in early development. The same project targets `net10.0-ios` on a Mac, or when you pass `-p:HotSonosRemoteTargetFrameworks=net10.0-ios`. Windows and Linux builds, including GitHub Actions, stay on Android. The store path is TestFlight via Codemagic. The steps (Apple Developer membership, App ID `com.tangenttech.hotsonos`, App Store Connect API key, Codemagic placeholders) are in [docs/ios.md](docs/ios.md). Find PC and speaker search need an Apple multicast entitlement that is not in the app until Apple approves it; type the PC address and PIN until then. On iPad the Player column is centered. The iOS target has not been compiled in the change that added it.
+iPhone and iPad support is an early prototype. The same project targets `net10.0-ios` on a Mac, or when you pass `-p:HotSonosRemoteTargetFrameworks=net10.0-ios`. Windows and Linux builds, including GitHub Actions, stay on Android. The store path is TestFlight via Codemagic. The steps (Apple Developer membership, App ID `com.tangenttech.hotsonos`, App Store Connect API key, Codemagic placeholders) are in [docs/ios.md](docs/ios.md). Find PC and speaker search need an Apple multicast entitlement that is not in the app until Apple approves it; type the PC address and PIN until then. On iPad the Player column is centered. The iOS target has not been compiled in the change that added it.
 
 On the PC, open HotSonos and press **Phone** (or the tray item **Phone…**). The window shows the address, the port, the 6-digit PIN, and a QR code once HotSonos is listening. The code is a `hotsonos://pair?host=<ip>&port=42342&pin=<pin>` link. **Copy link** puts that on the clipboard. The first phone screen is **Connect**. **Scan QR** (when the phone has a camera), opening that link, or **Paste pairing link** saves the host, port, and PIN and tests the PC. You can still type the address and PIN (port **42342** if you leave it blank) and press **Test and connect**. The same Scan QR and paste actions are under **Settings → Connection / PC**. **Find PC** uses a UDP announce on port 42343; an emulator is not on that subnet, so scan, paste, or type the PC's 192.168 address. `10.0.2.2` is the PC loopback, and the listener is not bound there. The header on every request is `X-HotSonos-Pin`. The listener is plain HTTP and only binds the address that shares a network with a speaker.
 
@@ -294,7 +296,7 @@ Accept the debugging prompt on the Chromebook. `100.115.92.2` is the Android con
 |---|---|
 | `HotSonos.Core` | UPnP client (discovery, control, events, shuffle) |
 | `HotSonos.App` | Tray app: hotkeys, settings, library, tags, MCP, wake, phone listener |
-| `HotSonos.Remote` | Android and ChromeOS app (remote or standalone). iPhone and iPad are in early development. Not in the Windows solution. iOS build: `docs/ios.md` |
+| `HotSonos.Remote` | Android and ChromeOS app (remote or standalone). iPhone and iPad: early prototype. Not in the Windows solution. iOS build: `docs/ios.md` |
 | `HotSonos.Wear` | Wear OS companion (Kotlin). Same application id as the phone. No PIN. Build and adb-over-Wi-Fi install: `docs/wear.md` |
 | `HotSonos.Remote.Protocol` | Shared phone DTOs and Daily speaker-group rules |
 | `HotSonos.Harness` | Console tester |
@@ -314,7 +316,7 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 - **Control shuffle From** — `ControlShuffleSource` = `all` | `folder:{path}` | `tag:{key}` | `genre:{name}`; genres gated by `ShowGenresInPlaySources`.  
 - **Library** — filesystem scan under discovered UNC roots; optional master match for dual-write.  
 - **MCP** — Kestrel loopback host inside the tray process.
-- **Phone** — a second Kestrel host on the speaker subnet, port 42342, PIN on every route, including `GET` / `POST /api/now/tags` for Quick tag. It calls the same action gate as MCP. Android and ChromeOS use that host, or talk to the speakers with no PC. iPhone and iPad support is in early development.  
+- **Phone** — a second Kestrel host on the speaker subnet, port 42342, PIN on every route, including `GET` / `POST /api/now/tags` for Quick tag. It calls the same action gate as MCP. Android and ChromeOS use that host, or talk to the speakers with no PC. iPhone and iPad support is an early prototype.  
 - **GENA** — optional speaker push (now-playing, topology, volume). **Options → Use speaker push events (GENA)**; `HOTSONOS_GENA=1` still forces on. Off = poll only.  
 - **Volume** — house logical % for ±; per-room offsets on absolute write (Level all / Wake / ±); Speakers sliders show raw Sonos %.
 

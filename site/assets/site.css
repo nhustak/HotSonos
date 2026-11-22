@@ -21,8 +21,6 @@ h1{font-size:clamp(2.4rem,5.4vw,4rem);line-height:1.05;margin:0 0 18px;letter-sp
 h1 .g{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
 .lead{font-size:1.2rem;color:var(--muted);max-width:40em;margin:0 0 30px}
 .ctas{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
-.soon-row{display:flex;flex-wrap:wrap;gap:8px 12px;margin:14px 0 0;align-items:center}
-.soon{display:inline-flex;align-items:center;padding:5px 12px;border-radius:999px;border:1px solid var(--line);color:var(--muted);font-size:.82rem;font-weight:650}
 .hero-logo{justify-self:center;width:min(320px,70vw);height:auto;filter:drop-shadow(0 30px 60px rgba(232,34,47,.25))}
 .small{font-size:.88rem;color:var(--muted)}
 section{padding:72px 0;border-top:1px solid var(--line)}
@@ -53,6 +51,4 @@ footer a{color:var(--muted)}footer a:hover{color:var(--text)}
 .doc code{background:#262a33;padding:1px 6px;border-radius:5px;font-size:.92em}
 @media (max-width:900px){.hero .wrap,.two{grid-template-columns:1fr}.hero-logo{order:-1;width:180px;justify-self:start}.grid{grid-template-columns:1fr 1fr}nav a.hide-sm{display:none}}
 @media (max-width:600px){.grid{grid-template-columns:1fr}nav a{margin-left:14px}.hero{padding-top:56px}}
-button.btn{font-family:inherit;line-height:1.2}
-.btn[disabled],button.btn:disabled{opacity:.55;cursor:not-allowed;font:inherit;font-weight:650;pointer-events:none}
 section[id]{scroll-margin-top:72px}
