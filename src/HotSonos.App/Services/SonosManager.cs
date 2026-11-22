@@ -105,11 +105,12 @@ public sealed class SonosManager
     private bool _skipNextStartLog; // set when we just logged "skipped" for this track change
 
     /// <summary>
-    /// Normalized keys enqueued during this shuffle session (rebuild + top-ups).
-    /// Top-up excludes these so a track already on the queue cannot be re-added
-    /// before it has been heard/skipped (GENA only covers what actually started).
+    /// Normalized keys enqueued during this shuffle session, and the UTC time
+    /// they were last enqueued. A top-up treats a key as still waiting when it
+    /// has not been played since that time. GENA only covers what actually started,
+    /// so the enqueue time is what keeps an unplayed queue row from coming back.
     /// </summary>
-    private readonly HashSet<string> _sessionServedKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> _sessionServedAt = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _servedGate = new();
 
     /// <summary>Last exclusive library playback mode (for MCP / top-up policy).</summary>
@@ -2629,7 +2630,7 @@ public sealed class SonosManager
             throw new InvalidOperationException("No Sonos room is selected.");
 
         var s = _settings().EnsureShape();
-        var (exclude, playedAt) = BuildShuffleHistory(s);
+        var history = BuildShuffleHistory(s, topUp: false);
         var include = s.GetDailyShuffleIncludePrefixes();
         TraceActivity(() => _activity.NoteShuffleStart());
         ShuffleResult result;
@@ -2639,8 +2640,8 @@ public sealed class SonosManager
                 new ShuffleOptions
                 {
                     MaxQueueTracks = s.ShuffleQueueTracks,
-                    ExcludeUris = exclude,
-                    PlayedAtUtc = playedAt,
+                    ExcludeUris = history.ExcludeUris,
+                    PlayedAtUtc = history.PlayedAtUtc,
                     IncludePathPrefixes = include,
                     AppendToQueue = false,
                     ArtistSpread = s.ShuffleArtistSpread,
@@ -2709,7 +2710,7 @@ public sealed class SonosManager
         // Prefer cache for a quick empty check / toast counts; shuffle still uses Sonos browse + prefix.
         var cached = library.CountTracksUnderFolder(folderPath);
 
-        var (exclude, playedAt) = BuildShuffleHistory(s);
+        var history = BuildShuffleHistory(s, topUp: false);
         TraceActivity(() => _activity.NotePlayNow(label));
         ShuffleResult result;
         try
@@ -2718,8 +2719,8 @@ public sealed class SonosManager
                 new ShuffleOptions
                 {
                     MaxQueueTracks = s.ShuffleQueueTracks,
-                    ExcludeUris = exclude,
-                    PlayedAtUtc = playedAt,
+                    ExcludeUris = history.ExcludeUris,
+                    PlayedAtUtc = history.PlayedAtUtc,
                     IncludePathPrefixes = [folderPath],
                     AppendToQueue = false,
                     ArtistSpread = s.ShuffleArtistSpread,
@@ -2766,7 +2767,8 @@ public sealed class SonosManager
 
             if (string.IsNullOrWhiteSpace(uri)) return;
             _playHistory.RecordPlayed(uri);
-            RememberServed([uri]);
+            // Do not refresh the enqueue time: this track just played or was skipped.
+            RememberServed([uri], touchExisting: false);
             _lastEventUri = uri;
             _lastEventTrackKey = PlayHistoryStore.NormalizeKey(uri);
         }
@@ -2779,43 +2781,56 @@ public sealed class SonosManager
     private void ClearSessionServed()
     {
         lock (_servedGate)
-            _sessionServedKeys.Clear();
+            _sessionServedAt.Clear();
     }
 
-    private void RememberServed(IEnumerable<string> uris)
+    /// <summary>
+    /// Record URIs just placed on the queue. <paramref name="touchExisting"/> is
+    /// false for a play/skip observation so the original enqueue time stays put
+    /// and a track that just started is not treated as still waiting.
+    /// </summary>
+    private void RememberServed(IEnumerable<string> uris, bool touchExisting = true)
     {
+        var now = DateTime.UtcNow;
         lock (_servedGate)
         {
             foreach (var u in uris)
             {
                 var k = PlayHistoryStore.NormalizeKey(u);
-                if (k.Length > 0)
-                    _sessionServedKeys.Add(k);
+                if (k.Length == 0)
+                    continue;
+                if (_sessionServedAt.ContainsKey(k))
+                {
+                    if (touchExisting)
+                        _sessionServedAt[k] = now;
+                }
+                else
+                {
+                    _sessionServedAt[k] = touchExisting ? now : DateTime.MinValue;
+                }
             }
         }
     }
 
-    private List<string> SnapshotSessionServed()
+    private Dictionary<string, DateTime> SnapshotSessionServed()
     {
         lock (_servedGate)
-            return _sessionServedKeys.ToList();
+            return new Dictionary<string, DateTime>(_sessionServedAt, StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>14-day play keys plus last-played times (session-served counts as just played).</summary>
-    private (IReadOnlyCollection<string>? Exclude, IReadOnlyDictionary<string, DateTime>? PlayedAt)
-        BuildShuffleHistory(AppSettings s)
-    {
-        if (!s.ShuffleExcludePlayed)
-            return (null, null);
-
-        var playedAt = new Dictionary<string, DateTime>(
+    /// <summary>
+    /// Fresh shuffle stamps session-served keys as just played and does not
+    /// pass a queued set (the queue is about to be replaced). Top-up keeps
+    /// real play times and always returns the still-waiting keys, including
+    /// when ShuffleExcludePlayed is off.
+    /// </summary>
+    private ShuffleExclusion BuildShuffleHistory(AppSettings s, bool topUp) =>
+        ShuffleExclusion.Build(
+            s.ShuffleExcludePlayed,
+            topUp,
             _playHistory.GetLastPlayedUtcByKey(),
-            StringComparer.OrdinalIgnoreCase);
-        var now = DateTime.UtcNow;
-        foreach (var k in SnapshotSessionServed())
-            playedAt[k] = now;
-        return (playedAt.Keys.ToList(), playedAt);
-    }
+            SnapshotSessionServed(),
+            DateTime.UtcNow);
 
     /// <summary>
     /// Play one library track (UNC or x-file-cifs). Replaces the queue.
@@ -3164,8 +3179,10 @@ public sealed class SonosManager
     }
 
     /// <summary>
-    /// Append another random batch excluding play/skip history and tracks already
-    /// enqueued this session — when the queue is nearly empty.
+    /// Append another batch when the queue is nearly empty. Recently heard tracks
+    /// are excluded only when ShuffleExcludePlayed is on. Tracks still waiting
+    /// on the queue are never appended. If every in-scope track is still waiting,
+    /// this adds nothing.
     /// </summary>
     public async Task TryTopUpQueueAsync(CancellationToken ct = default)
     {
@@ -3181,7 +3198,7 @@ public sealed class SonosManager
             if (!s.ShuffleAutoTopUp || !ShouldAutoTopUp(s))
                 return;
 
-            var (exclude, playedAt) = BuildShuffleHistory(s);
+            var history = BuildShuffleHistory(s, topUp: true);
             IReadOnlyCollection<string>? include;
             if (string.Equals(_playbackMode, "folder", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(_folderShufflePrefix))
@@ -3197,8 +3214,9 @@ public sealed class SonosManager
                 new ShuffleOptions
                 {
                     MaxQueueTracks = s.ShuffleTopUpTracks,
-                    ExcludeUris = exclude,
-                    PlayedAtUtc = playedAt,
+                    ExcludeUris = history.ExcludeUris,
+                    PlayedAtUtc = history.PlayedAtUtc,
+                    QueuedUris = history.QueuedUris,
                     IncludePathPrefixes = include,
                     AppendToQueue = true,
                     ArtistSpread = s.ShuffleArtistSpread,

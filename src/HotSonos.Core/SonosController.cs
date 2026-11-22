@@ -341,6 +341,11 @@ public sealed class SonosController
 
         var excludeKeys = BuildNormalizedKeySet(options.ExcludeUris);
         var playedAt = NormalizePlayedAt(options.PlayedAtUtc);
+        // Null QueuedUris = fresh shuffle. A top-up always passes a collection,
+        // including an empty one, so the exhausted fallback cannot reuse waiting tracks.
+        HashSet<string>? queuedKeys = options.QueuedUris is null
+            ? null
+            : BuildNormalizedKeySet(options.QueuedUris);
         var (ordered, excludedCount, candidateCount, slidBack) =
             BuildExclusionOrder(
                 scoped,
@@ -348,7 +353,8 @@ public sealed class SonosController
                 playedAt,
                 options.HardRecentWindow,
                 maxQueue,
-                options.ArtistSpread);
+                options.ArtistSpread,
+                queuedKeys);
 
         if (!append)
             await InvokeAvTransport("RemoveAllTracksFromQueue", ct, ("InstanceID", "0"));
@@ -476,6 +482,10 @@ public sealed class SonosController
     /// If the unheard pool is short, slide in the oldest plays outside
     /// <paramref name="hardRecentWindow"/>. Last-24h tracks return only when
     /// every in-scope track was heard that recently.
+    /// When <paramref name="queuedKeys"/> is non-null (top-up), those tracks are
+    /// never returned. The empty-candidate fallback then replays only the
+    /// remaining already-heard tracks, oldest first, or nothing when none are
+    /// eligible. A null set is a fresh shuffle and still reuses the whole scope.
     /// </summary>
     internal static (List<(string Uri, XElement Item)> Ordered, int ExcludedCount, int CandidateCount, int SlidBackCount)
         BuildExclusionOrder(
@@ -484,19 +494,39 @@ public sealed class SonosController
             IReadOnlyDictionary<string, DateTime> playedAt,
             TimeSpan hardRecentWindow,
             int maxQueue,
-            bool artistSpread)
+            bool artistSpread,
+            HashSet<string>? queuedKeys = null)
     {
+        var protectQueued = queuedKeys is not null;
+        var scope = tracks;
         List<(string Uri, XElement Item)> candidates;
         var excluded = 0;
         var slidBack = 0;
+        if (protectQueued && queuedKeys!.Count > 0)
+        {
+            scope = new List<(string Uri, XElement Item)>(tracks.Count);
+            foreach (var t in tracks)
+            {
+                var key = NormalizeTrackKey(t.Uri);
+                if (key.Length > 0 && queuedKeys.Contains(key))
+                {
+                    excluded++;
+                    continue;
+                }
+
+                scope.Add(t);
+            }
+        }
+
+        var oldestFirst = false;
         if (excludeKeys.Count == 0)
         {
-            candidates = tracks.ToList();
+            candidates = scope.ToList();
         }
         else
         {
-            candidates = new List<(string Uri, XElement Item)>(tracks.Count);
-            foreach (var t in tracks)
+            candidates = new List<(string Uri, XElement Item)>(scope.Count);
+            foreach (var t in scope)
             {
                 var key = NormalizeTrackKey(t.Uri);
                 if (excludeKeys.Contains(key))
@@ -514,7 +544,7 @@ public sealed class SonosController
                     : hardRecentWindow;
                 var cutoff = DateTime.UtcNow - window;
                 var older = new List<(string Uri, XElement Item, DateTime Played)>();
-                foreach (var t in tracks)
+                foreach (var t in scope)
                 {
                     var key = NormalizeTrackKey(t.Uri);
                     if (!excludeKeys.Contains(key))
@@ -538,16 +568,40 @@ public sealed class SonosController
 
             if (candidates.Count == 0)
             {
-                candidates = tracks.ToList();
-                excluded = 0;
-                slidBack = 0;
+                if (protectQueued)
+                {
+                    // Already heard, oldest first. Waiting tracks were removed
+                    // from scope, so an empty scope appends nothing.
+                    candidates = scope
+                        .Select(t =>
+                        {
+                            var key = NormalizeTrackKey(t.Uri);
+                            var when = playedAt.TryGetValue(key, out var played)
+                                ? played
+                                : DateTime.MinValue;
+                            return (Track: t, When: when);
+                        })
+                        .OrderBy(t => t.When)
+                        .Select(t => t.Track)
+                        .ToList();
+                    oldestFirst = true;
+                }
+                else
+                {
+                    candidates = scope.ToList();
+                    excluded = 0;
+                    slidBack = 0;
+                }
             }
         }
 
-        Shuffle(candidates);
-        var ordered = artistSpread ? SpreadArtists(candidates) : candidates;
+        if (!oldestFirst)
+            Shuffle(candidates);
+        var ordered = !oldestFirst && artistSpread ? SpreadArtists(candidates) : candidates;
         if (ordered.Count > maxQueue)
             ordered = ordered.Take(maxQueue).ToList();
+        if (oldestFirst)
+            excluded = tracks.Count - ordered.Count;
         return (ordered, excluded, candidates.Count, slidBack);
     }
 

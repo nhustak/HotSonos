@@ -18,18 +18,25 @@ A phone already installed with a different signature has to be uninstalled first
 
 ## Build
 
-From the repo root, with JDK 17 or later and an Android SDK that has platform 36:
+From the repo root, with JDK 17 or later and an Android SDK that has platform 36.
+
+Windows:
+
+```powershell
+cd src\HotSonos.Wear
+.\gradlew.bat assembleDebug
+```
+
+The signed debug APK is `src\HotSonos.Wear\app\build\outputs\apk\debug\app-debug.apk`.
+
+macOS or Linux:
 
 ```bash
 cd src/HotSonos.Wear
 ./gradlew assembleDebug
 ```
 
-The signed debug APK is:
-
-```text
-src/HotSonos.Wear/app/build/outputs/apk/debug/app-debug.apk
-```
+The signed debug APK is `src/HotSonos.Wear/app/build/outputs/apk/debug/app-debug.apk`.
 
 GitHub Actions job `wear` runs that command and uploads the APK as `HotSonos-wear-debug`.
 
