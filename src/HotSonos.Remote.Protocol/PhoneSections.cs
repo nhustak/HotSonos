@@ -47,7 +47,7 @@ public static class PhoneSections
 
     public static bool DefaultOpen(string key) => key switch
     {
-        NowSlots or PlayTags or RoomsHouse or RoomsGroups or SpeakersDaily
+        NowSlots or PlayTags or RoomsHouse or RoomsGroups or RoomsVolume or SpeakersDaily
             or LibraryFolders or PlaybackShuffle or Wake or ReportFilters => true,
         _ => false,
     };

@@ -9,8 +9,9 @@ sealed class TopologyPage : RemotePage
     readonly Label _status = RemoteUi.Muted("");
     readonly Switch _keep = new();
     readonly VerticalStackLayout _groups = new();
-    readonly VerticalStackLayout _members = new();
     readonly VerticalStackLayout _volumes = new();
+    readonly Dictionary<string, Label> _playing = new(StringComparer.OrdinalIgnoreCase);
+    IReadOnlyList<RemoteTopologyGroupDto>? _layout;
     readonly RefreshView _refresh = new() { RefreshColor = Swatches.Accent };
     bool _suppressKeep;
     bool _loading;
@@ -55,8 +56,7 @@ sealed class TopologyPage : RemotePage
                 RemoteUi.Button("Regroup Daily group", RegroupAsync, danger: true),
                 RemoteUi.Button("Reboot all speakers", () => RebootAsync(null, true), danger: true)),
             RemoteUi.Section(PhoneSections.RoomsGroups, "Topology", _groups),
-            RemoteUi.Section(PhoneSections.RoomsSpeakers, "Speakers", _members),
-            RemoteUi.Section(PhoneSections.RoomsVolume, "Volume per room", _volumes));
+            RemoteUi.Section(PhoneSections.RoomsVolume, "Rooms", _volumes));
         _refresh.Content = page;
         _refresh.Command = new Command(() => _ = LoadAsync());
         Content = _refresh;
@@ -64,6 +64,7 @@ sealed class TopologyPage : RemotePage
 
     protected override void OnStatus(RemoteStatusResponse? status)
     {
+        PaintPlaying(status);
         var key = (status?.LiveGrouping ?? "") + "|" + (status?.NowPlaying?.State ?? "");
         if (_seenKey is not null && string.Equals(key, _seenKey, StringComparison.Ordinal))
             return;
@@ -116,8 +117,9 @@ sealed class TopologyPage : RemotePage
         if (!AppServices.Link.OnPc)
         {
             _groups.Clear();
-            _members.Clear();
+            _playing.Clear();
             _volumes.Clear();
+            _layout = null;
             _groups.Add(RemoteUi.NeedsPc("Rooms on the PC"));
             _status.Text = AppServices.Link.Problem ?? "Cannot reach the PC.";
             return;
@@ -129,10 +131,8 @@ sealed class TopologyPage : RemotePage
         {
             _status.Text = topo.Detail ?? "No topology.";
             ShowCards(null, [], []);
-            _members.Clear();
-            _volumes.Clear();
-            // Speaker rows and volume lines come from /api/volumes, which does not need the topology payload.
-            await LoadSpeakerVolumesAsync(speakerRows: true);
+            // Room rows come from /api/volumes, which does not need the topology payload.
+            await LoadSpeakerVolumesAsync();
             return;
         }
 
@@ -143,31 +143,21 @@ sealed class TopologyPage : RemotePage
         _status.Text = DescribeTopology(value);
 
         ShowCards(value.Layout, value.Offline, value.Vanished);
-
-        _members.Clear();
-        foreach (var member in value.Members.Where(m => !m.Invisible))
-            AddSpeakerRow(member.Room, member.IsCoordinator);
-
-        await LoadSpeakerVolumesAsync(speakerRows: false);
+        await LoadSpeakerVolumesAsync();
     }
 
-    async Task LoadSpeakerVolumesAsync(bool speakerRows)
+    async Task LoadSpeakerVolumesAsync()
     {
         var volumes = await AppServices.Client.GetVolumesAsync(CancellationToken.None);
         var speakers = volumes.Value?.Speakers ?? [];
-        if (speakerRows)
-        {
-            foreach (var speaker in speakers)
-                AddSpeakerRow(speaker.Room, coordinator: false);
-        }
-
         var generation = ++_volumeRows;
         var step = await VolumeStepAsync();
+        _playing.Clear();
         _volumes.Clear();
         foreach (var speaker in speakers)
         {
             var room = speaker.Room;
-            _volumes.Add(VolumeLine.Room(
+            var row = VolumeLine.Room(
                 room,
                 speaker.Volume,
                 speaker.Muted,
@@ -176,8 +166,13 @@ sealed class TopologyPage : RemotePage
                 generation,
                 () => _volumeRows,
                 percent => Act(ct => AppServices.Client.SetRoomVolumeAsync(room, null, percent, null, ct), _status),
-                mute => Act(ct => AppServices.Client.SetRoomVolumeAsync(room, null, null, mute, ct), _status)));
+                mute => Act(ct => AppServices.Client.SetRoomVolumeAsync(room, null, null, mute, ct), _status),
+                () => HoldRoomAsync(room));
+            _playing[room] = row.Playing;
+            _volumes.Add(row.View);
         }
+
+        PaintPlaying(AppServices.Live.Status);
     }
 
     async Task<int> VolumeStepAsync()
@@ -188,22 +183,6 @@ sealed class TopologyPage : RemotePage
         return call.Value is { Ok: true } settings
             ? PhoneVolume.Normalize(settings.VolumeStep)
             : PhoneVolume.SpeakerStep;
-    }
-
-    void AddSpeakerRow(string room, bool coordinator)
-    {
-        var label = coordinator ? room + " · coordinator" : room;
-        var row = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(new GridLength(2, GridUnitType.Star)), new ColumnDefinition(), new ColumnDefinition() } };
-        var name = RemoteUi.Muted(label);
-        var lead = RemoteUi.Button("Lead", () => RegroupRoomAsync(room));
-        var reboot = RemoteUi.Button("Reboot", () => RebootAsync(room, false), danger: true);
-        Grid.SetColumn(name, 0);
-        Grid.SetColumn(lead, 1);
-        Grid.SetColumn(reboot, 2);
-        row.Add(name);
-        row.Add(lead);
-        row.Add(reboot);
-        _members.Add(row);
     }
 
     async Task LoadSpeakersAsync()
@@ -247,33 +226,17 @@ sealed class TopologyPage : RemotePage
 
         ShowCards(cards, [], snap.VanishedRooms);
 
-        _members.Clear();
-        foreach (var zone in house.Zones)
-        {
-            var room = zone.RoomName;
-            var label = zone.IsCoordinator ? room + " · lead" : room;
-            var row = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(new GridLength(2, GridUnitType.Star)), new ColumnDefinition(), new ColumnDefinition() } };
-            var lead = RemoteUi.Button("Lead", () => LeadAsync(room));
-            var leave = RemoteUi.Button("Leave", () => LeaveAsync(room));
-            var name = RemoteUi.Muted(label);
-            Grid.SetColumn(name, 0);
-            Grid.SetColumn(lead, 1);
-            Grid.SetColumn(leave, 2);
-            row.Add(name);
-            row.Add(lead);
-            row.Add(leave);
-            _members.Add(row);
-        }
-
         var volumes = await house.ReadVolumesAsync(CancellationToken.None);
         var step = await VolumeStepAsync();
         var generation = ++_volumeRows;
+        _playing.Clear();
         _volumes.Clear();
         foreach (var speaker in volumes)
         {
             var ip = speaker.Ip;
-            _volumes.Add(VolumeLine.Room(
-                speaker.Room,
+            var room = speaker.Room;
+            var row = VolumeLine.Room(
+                room,
                 speaker.Volume,
                 speaker.Muted,
                 speaker.Reachable,
@@ -307,8 +270,13 @@ sealed class TopologyPage : RemotePage
                         _status.Text = ex.Message;
                         return false;
                     }
-                }));
+                },
+                () => HoldRoomAsync(room));
+            _playing[room] = row.Playing;
+            _volumes.Add(row.View);
         }
+
+        PaintPlaying(AppServices.Live.Status);
     }
 
     void ShowCards(
@@ -316,6 +284,7 @@ sealed class TopologyPage : RemotePage
         IReadOnlyList<string> offline,
         IReadOnlyList<string> vanished)
     {
+        _layout = layout;
         _groups.Clear();
         if (layout is null || layout.Count == 0)
         {
@@ -396,6 +365,31 @@ sealed class TopologyPage : RemotePage
         if (lines.Count == 0)
             lines.Add($"Active {value.ActiveRoom ?? "—"} · preferred {value.PreferredCoordinator ?? "—"}");
         return string.Join("\n", lines);
+    }
+
+    void PaintPlaying(RemoteStatusResponse? status)
+    {
+        var title = status?.NowPlaying?.Title;
+        var artist = status?.NowPlaying?.Artist;
+        var active = status?.ActiveRoom;
+        foreach (var (room, label) in _playing)
+        {
+            var line = RoomNowPlaying.Line(room, _layout, active, title, artist);
+            label.Text = line ?? "";
+            label.IsVisible = line is not null;
+        }
+    }
+
+    async Task HoldRoomAsync(string room)
+    {
+        var actions = RoomRowActions.For(AppServices.Link.DrivePc);
+        var pick = await DisplayActionSheet(room, "Cancel", null, actions.ToArray());
+        if (pick == RoomRowActions.Coordinator)
+            await RegroupRoomAsync(room);
+        else if (pick == RoomRowActions.Reboot)
+            await RebootAsync(room, false);
+        else if (pick == RoomRowActions.Leave)
+            await LeaveAsync(room);
     }
 
     async Task LeadAsync(string room)

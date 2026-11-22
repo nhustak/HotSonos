@@ -8,6 +8,7 @@ public class PhoneSectionTests
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.NowSlots));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.PlayTags));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.RoomsGroups));
+        Assert.True(PhoneSections.DefaultOpen(PhoneSections.RoomsVolume));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.SpeakersDaily));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.LibraryFolders));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.PlaybackShuffle));
@@ -17,7 +18,6 @@ public class PhoneSectionTests
         Assert.False(PhoneSections.DefaultOpen(PhoneSections.PlayGenres));
         Assert.False(PhoneSections.DefaultOpen(PhoneSections.PlayFolders));
         Assert.False(PhoneSections.DefaultOpen(PhoneSections.RoomsSpeakers));
-        Assert.False(PhoneSections.DefaultOpen(PhoneSections.RoomsVolume));
         Assert.False(PhoneSections.DefaultOpen(PhoneSections.LibraryMaster));
         Assert.False(PhoneSections.DefaultOpen(PhoneSections.LibraryTags));
         Assert.False(PhoneSections.DefaultOpen(PhoneSections.Nightly));

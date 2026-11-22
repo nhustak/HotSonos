@@ -73,6 +73,18 @@ public class RemoteWindowTests
         Assert.Equal(111, RemoteWindow.TabButtonWidth(900, 8));
         Assert.Equal(RemoteWindow.TabButtonMax, RemoteWindow.TabButtonWidth(1600, 8));
     }
+
+    [Theory]
+    [InlineData(400, 800, 352)]
+    [InlineData(400, 600, 276)]
+    [InlineData(360, 700, 312)]
+    [InlineData(200, 800, 160)]
+    [InlineData(480, 2000, 420)]
+    [InlineData(520, 900, 414)]
+    public void ArtSide_MatchesThePlayerSquare(double width, double height, double expected)
+    {
+        Assert.Equal(expected, RemoteWindow.ArtSide(width, height));
+    }
 }
 
 public class FindPcMissedTests
