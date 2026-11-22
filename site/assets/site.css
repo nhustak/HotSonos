@@ -52,10 +52,11 @@ footer a{color:var(--muted)}footer a:hover{color:var(--text)}
 @media (max-width:900px){.hero .wrap,.two{grid-template-columns:1fr}.hero-logo{order:-1;width:180px;justify-self:start}.grid{grid-template-columns:1fr 1fr}nav a.hide-sm{display:none}}
 @media (max-width:600px){.grid{grid-template-columns:1fr}nav a{margin-left:14px}.hero{padding-top:56px}}
 section[id]{scroll-margin-top:72px}
-.platforms{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:26px;max-width:620px}
+.platforms{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
 .plat{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:8px}
 .plat-name{font-size:1.25rem;font-weight:750;color:var(--text)}
 .plat-desc{color:var(--muted,#a3a9b6);font-size:.95rem;flex:1}
 .plat .btn{align-self:flex-start}
 .plat-status{align-self:flex-start;padding:13px 22px;border-radius:12px;font-weight:650;border:1px solid #e8822f;color:#f0a35e}
-@media(max-width:640px){.platforms{grid-template-columns:1fr}}
+@media(max-width:820px){.platforms{grid-template-columns:1fr}}
+.plat-wrap{grid-column:1/-1}

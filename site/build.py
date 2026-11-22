@@ -60,13 +60,16 @@ INDEX=head("HotSonos — global hotkeys for your music library",DESC,"/")+f'''
 <span class="eyebrow">Free · Open source · Windows 10/11</span>
 <h1>Your music library, <span class="g">one hotkey away.</span></h1>
 <p class="lead">HotSonos lives in the Windows system tray and gives you global hotkeys for the music files you share to Sonos: history-aware shuffle, play/pause, skip, and whole-house volume, over your local network. No cloud and no Sonos account. Shuffle does not work with Spotify, Apple Music, or other streaming services.</p>
-<div class="platforms">
-<div class="plat"><div class="plat-name">Windows</div><div class="plat-desc">Tray app with global hotkeys. Windows 10 and 11.</div><a class="btn btn-primary" href="{REL}">Download for Windows</a></div>
-<div class="plat"><div class="plat-name">Android</div><div class="plat-desc">Phone, tablet and Chromebook. Plays your library on your speakers on its own, no PC needed. Can also act as a remote for the Windows app.</div><span class="plat-status">Alpha coming soon</span></div>
-</div>
-<p class="small" style="margin-top:14px"><a href="{REPO}">View on GitHub</a> · iPhone and iPad: early prototype, also standalone</p>
 </div>
 <img class="hero-logo" src="/assets/logo.png" alt="HotSonos logo" width="320" height="320">
+<div class="plat-wrap">
+<div class="platforms">
+<div class="plat"><div class="plat-name">Windows</div><div class="plat-desc">Tray app with global hotkeys.</div><a class="btn btn-primary" href="{REL}">Download for Windows</a></div>
+<div class="plat"><div class="plat-name">Android</div><div class="plat-desc">Full HotSonos on your phone, tablet or Chromebook. Can also remote-control the PC.</div><span class="plat-status">Alpha coming soon</span></div>
+<div class="plat"><div class="plat-name">iPhone and iPad</div><div class="plat-desc">Full HotSonos on iPhone and iPad. Can also remote-control the PC.</div><span class="plat-status">Early prototype</span></div>
+</div>
+<p class="small" style="margin-top:14px"><a href="{REPO}">View on GitHub</a></p>
+</div>
 </div></section>
 
 <section id="features"><div class="wrap">
@@ -132,7 +135,7 @@ INDEX=head("HotSonos — global hotkeys for your music library",DESC,"/")+f'''
 <details><summary>Does it work with Spotify or other streaming services?</summary><p>HotSonos is built for your own music library on Sonos: local files shared to your speakers. History-aware shuffle, top-up, exclusions, and Restart fresh reshuffle use that library. They do not work with Spotify, Apple Music, or other streaming services. Play, pause, skip, and volume are sent straight to the speakers, so they still control the group while something else is already playing.</p></details>
 <details><summary>Does it replace the Sonos app?</summary><p>No — it sits alongside it. Use the Sonos app for setup and music services. Use HotSonos for keyboard-first control of your own music library.</p></details>
 <details><summary>How does the shuffle avoid repeats?</summary><p>As songs play or you skip them, HotSonos remembers them and leaves them out of the next batch (by default, roughly the last couple of weeks). If you've heard most of your library, it loosens that rule so music keeps playing.</p></details>
-<details><summary>Is there a Mac or phone version?</summary><p>The tray app is Windows. The Android app is a standalone app: it talks to your speakers on the same Wi-Fi and does not need the PC. If you also run the tray app, the phone can act as a remote for it. It also runs on a Chromebook.</p><p>iPhone and iPad: early prototype. There is no Mac app.</p></details>
+<details><summary>Is there a Mac or phone version?</summary><p>The tray app is Windows. The Android app (phone, tablet, Chromebook) does everything HotSonos does, and can also remote-control the PC.</p><p>iPhone and iPad: early prototype. There is no Mac app.</p></details>
 <details><summary>My speakers stutter or drop out of groups. Can HotSonos help?</summary><p>Restart fresh re-discovers and regroups speakers and starts a new shuffle. If problems persist, the README explains why turning off SonosNet and choosing a 5 GHz group coordinator often helps.</p></details>
 <details><summary>Why does Windows warn me when I install it?</summary><p>The MSI isn't code-signed yet. SmartScreen may show a prompt; choose More info → Run anyway.</p></details>
 <details><summary>Is it free?</summary><p>Yes. HotSonos is open source under the MIT license. The source and every release are on <a href="{REPO}">GitHub</a>.</p></details>
