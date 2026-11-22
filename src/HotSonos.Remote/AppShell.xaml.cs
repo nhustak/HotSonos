@@ -31,6 +31,7 @@ public partial class AppShell : ContentPage
         AppServices.Live.Start();
 #if ANDROID
         MediaControls.Install();
+        WearBridge.Install();
 #endif
         _pages =
         [

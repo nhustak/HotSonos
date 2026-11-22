@@ -19,6 +19,16 @@ sealed class RemoteLive
     public string? Problem { get; private set; }
     public event Action? Changed;
 
+    /// <summary>True while the 2-second poll is running. A watch command must not restart it.</summary>
+    public bool IsRunning
+    {
+        get
+        {
+            lock (_gate)
+                return _loop is not null;
+        }
+    }
+
     public void Start()
     {
         Stop();
