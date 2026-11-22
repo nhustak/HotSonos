@@ -8,6 +8,9 @@ static class RemoteInput
 {
     public static Action<View, Func<Task>>? Activate { get; set; }
 
+    /// <summary>Platform long-press / right-click. Null uses a pointer hold.</summary>
+    public static Action<View, Func<Task>>? Hold { get; set; }
+
     public static Action<VisualElement>? SkipTab { get; set; }
 
     public static void MakeActivable(View view, Func<Task> activate)
@@ -32,6 +35,44 @@ static class RemoteInput
             }
         };
         view.GestureRecognizers.Add(tap);
+    }
+
+    /// <summary>Long-press (and a right-click on a Chromebook) runs <paramref name="hold"/> once.</summary>
+    public static void MakeHoldable(View view, Func<Task> hold)
+    {
+        if (Hold is not null)
+        {
+            Hold(view, hold);
+            return;
+        }
+
+        var token = 0;
+        var pointer = new PointerGestureRecognizer();
+        pointer.PointerPressed += (_, _) =>
+        {
+            var mine = ++token;
+            _ = ArmAsync(mine);
+        };
+        pointer.PointerReleased += (_, _) => token++;
+        pointer.PointerExited += (_, _) => token++;
+        view.GestureRecognizers.Add(pointer);
+
+        async Task ArmAsync(int mine)
+        {
+            await Task.Delay(500).ConfigureAwait(true);
+            if (mine != token)
+                return;
+            token++;
+            try
+            {
+                await hold().ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                if (Application.Current?.MainPage is Page page)
+                    await page.DisplayAlert("HotSonos", ex.Message, "OK");
+            }
+        }
     }
 
     public static void OmitFromTabOrder(VisualElement view) => SkipTab?.Invoke(view);

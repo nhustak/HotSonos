@@ -52,13 +52,17 @@ sealed class MuteIcon
     }
 }
 
+/// <summary>One Rooms row: the volume line, plus the label under the room name.</summary>
+readonly record struct RoomVolumeLine(View View, Label Playing);
+
 /// <summary>
-/// One per-room volume line: name, −, percent, +, mute icon. No slider.
+/// One per-room volume line: name, what's playing, −, percent, +, mute icon. No slider.
 /// − and + match the mute control's 40dp target so a phone row and a wide window stay compact.
+/// A long-press on the name opens the room actions. The volume buttons stay on this line.
 /// </summary>
 static class VolumeLine
 {
-    public static View Room(
+    public static RoomVolumeLine Room(
         string room,
         int volume,
         bool muted,
@@ -67,7 +71,8 @@ static class VolumeLine
         int generation,
         Func<int> generationNow,
         Func<int, Task<bool>> writeVolume,
-        Func<bool, Task<bool>> writeMute)
+        Func<bool, Task<bool>> writeMute,
+        Func<Task>? hold = null)
     {
         var shown = Math.Clamp(volume, 0, 100);
         var applied = shown;
@@ -88,6 +93,33 @@ static class VolumeLine
             VerticalTextAlignment = TextAlignment.Center,
             VerticalOptions = LayoutOptions.Center,
         };
+        var playing = new Label
+        {
+            TextColor = Swatches.Muted,
+            FontSize = 13,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            MaxLines = 1,
+            Margin = 0,
+            Padding = 0,
+            IsVisible = false,
+            HorizontalOptions = LayoutOptions.Fill,
+        };
+        var names = new VerticalStackLayout
+        {
+            Spacing = 0,
+            Padding = 0,
+            HorizontalOptions = LayoutOptions.Fill,
+            VerticalOptions = LayoutOptions.Center,
+            Children = { name, playing },
+        };
+        if (hold is not null)
+        {
+            SemanticProperties.SetDescription(names, room + ". Long press for room actions.");
+            RemoteInput.MakeHoldable(names, hold);
+            RemoteInput.MakeHoldable(name, hold);
+            RemoteInput.MakeHoldable(playing, hold);
+        }
+
         var percent = new Label
         {
             Text = shown + "%",
@@ -199,12 +231,12 @@ static class VolumeLine
                 new ColumnDefinition(GridLength.Auto),
             },
         };
-        Put(row, name, 0);
+        Put(row, names, 0);
         Put(row, Step("−", "Volume down", () => Begin(-1), () => holding = false), 1);
         Put(row, percent, 2);
         Put(row, Step("+", "Volume up", () => Begin(1), () => holding = false), 3);
         Put(row, icon.View, 4);
-        return RemoteUi.Card(row);
+        return new RoomVolumeLine(RemoteUi.Card(row), playing);
     }
 
     static Button Step(string text, string description, Action pressed, Action released)

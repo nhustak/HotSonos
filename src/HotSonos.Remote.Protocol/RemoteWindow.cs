@@ -20,6 +20,16 @@ public static class RemoteWindow
 
     const double TabButtonMin = 84;
 
+    /// <summary>
+    /// Square album-art side. Callers pass the column width and the viewport height.
+    /// The Player uses this value for both width and height and does not shrink it to fit text.
+    /// </summary>
+    public static double ArtSide(double width, double height)
+    {
+        var side = Math.Min(width - 48, height * 0.46);
+        return Math.Clamp(side, 160, 420);
+    }
+
     public static double Column(double available, double max)
     {
         if (available <= 0 || double.IsNaN(available) || double.IsInfinity(available) || max <= 0)
