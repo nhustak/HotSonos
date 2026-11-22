@@ -90,7 +90,7 @@ sealed class WakeSettingsPage : RemotePage
         var call = await AppServices.Client.GetSettingsAsync(CancellationToken.None);
         if (call.Value is not { Ok: true } s)
         {
-            _status.Text = call.Detail ?? "Could not load settings.";
+            _status.Text = PairingPrompt.Miss(call, "Could not load settings.");
             return;
         }
 

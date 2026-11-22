@@ -15,15 +15,23 @@ public partial class PhonePairingWindow : Window
     private readonly Func<string?> _endpoint;
     private readonly Action _newPin;
     private readonly Action _firewall;
+    private readonly Func<PairingPasswordRecord, string?> _changePassword;
     private bool _adbBusy;
+    private bool _pairBusy;
     private string? _pairLink;
 
-    public PhonePairingWindow(AppSettings settings, Func<string?> endpoint, Action newPin, Action firewall)
+    public PhonePairingWindow(
+        AppSettings settings,
+        Func<string?> endpoint,
+        Action newPin,
+        Action firewall,
+        Func<PairingPasswordRecord, string?> changePassword)
     {
         _settings = settings;
         _endpoint = endpoint;
         _newPin = newPin;
         _firewall = firewall;
+        _changePassword = changePassword;
         InitializeComponent();
         _settings.EnsureShape();
         AdbHostBox.Text = _settings.PhoneAdbHost;
@@ -38,7 +46,7 @@ public partial class PhonePairingWindow : Window
         var locals = HotSonosRemoteHost.LocalIpv4();
         if (!string.IsNullOrWhiteSpace(live) && Uri.TryCreate(live, UriKind.Absolute, out var uri))
         {
-            StatusText.Text = "The phone can reach this PC while HotSonos is running. Scan the code, or type this address and PIN on the Connect screen.";
+            StatusText.Text = "The phone can reach this PC while HotSonos is running. Scan the code, pair with the password, or type this address and PIN.";
             HostText.Text = uri.Host;
             PortText.Text = uri.Port.ToString();
             UrlText.Text = "Listening at " + live + ". The phone also looks for a UDP announce on port " + RemoteDiscovery.Port + ".";
@@ -102,6 +110,50 @@ public partial class PhonePairingWindow : Window
         if (string.IsNullOrWhiteSpace(_pairLink))
             return;
         System.Windows.Clipboard.SetText(_pairLink);
+    }
+
+    private async void ChangePairPassword_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pairBusy)
+            return;
+
+        var password = PairPasswordBox.Password;
+        var confirm = PairPasswordConfirmBox.Password;
+        if (!PairingPassword.TryValidate(password, out var error))
+        {
+            PairPasswordStatus.Text = error;
+            return;
+        }
+
+        if (!string.Equals(password, confirm, StringComparison.Ordinal))
+        {
+            PairPasswordStatus.Text = "Those passwords do not match.";
+            return;
+        }
+
+        _pairBusy = true;
+        ChangePairPasswordButton.IsEnabled = false;
+        try
+        {
+            var record = await Task.Run(() => PairingPassword.Hash(password)).ConfigureAwait(true);
+            var saveError = _changePassword(record);
+            if (saveError is null)
+            {
+                PairPasswordBox.Clear();
+                PairPasswordConfirmBox.Clear();
+                PairPasswordStatus.Text = "Password changed. Every phone needs to pair again.";
+                Refresh();
+            }
+            else
+            {
+                PairPasswordStatus.Text = saveError;
+            }
+        }
+        finally
+        {
+            _pairBusy = false;
+            ChangePairPasswordButton.IsEnabled = true;
+        }
     }
 
     private void NewPin_Click(object sender, RoutedEventArgs e) => _newPin();

@@ -1,5 +1,6 @@
 using HotSonos.App.Services;
 using HotSonos.Core;
+using HotSonos.Remote.Protocol;
 
 namespace HotSonos.App.Models;
 
@@ -344,6 +345,15 @@ public sealed class AppSettings
     /// <summary>6-digit house PIN. The phone sends it as <c>X-HotSonos-Pin</c>. Generated once.</summary>
     public string? RemotePin { get; set; }
 
+    /// <summary>PBKDF2-SHA256 salt (base64) for the pairing password. Not the password.</summary>
+    public string? PairingPasswordSalt { get; set; }
+
+    /// <summary>PBKDF2-SHA256 hash (base64). The pairing password is never stored.</summary>
+    public string? PairingPasswordHash { get; set; }
+
+    /// <summary>PBKDF2 iteration count for <see cref="PairingPasswordHash"/>. At least 100000.</summary>
+    public int PairingPasswordIterations { get; set; }
+
     /// <summary>New 6-digit PIN, including leading zeros.</summary>
     public static string GenerateRemotePin() =>
         System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
@@ -669,6 +679,10 @@ public sealed class AppSettings
         if (RemotePort is < 1024 or > 65535) RemotePort = 42342;
         if (!IsValidRemotePin(RemotePin))
             RemotePin = GenerateRemotePin();
+        var pairingPassword = PairingPassword.Ensure(PairingPasswordSalt, PairingPasswordIterations, PairingPasswordHash);
+        PairingPasswordSalt = pairingPassword.Salt;
+        PairingPasswordIterations = pairingPassword.Iterations;
+        PairingPasswordHash = pairingPassword.Hash;
         PhoneAdbHost = PhoneWirelessDebug.NormalizeHost(PhoneAdbHost);
         PhoneAdbPort = PhoneWirelessDebug.NormalizePort(PhoneAdbPort);
         TrayDoubleClickAction = (TrayDoubleClickAction ?? "").Trim().ToLowerInvariant() switch

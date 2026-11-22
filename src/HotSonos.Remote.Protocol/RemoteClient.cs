@@ -66,6 +66,54 @@ public sealed class RemoteClient : IDisposable
     public Task<RemoteCall<RemoteStatusResponse>> GetStatusAsync(CancellationToken ct) =>
         SendAsync(HttpMethod.Get, "api/status", null, Fast, RemoteJsonContext.Default.RemoteStatusResponse, ct);
 
+    /// <summary>
+    /// Unauthenticated <c>POST /api/pair</c>. Does not keep the password, and does not
+    /// change the saved PIN until the caller stores the returned host, port, and PIN.
+    /// </summary>
+    public async Task<RemoteCall<RemotePairResponse>> PairAsync(string host, int port, string password, CancellationToken ct)
+    {
+        try
+        {
+            if (!RemoteNet.TryParseAddress(host, port.ToString(System.Globalization.CultureInfo.InvariantCulture), out var parsedHost, out var parsedPort, out var error))
+                return new(null, RemoteCallKind.Failed, error ?? "Enter the PC address.");
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(Fast);
+            var uri = new UriBuilder("http", parsedHost, parsedPort) { Path = "/api/pair" }.Uri;
+            var json = JsonSerializer.Serialize(new RemotePairRequest(password), RemoteJsonContext.Default.RemotePairRequest);
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var request = new HttpRequestMessage(HttpMethod.Post, uri) { Content = content };
+            using var response = await _http.SendAsync(request, cts.Token).ConfigureAwait(false);
+            var text = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+            RemotePairResponse? value = null;
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                try
+                {
+                    value = JsonSerializer.Deserialize(text, RemoteJsonContext.Default.RemotePairResponse);
+                }
+                catch (JsonException)
+                {
+                    return new(null, RemoteCallKind.Failed, "Bad response");
+                }
+            }
+
+            if (response.IsSuccessStatusCode && value is { Ok: true }
+                && !string.IsNullOrWhiteSpace(value.Host)
+                && RemoteNet.IsSixDigitPin(value.Pin))
+                return new(value, RemoteCallKind.Ok, null);
+
+            var detail = value?.Error;
+            if (string.IsNullOrWhiteSpace(detail))
+                detail = "Could not pair.";
+            return new(value, RemoteCallKind.Failed, detail);
+        }
+        catch (Exception ex) when (Classify(ex, ct) is { } failure)
+        {
+            return new(null, failure.Kind, failure.Detail);
+        }
+    }
+
     public Task<RemoteCall<RemoteSourcesResponse>> GetSourcesAsync(CancellationToken ct) =>
         SendAsync(HttpMethod.Get, "api/sources", null, Fast, RemoteJsonContext.Default.RemoteSourcesResponse, ct);
 

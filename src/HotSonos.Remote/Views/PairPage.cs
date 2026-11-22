@@ -13,20 +13,25 @@ sealed class PairPage : ContentPage
 #if IOS
         SafeAreaEdges = Microsoft.Maui.SafeAreaEdges.Container;
 #endif
-        _form.Status.Text = "Connect to the HotSonos PC for full control. Scan the code on the PC Phone window, paste the pairing link, or type the address and PIN.";
+        _form.Status.Text = "Connect to the HotSonos PC. Scan the code, paste the link, or pair with the password.";
         Content = RemoteUi.ConnectPage(
             "Connect to your PC",
             _form.Status,
-            RemoteUi.Muted("Find PC looks on this Wi-Fi. A Chromebook or an emulator often cannot hear that announce — scan the code, paste the link, or type the address from the Phone window."),
+            RemoteUi.Muted("Find PC looks on this Wi-Fi. A Chromebook or an emulator often cannot hear that announce — scan the code, paste the link, or pair with the password."),
             RemoteUi.Button("Find PC", FindAsync),
             _form.ScanButton,
             _form.PasteButton,
-            RemoteUi.Muted("Scan QR uses the camera when this device has one, and stays hidden when it does not. Paste pairing link reads a hotsonos://pair link."),
+            RemoteUi.Muted("Scan QR uses the camera when this device has one. Paste pairing link reads a hotsonos://pair link."),
             _form.Host,
             _form.Port,
-            _form.Pin,
-            RemoteUi.Button("Test and connect", ConnectAsync),
-            RemoteUi.Muted("Test and connect uses PC only, so a missed PC stays a missed PC. Auto and Speakers are in Settings → Connection / PC after you are in."),
+            _form.Password,
+            RemoteUi.Button("Pair with password", async () => { await _form.PairPasswordAsync().ConfigureAwait(true); }),
+            RemoteUi.Section(
+                PhoneSections.ConnectPin,
+                "Enter the PIN instead",
+                _form.Pin,
+                RemoteUi.Button("Test and connect", ConnectAsync),
+                RemoteUi.Muted("Test and connect uses PC only. Auto and Speakers are in Settings → Connection / PC after you are in.")),
             RemoteUi.Button("Use speakers without the PC", SpeakersAsync));
     }
 
@@ -61,7 +66,7 @@ sealed class PairPage : ContentPage
 
             _form.Host.Text = found.Value.Host;
             _form.Port.Text = found.Value.Port.ToString();
-            _form.Status.Text = "Found HotSonos at " + found.Value.Host + ". Enter the 6-digit PIN, then Test and connect.";
+            _form.Status.Text = "Found HotSonos at " + found.Value.Host + ". Enter the pairing password, or the PIN.";
         }
         catch (Exception ex)
         {

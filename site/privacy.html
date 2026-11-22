@@ -41,7 +41,7 @@
 <h2>What stays on your PC</h2>
 <p>HotSonos keeps its data in <code>%LocalAppData%\HotSonos</code> on your computer, including:</p>
 <ul>
-<li>Settings (<code>settings.json</code>), including hotkeys, speaker groups, and saved Spotify links you paste in</li>
+<li>Settings (<code>settings.json</code>), including hotkeys, speaker groups, saved Spotify links you paste in, and a hash of the phone pairing password (not the password)</li>
 <li>Shuffle play history (<code>play-history.json</code>) so recent songs aren't repeated</li>
 <li>Reports and activity log (<code>activity.db</code>) — song plays, skips, and speaker events, kept up to 180 days</li>
 <li>A cache of your music library's metadata (<code>library.db</code>)</li>
@@ -64,7 +64,7 @@
 <p>When turned on, the MCP endpoint for AI assistants listens only on this PC's loopback address (<code>127.0.0.1</code>). Other devices on your network can't reach it. Any AI assistant you connect to it is governed by that assistant's own privacy policy.</p>
 
 <h2>Android app (standalone, optional remote)</h2>
-<p>The Android app, including on a Chromebook, works in two ways. As a remote, it connects to the HotSonos tray app on your PC over your local network and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only. Standalone, the app talks to your Sonos speakers on the same Wi-Fi and does not contact the PC. It does not use a HotSonos account or a HotSonos server.</p>
+<p>The Android app, including on a Chromebook, works in two ways. As a remote, it connects to the HotSonos tray app on your PC over your local network and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone can also pair with a password set on the PC. That password is not stored on the phone. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only. Standalone, the app talks to your Sonos speakers on the same Wi-Fi and does not contact the PC. It does not use a HotSonos account or a HotSonos server.</p>
 <p>iPhone and iPad: early prototype.</p>
 
 <h2>This website</h2>

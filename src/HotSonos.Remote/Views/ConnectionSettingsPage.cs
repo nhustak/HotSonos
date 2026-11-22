@@ -12,15 +12,19 @@ sealed class ConnectionSettingsPage : RemotePage
             "Connection / PC",
             RemoteUi.Back(),
             _connection.Status,
-            RemoteUi.Muted("If Find PC misses, scan the code, paste the hotsonos://pair link, or type the address from the PC Phone window. This page is Settings, then Connection / PC. A Chromebook often cannot hear the UDP broadcast."),
+            RemoteUi.Muted("Scan the code, paste the link, or pair with the password. A Chromebook often cannot hear Find PC."),
             _connection.Host,
             _connection.Port,
-            _connection.Pin,
+            _connection.Password,
+            RemoteUi.Button("Pair with password", async () => { await _connection.PairPasswordAsync().ConfigureAwait(true); }),
             RemoteUi.Button("Find PC", FindPcAsync),
             _connection.ScanButton,
             _connection.PasteButton,
-            RemoteUi.Muted("Scan QR uses the camera when this device has one, and stays hidden when it does not."),
-            RemoteUi.Button("Test and save", SaveConnectionAsync),
+            RemoteUi.Section(
+                PhoneSections.ConnectPin,
+                "Enter the PIN instead",
+                _connection.Pin,
+                RemoteUi.Button("Test and save", SaveConnectionAsync)),
             RemoteUi.Muted("Link"),
             RemoteUi.ModePicker(),
             RemoteUi.Button("Forget PC", ForgetAsync, danger: true),
@@ -58,7 +62,7 @@ sealed class ConnectionSettingsPage : RemotePage
 
             _connection.Host.Text = found.Value.Host;
             _connection.Port.Text = found.Value.Port.ToString();
-            _connection.Status.Text = "Found " + found.Value.Host + ". Enter the PIN, then Test and save.";
+            _connection.Status.Text = "Found " + found.Value.Host + ". Enter the pairing password, or the PIN.";
         }
         catch (Exception ex)
         {

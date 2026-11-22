@@ -1,6 +1,7 @@
 using HotSonos.Core;
 using HotSonos.Core.Models;
 using HotSonos.Remote.Protocol;
+using HotSonos.Remote.Views;
 
 namespace HotSonos.Remote;
 
@@ -77,6 +78,13 @@ sealed class RemoteLive
                         Status = call.Value;
                         Problem = null;
                         ConsiderQueue(call.Value);
+                    }
+                    else if (call.Kind == RemoteCallKind.Unauthorized)
+                    {
+                        link.NotePcDown(PairingPrompt.AskAgain);
+                        Status = null;
+                        Problem = PairingPrompt.AskAgain;
+                        PairingPrompt.Show(fromUser: false);
                     }
                     else
                     {

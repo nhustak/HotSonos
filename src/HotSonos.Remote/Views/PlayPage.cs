@@ -48,7 +48,7 @@ sealed class PlayPage : RemotePage
         _folders.Clear();
         if (call.Value is not { } sources)
         {
-            _status.Text = call.Detail ?? "Could not load play sources.";
+            _status.Text = PairingPrompt.Miss(call, "Could not load play sources.");
             return;
         }
 

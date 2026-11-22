@@ -369,11 +369,9 @@ abstract class RemotePage : ContentPage
         var result = await call(CancellationToken.None).ConfigureAwait(true);
         if (result.Kind == RemoteCallKind.Unauthorized)
         {
-            var pin = result.Detail ?? "Wrong PIN. The PC rejected it. Open connection and enter the PIN from the PC Phone window.";
             if (status is not null)
-                status.Text = pin;
-            Toasts.Show(pin);
-            await Dialogs.Alert(this, "PIN", pin);
+                status.Text = PairingPrompt.AskAgain;
+            PairingPrompt.Show(fromUser: true);
             return false;
         }
 

@@ -8,14 +8,17 @@ sealed class ConnectionForm
 {
     public readonly Entry Host = RemoteUi.Field("PC address or 192.168.1.10");
     public readonly Entry Port = RemoteUi.Field("Port (blank = 42342)", Keyboard.Numeric);
+    public readonly Entry Password = RemoteUi.Field("Pairing password");
     public readonly Entry Pin = RemoteUi.Field("6-digit PIN", Keyboard.Numeric);
-    public readonly Label Status = RemoteUi.Muted("Scan the code, paste the pairing link, or enter the address and PIN from the PC Phone window.");
+    public readonly Label Status = RemoteUi.Muted("Scan the code, paste the pairing link, or pair with the password.");
     public readonly Button ScanButton;
     public readonly Button PasteButton;
 
     public ConnectionForm()
     {
         Pin.MaxLength = 6;
+        Password.IsPassword = true;
+        Password.MaxLength = PairingPassword.MaxLength;
         ScanButton = RemoteUi.Button("Scan QR", ScanAsync);
         PasteButton = RemoteUi.Button("Paste pairing link", PasteAsync);
         ScanButton.IsVisible = false;
@@ -71,6 +74,16 @@ sealed class ConnectionForm
 
         error = null;
         return true;
+    }
+
+    public async Task<(bool Ok, string Message)> PairPasswordAsync()
+    {
+        var secret = Password.Text ?? "";
+        var result = await PairingHandoff.PairWithPasswordAsync(Host.Text, Port.Text, secret).ConfigureAwait(true);
+        if (result.Ok)
+            Password.Text = "";
+        Status.Text = result.Message;
+        return result;
     }
 
     public async Task<RemoteCall<RemoteStatusResponse>?> ProbeAsync()

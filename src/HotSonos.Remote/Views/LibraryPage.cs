@@ -52,7 +52,7 @@ sealed class LibraryPage : RemotePage
             _results.Clear();
         if (call.Value is not { } page)
         {
-            _status.Text = call.Detail ?? "Search failed.";
+            _status.Text = PairingPrompt.Miss(call, "Search failed.");
             return;
         }
 

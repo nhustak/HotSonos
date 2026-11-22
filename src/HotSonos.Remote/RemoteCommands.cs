@@ -1,5 +1,6 @@
 using HotSonos.Core;
 using HotSonos.Remote.Protocol;
+using HotSonos.Remote.Views;
 
 namespace HotSonos.Remote;
 
@@ -124,7 +125,7 @@ static class RemoteCommands
                 var result = await pc(CancellationToken.None).ConfigureAwait(false);
                 if (result.Kind == RemoteCallKind.Unauthorized)
                 {
-                    await Alert(result.Detail ?? "Wrong PIN. The PC rejected it. Open connection and enter the PIN from the PC Phone window.").ConfigureAwait(false);
+                    PairingPrompt.Show(fromUser: true);
                     return;
                 }
 

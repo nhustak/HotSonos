@@ -373,8 +373,9 @@ sealed class PlayerPage : RemotePage
         var listed = await AppServices.Client.GetNowTagsAsync(CancellationToken.None).ConfigureAwait(true);
         if (listed.Kind != RemoteCallKind.Ok || listed.Value is null)
         {
-            _tagStatus.Text = listed.Detail ?? "Could not load tags.";
-            Toasts.Show(_tagStatus.Text);
+            _tagStatus.Text = PairingPrompt.Miss(listed, "Could not load tags.");
+            if (listed.Kind != RemoteCallKind.Unauthorized)
+                Toasts.Show(_tagStatus.Text);
             return;
         }
 

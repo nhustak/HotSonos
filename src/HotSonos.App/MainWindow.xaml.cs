@@ -5200,7 +5200,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        _phoneWindow = new PhonePairingWindow(_settings, _remoteEndpoint, RegenerateRemotePin, PromptRemoteFirewall);
+        _phoneWindow = new PhonePairingWindow(_settings, _remoteEndpoint, RegenerateRemotePin, PromptRemoteFirewall, ChangePairingPassword);
         _phoneWindow.Owner = this;
         _phoneWindow.Closed += (_, _) => _phoneWindow = null;
         _phoneWindow.Show();
@@ -5242,6 +5242,29 @@ public partial class MainWindow : Window
 
         RefreshControlDailySpeakersUi();
         RefreshRemoteEndpointText();
+    }
+
+    private string? ChangePairingPassword(PairingPasswordRecord record)
+    {
+        _settings.PairingPasswordSalt = record.Salt;
+        _settings.PairingPasswordIterations = record.Iterations;
+        _settings.PairingPasswordHash = record.Hash;
+        _settings.RemotePin = AppSettings.GenerateRemotePin();
+        RemotePinBox.Text = _settings.RemotePin ?? "";
+        try
+        {
+            _store.Save(_settings);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Could not save the pairing password", ex);
+            return "Could not save the password.";
+        }
+
+        AppLog.Info("Pairing password changed. Remote PIN rotated.");
+        SetStatus("Pairing password changed. Phones need to pair again.", warn: false);
+        _phoneWindow?.Refresh();
+        return null;
     }
 
     private void RegenerateRemotePin()

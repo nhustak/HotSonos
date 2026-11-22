@@ -87,7 +87,7 @@ sealed class ReportsPage : RemotePage
             var page = call.Value;
             if (page is null)
             {
-                _status.Text = call.Detail ?? "Music report failed.";
+                _status.Text = PairingPrompt.Miss(call, "Music report failed.");
                 return;
             }
 
@@ -112,7 +112,7 @@ sealed class ReportsPage : RemotePage
             var page = call.Value;
             if (page is null)
             {
-                _status.Text = call.Detail ?? "Event log failed.";
+                _status.Text = PairingPrompt.Miss(call, "Event log failed.");
                 return;
             }
 
