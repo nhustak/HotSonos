@@ -21,7 +21,9 @@
 
     <ApplicationTitle>HotSonos</ApplicationTitle>
     <!-- Android package and iOS bundle id. An install of the previous id,
-         com.hotsonos.remote, is a different app and is not replaced. -->
+         com.hotsonos.remote, is a different app and is not replaced.
+         Saved pairing (address, port, PIN) stays across updates of this id
+         and is wiped if the id changes. -->
     <ApplicationId>com.tangenttech.hotsonos</ApplicationId>
     <ApplicationDisplayVersion>$(Version)</ApplicationDisplayVersion>
     <ApplicationVersion>4</ApplicationVersion>
@@ -73,6 +75,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="ZXing.Net.Maui.Controls" Version="0.10.4" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
   </ItemGroup>
 

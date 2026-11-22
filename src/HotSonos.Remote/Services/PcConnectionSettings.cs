@@ -2,12 +2,15 @@ using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote;
 
-/// <summary>PC address and house PIN, saved in MAUI preferences.</summary>
+/// <summary>
+    /// PC address and house PIN, saved in MAUI preferences for this application id.
+    /// An update of <c>com.tangenttech.hotsonos</c> keeps them. A different id is a new app and starts unpaired.
+    /// </summary>
 sealed class PcConnectionSettings
 {
-    const string HostKey = "pc.host";
-    const string PortKey = "pc.port";
-    const string PinKey = "pc.pin";
+    const string HostKey = PhonePairLink.HostPreferenceKey;
+    const string PortKey = PhonePairLink.PortPreferenceKey;
+    const string PinKey = PhonePairLink.PinPreferenceKey;
 
     public string Host { get; set; } = "";
     public int Port { get; set; } = RemoteApi.DefaultPort;

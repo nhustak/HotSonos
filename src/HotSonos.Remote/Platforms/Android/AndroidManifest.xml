@@ -1,21 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <application android:allowBackup="false" android:icon="@mipmap/appicon" android:roundIcon="@mipmap/appicon_round" android:supportsRtl="true" android:resizeableActivity="true" android:usesCleartextTraffic="true"></application>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Camera is optional. Scan QR asks at runtime and hides when there is no camera. -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <!--
       ChromeOS and desktop-window Android. required=false so Play and the
-      Chromebook package installer do not filter the app out. The app still
-      uses a pointer or touch when one is present. Wi-Fi is optional because
-      a Chromebook may be on Ethernet; discovery then needs a typed address.
+      Chromebook package installer do not filter the app out. The CAMERA
+      permission would otherwise imply a required camera. tools:replace keeps
+      a library from flipping that back to required. Wi-Fi is optional because
+      a Chromebook may be on Ethernet; discovery then needs a typed address,
+      a pasted hotsonos://pair link, or a camera when the device has one.
     -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.faketouch" android:required="false" />
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" tools:replace="android:required" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" tools:replace="android:required" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" tools:replace="android:required" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" tools:replace="android:required" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />

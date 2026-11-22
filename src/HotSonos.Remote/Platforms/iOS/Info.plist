@@ -49,6 +49,20 @@
 	<string>UIStatusBarStyleLightContent</string>
 	<key>XSAppIconAssets</key>
 	<string>Assets.xcassets/appicon.appiconset</string>
+	<!-- Scan QR on Connect and Settings → Connection / PC. The camera is optional. -->
+	<key>NSCameraUsageDescription</key>
+	<string>HotSonos uses the camera to scan the pairing code on the PC Phone window.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.tangenttech.hotsonos.pair</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>hotsonos</string>
+			</array>
+		</dict>
+	</array>
 	<!-- Shown when iOS asks for local network access. Required for the PC
 	     listener (TCP 42342), the UDP announce (42343), and Sonos SOAP. -->
 	<key>NSLocalNetworkUsageDescription</key>

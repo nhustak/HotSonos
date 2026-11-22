@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using ZXing.Net.Maui.Controls;
 
 namespace HotSonos.Remote;
 
@@ -10,7 +11,10 @@ public static class MauiProgram
         ViewActivate.Install();
 #endif
         var builder = MauiApp.CreateBuilder();
-        builder.UseMauiApp<App>();
+        builder.UseMauiApp<App>().UseBarcodeReader();
+#if IOS
+        IosPairingLinks.Install(builder);
+#endif
 
 #if DEBUG
         builder.Logging.AddDebug();
