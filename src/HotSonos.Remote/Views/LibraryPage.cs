@@ -137,11 +137,11 @@ sealed class LibraryPage : RemotePage
         var labels = tags.Value?.Tags.Select(t => t.Label).ToArray() ?? [];
         if (labels.Length == 0)
         {
-            await DisplayAlert("Tags", "No tags yet.", "OK");
+            await Dialogs.Alert(this, "Tags", "No tags yet.");
             return;
         }
 
-        var pick = await DisplayActionSheet("Toggle tag", "Cancel", null, labels);
+        var pick = await Dialogs.Sheet(this, "Toggle tag", "Cancel", null, labels);
         var tag = tags.Value?.Tags.FirstOrDefault(t => t.Label == pick);
         if (tag is null)
             return;

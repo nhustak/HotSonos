@@ -24,7 +24,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/shuffle/resume", async (HttpContext ctx) =>
         {
-            Log(ctx);
             if (state.ResumeShuffleAsync is null)
                 return BadJson();
             return await RunToast(async () => await state.ResumeShuffleAsync(ctx.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
@@ -32,13 +31,11 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/shuffle/start", async (HttpContext ctx) =>
         {
-            Log(ctx);
             return await RunToast(() => StartControlShuffleAsync(state, ctx.RequestAborted)).ConfigureAwait(false);
         });
 
         app.MapPost("/api/shuffle/source", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteNameBody>(ctx).ConfigureAwait(false);
             var token = body?.Name?.Trim();
             if (!RemoteSettingsRules.IsShuffleSource(token))
@@ -60,7 +57,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/tracks/replace", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteTrackBody>(ctx).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(body?.Path) || state.ReplaceQueueWithTrackAsync is null)
                 return BadJson();
@@ -69,7 +65,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapGet("/api/volumes", async (HttpContext ctx) =>
         {
-            Log(ctx);
             try
             {
                 var rows = await state.Sonos.GetSpeakerVolumesAsync(ctx.RequestAborted).ConfigureAwait(false);
@@ -85,7 +80,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/volumes/room", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteRoomVolumeBody>(ctx).ConfigureAwait(false);
             if (body is null || (body.Percent is null && body.Muted is null))
                 return BadJson();
@@ -109,7 +103,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapGet("/api/favorites", async (HttpContext ctx) =>
         {
-            Log(ctx);
             try
             {
                 var rows = await state.Sonos.GetFavoritesAsync(ctx.RequestAborted).ConfigureAwait(false);
@@ -124,7 +117,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/favorites/play", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteNameBody>(ctx).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(body?.Name))
                 return BadJson();
@@ -142,7 +134,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/spotify/play", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteSpotifyBody>(ctx).ConfigureAwait(false);
             var reference = body?.Reference?.Trim();
             if (string.IsNullOrWhiteSpace(reference))
@@ -154,7 +145,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/spotify/save", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteSpotifyBody>(ctx).ConfigureAwait(false);
             if (!SpotifyItem.TryParse(body?.Reference, out var item) || item is null)
                 return Results.Json(new RemoteCommandResponse(false, null, "Paste a Spotify link."), RemoteApi.Json, statusCode: StatusCodes.Status400BadRequest);
@@ -169,7 +159,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/spotify/remove", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteSpotifyBody>(ctx).ConfigureAwait(false);
             var reference = body?.Reference?.Trim();
             if (string.IsNullOrWhiteSpace(reference))
@@ -192,13 +181,11 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/topology/refresh", async (HttpContext ctx) =>
         {
-            Log(ctx);
             return await RunToast(async () => await state.RefreshDevicesAsync().ConfigureAwait(false)).ConfigureAwait(false);
         });
 
         app.MapPost("/api/topology/regroup", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteRoomBody>(ctx).ConfigureAwait(false);
             var settings = state.Settings().EnsureShape();
             var room = body?.Room?.Trim();
@@ -224,7 +211,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/topology/reboot", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteRebootBody>(ctx).ConfigureAwait(false);
             if (body is null)
                 return BadJson();
@@ -248,7 +234,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/house/keep-grouped", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteFlagBody>(ctx).ConfigureAwait(false);
             if (body is null)
                 return BadJson();
@@ -261,7 +246,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/daily-groups/select", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteDailySelectBody>(ctx).ConfigureAwait(false);
             if (body is null)
                 return BadJson();
@@ -292,7 +276,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/daily-groups", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteDailySaveBody>(ctx).ConfigureAwait(false);
             if (body is null)
                 return BadJson();
@@ -306,7 +289,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/daily-groups/remove", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteNameBody>(ctx).ConfigureAwait(false);
             var model = CaptureDaily(state.Settings().EnsureShape());
             var error = DailyGroupLogic.RemovePreset(model, body?.Name);
@@ -330,7 +312,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/library/config", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteLibraryConfigBody>(ctx).ConfigureAwait(false);
             if (body is null)
                 return BadJson();
@@ -365,7 +346,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/library/discover", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var lib = state.Library;
             if (lib is null)
                 return Results.Json(BuildLibraryConfig(state, null, "Library service not available."), RemoteApi.Json);
@@ -388,7 +368,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/library/rescan", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteRescanBody>(ctx).ConfigureAwait(false) ?? new RemoteRescanBody();
             var lib = state.Library;
             if (lib is null)
@@ -409,7 +388,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/tags", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteTagCreateBody>(ctx).ConfigureAwait(false);
             var settings = state.Settings().EnsureShape();
             var tag = settings.AddTag(body?.Label ?? "");
@@ -421,7 +399,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/tags/rename", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteTagRenameBody>(ctx).ConfigureAwait(false);
             var settings = state.Settings().EnsureShape();
             if (body is null || !settings.RenameTag(body.Key ?? "", body.Label ?? ""))
@@ -432,7 +409,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/tags/delete", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteKeyBody>(ctx).ConfigureAwait(false);
             var key = body?.Key?.Trim();
             if (string.IsNullOrWhiteSpace(key))
@@ -449,7 +425,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/tracks/tags", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteTagToggleBody>(ctx).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(body?.Path) || string.IsNullOrWhiteSpace(body.Key) || state.Library is null)
                 return BadJson();
@@ -461,7 +436,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/now/tags", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteKeyBody>(ctx).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(body?.Key))
                 return BadJson();
@@ -476,7 +450,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/tracks/tags/set", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteTagSetBody>(ctx).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(body?.Path) || body.TagKeys is null || state.Library is null)
                 return BadJson();
@@ -555,7 +528,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/settings", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteSettingsBody>(ctx).ConfigureAwait(false);
             if (body is null)
                 return BadJson();
@@ -580,7 +552,6 @@ public sealed partial class HotSonosRemoteHost
 
         app.MapPost("/api/wake/now", async (HttpContext ctx) =>
         {
-            Log(ctx);
             if (state.Wake is null)
                 return Results.Json(new RemoteCommandResponse(false, null, "Wake is not available."), RemoteApi.Json);
             try

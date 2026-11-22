@@ -122,15 +122,16 @@ sealed class PlayerPage : RemotePage
                 _ = FlushAsync();
         };
 
-        var previous = IconButton("prev", 78, "Previous", () => Go(
+        var previous = IconButton("prev", 78, "Previous", () => Transport(
             (speaker, ct) => speaker.PreviousAsync(ct),
             ct => AppServices.Client.PreviousAsync(ct)));
-        _playButton = IconButton(_playGlyph, 108, "Play", () => Go(
+        _playButton = IconButton(_playGlyph, 108, "Play", () => Transport(
             async (speaker, ct) => { await speaker.PlayPauseAsync(ct); },
             ct => AppServices.Client.PlayPauseAsync(ct)));
-        var next = IconButton("next", 78, "Next", () => Go(
+        var next = IconButton("next", 78, "Next", () => Transport(
             (speaker, ct) => speaker.NextAsync(ct),
-            ct => AppServices.Client.NextAsync(ct)));
+            ct => AppServices.Client.NextAsync(ct),
+            previewNext: true));
 
         var transport = new HorizontalStackLayout
         {
@@ -157,9 +158,10 @@ sealed class PlayerPage : RemotePage
         Put(stepRow, StepButton("+", 1), 2);
         Put(stepRow, _mute.View, 3);
 
-        var level = RemoteUi.Button("Level all", () => Go(
+        var level = RemoteUi.Button("Level all", () => Transport(
             (_, ct) => AppServices.Link.Speakers.SetHouseVolumeAsync((int)_slider.Value, ct),
-            ct => AppServices.Client.LevelAsync(ct)));
+            ct => AppServices.Client.LevelAsync(ct),
+            done: "Levels set"));
         var quickTag = RemoteUi.Button("Quick tag", QuickTagAsync);
         SemanticProperties.SetDescription(quickTag, "Quick tag");
         _tagStatus.HorizontalTextAlignment = TextAlignment.Center;
@@ -326,14 +328,45 @@ sealed class PlayerPage : RemotePage
         label.VerticalTextAlignment = TextAlignment.Start;
     }
 
-    Task Go(Func<SonosController, CancellationToken, Task> speakers, Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc) =>
-        AppServices.Link.DrivePc ? Act(pc) : Speaker(speakers);
+    string? _skippedTitle;
+    long _skippedAt;
+    bool _previewedNext;
+
+    async Task Transport(
+        Func<SonosController, CancellationToken, Task> speakers,
+        Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc,
+        bool previewNext = false,
+        string? done = null)
+    {
+        if (previewNext)
+            PreviewNext();
+        if (AppServices.Link.DrivePc)
+            await Act(pc, announce: true, done: done ?? "Done").ConfigureAwait(true);
+        else
+            await Speaker(speakers, announce: true, done: done ?? "Done").ConfigureAwait(true);
+        await AppServices.Live.PullNowAsync().ConfigureAwait(true);
+    }
+
+    void PreviewNext()
+    {
+        if (_previewedNext)
+            return;
+        var face = SkipAhead.OnNext(AppServices.Live.Upcoming);
+        if (face is null)
+            return;
+        _skippedTitle = _title.Text;
+        _skippedAt = Environment.TickCount64;
+        _previewedNext = true;
+        _title.Text = face.Value.Title;
+        _artist.Text = face.Value.Artist;
+    }
 
     async Task QuickTagAsync()
     {
         if (!AppServices.Link.DrivePc || !AppServices.Link.OnPc)
         {
             _tagStatus.Text = "Quick tag needs the PC. It writes the playing library track.";
+            Toasts.Show(_tagStatus.Text);
             return;
         }
 
@@ -341,6 +374,7 @@ sealed class PlayerPage : RemotePage
         if (listed.Kind != RemoteCallKind.Ok || listed.Value is null)
         {
             _tagStatus.Text = listed.Detail ?? "Could not load tags.";
+            Toasts.Show(_tagStatus.Text);
             return;
         }
 
@@ -348,17 +382,19 @@ sealed class PlayerPage : RemotePage
         if (!value.CanTag || string.IsNullOrWhiteSpace(value.Path))
         {
             _tagStatus.Text = value.Message ?? NowPlayingTagTarget.NotInLibrary;
+            Toasts.Show(_tagStatus.Text);
             return;
         }
 
         if (value.Tags is not { Count: > 0 })
         {
             _tagStatus.Text = "No tags yet. Create them on the PC Tags tab.";
+            Toasts.Show(_tagStatus.Text);
             return;
         }
 
         var labels = value.Tags.Select(tag => tag.On ? tag.Label + "  ✓" : tag.Label).ToArray();
-        var pick = await DisplayActionSheet("Quick tag", "Cancel", null, labels).ConfigureAwait(true);
+        var pick = await Dialogs.Sheet(this, "Quick tag", "Cancel", null, labels).ConfigureAwait(true);
         var index = Array.IndexOf(labels, pick);
         if (index < 0)
             return;
@@ -366,16 +402,27 @@ sealed class PlayerPage : RemotePage
         var toggled = await AppServices.Client.ToggleNowTagAsync(value.Tags[index].Key, CancellationToken.None).ConfigureAwait(true);
         _tagStatus.Text = toggled.Kind == RemoteCallKind.Ok
             ? (toggled.Value?.Message ?? "Updated")
-            : (toggled.Detail ?? "Tag failed");
+            : (toggled.Value?.Error ?? toggled.Detail ?? "Tag failed");
+        Toasts.Show(_tagStatus.Text);
     }
 
     protected override void OnStatus(RemoteStatusResponse? status)
     {
         _status = status;
         var np = status?.NowPlaying;
-        _title.Text = string.IsNullOrWhiteSpace(np?.Title) ? "Nothing playing" : np!.Title;
-        _artist.Text = np?.Artist ?? "";
-        _album.Text = np?.Album ?? "";
+        var incoming = string.IsNullOrWhiteSpace(np?.Title) ? "Nothing playing" : np!.Title!;
+        if (SkipAhead.IsStale(_skippedTitle, incoming, Environment.TickCount64 - _skippedAt))
+        {
+            // Next already painted the following queue row. This poll still names the track we left.
+        }
+        else
+        {
+            _skippedTitle = null;
+            _previewedNext = false;
+            _title.Text = incoming;
+            _artist.Text = np?.Artist ?? "";
+            _album.Text = np?.Album ?? "";
+        }
         var playing = np?.State is "Playing" or "Transitioning";
         _playGlyph.Kind = playing ? "pause" : "play";
         SemanticProperties.SetDescription(_playButton, playing ? "Pause" : "Play");

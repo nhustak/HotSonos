@@ -138,7 +138,10 @@ static class WearBridge
         if (context is null || !PlayServicesReady(context))
             return;
 
-        var json = WearWire.EncodeState(MediaControlMapping.FromStatus(AppServices.Live.Status), target);
+        var json = WearWire.EncodeState(
+            MediaControlMapping.FromStatus(AppServices.Live.Status),
+            target,
+            AppServices.Live.Upcoming);
         var bytes = System.Text.Encoding.UTF8.GetBytes(json);
         try
         {

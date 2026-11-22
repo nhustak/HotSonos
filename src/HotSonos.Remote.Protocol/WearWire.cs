@@ -68,14 +68,18 @@ public static class WearWire
         return held;
     }
 
-    public static string EncodeState(MediaControlState state, int? volumeOverride = null)
+    public static string EncodeState(MediaControlState state, int? volumeOverride = null, RemoteUpcomingDto? upcoming = null)
     {
         int? volume = volumeOverride ?? (state.HasVolume ? state.VolumePercent : null);
+        var nextTitle = string.IsNullOrWhiteSpace(upcoming?.Title) ? null : upcoming!.Title!.Trim();
+        var nextArtist = string.IsNullOrWhiteSpace(upcoming?.Artist) ? null : upcoming!.Artist!.Trim();
         var dto = new WearStateDto(
             state.Title,
             state.Artist,
             state.Playback == MediaControlPlayback.Playing,
-            volume);
+            volume,
+            nextTitle,
+            nextArtist);
         return JsonSerializer.Serialize(dto, Json);
     }
 
@@ -101,5 +105,14 @@ public static class WearWire
     };
 }
 
-/// <summary>Now-playing snapshot the phone sends to the watch. <see cref="Volume"/> is 0–100, or null when unknown.</summary>
-public sealed record WearStateDto(string? Title, string? Artist, bool Playing, int? Volume);
+/// <summary>
+/// Now-playing snapshot the phone sends to the watch. <see cref="Volume"/> is 0–100, or null when unknown.
+/// <see cref="NextTitle"/> is the queue row after the playing one, so Next can paint it before the poll.
+/// </summary>
+public sealed record WearStateDto(
+    string? Title,
+    string? Artist,
+    bool Playing,
+    int? Volume,
+    string? NextTitle = null,
+    string? NextArtist = null);

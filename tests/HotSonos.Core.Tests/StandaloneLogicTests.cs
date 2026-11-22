@@ -47,6 +47,16 @@ public class StandaloneLogicTests
     }
 
     [Fact]
+    public void OthersToJoin_IncludesARoomThatCameBackOnItsOwn()
+    {
+        var kitchen = Zone("Kitchen", "K", "K");
+        var office = Zone("Office", "O", "O");
+        var den = Zone("Den", "D", "O");
+        var others = SonosGrouping.OthersToJoin([kitchen, office, den], office);
+        Assert.Equal(["Kitchen"], others.Select(z => z.RoomName));
+    }
+
+    [Fact]
     public void OthersToJoin_SkipsRoomsAlreadyUnderThatLeader()
     {
         var kitchen = Zone("Kitchen", "K", "K");

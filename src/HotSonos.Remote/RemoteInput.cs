@@ -1,3 +1,5 @@
+using HotSonos.Remote.Views;
+
 namespace HotSonos.Remote;
 
 /// <summary>
@@ -15,26 +17,50 @@ static class RemoteInput
 
     public static void MakeActivable(View view, Func<Task> activate)
     {
+        var run = Busy(view, activate);
         if (Activate is not null)
         {
-            Activate(view, activate);
+            Activate(view, run);
             return;
         }
 
         var tap = new TapGestureRecognizer();
         tap.Tapped += async (_, _) =>
         {
+            Haptics.Tick();
             try
             {
-                await activate().ConfigureAwait(true);
+                await run().ConfigureAwait(true);
             }
             catch (Exception ex)
             {
-                if (Application.Current?.MainPage is Page page)
-                    await page.DisplayAlert("HotSonos", ex.Message, "OK");
+                Toasts.Show(ex.Message);
             }
         };
         view.GestureRecognizers.Add(tap);
+    }
+
+    static Func<Task> Busy(View view, Func<Task> activate)
+    {
+        var gate = 0;
+        return async () =>
+        {
+            if (Interlocked.Exchange(ref gate, 1) == 1)
+                return;
+            var opacity = view.Opacity;
+            try
+            {
+                view.Opacity = 0.55;
+                view.IsEnabled = false;
+                await activate().ConfigureAwait(true);
+            }
+            finally
+            {
+                view.IsEnabled = true;
+                view.Opacity = opacity <= 0 ? 1 : opacity;
+                Interlocked.Exchange(ref gate, 0);
+            }
+        };
     }
 
     /// <summary>Long-press (and a right-click on a Chromebook) runs <paramref name="hold"/> once.</summary>

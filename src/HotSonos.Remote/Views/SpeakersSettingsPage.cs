@@ -120,7 +120,8 @@ sealed class SpeakersSettingsPage : RemotePage
             return;
         if (!await Confirm("Regroup", "Join the Daily group preset? Playback pauses while the group is built. This does not start a new shuffle."))
             return;
-        await Act(ct => AppServices.Client.RegroupAsync(null, ct), _status);
+        _status.Text = "Regrouping…";
+        await Act(ct => AppServices.Client.RegroupAsync(null, ct), _status, announce: true, done: "Regrouped");
     }
 
     async Task LoadDailyAsync()

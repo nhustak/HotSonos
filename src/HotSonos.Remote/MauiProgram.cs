@@ -7,6 +7,7 @@ public static class MauiProgram
 {
     public static MauiApp CreateMauiApp()
     {
+        PressFeedback.Install();
 #if ANDROID
         ViewActivate.Install();
 #endif

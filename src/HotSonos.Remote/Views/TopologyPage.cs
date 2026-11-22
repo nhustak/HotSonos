@@ -383,7 +383,7 @@ sealed class TopologyPage : RemotePage
     async Task HoldRoomAsync(string room)
     {
         var actions = RoomRowActions.For(AppServices.Link.DrivePc);
-        var pick = await DisplayActionSheet(room, "Cancel", null, actions.ToArray());
+        var pick = await Dialogs.Sheet(this, room, "Cancel", null, actions.ToArray());
         if (pick == RoomRowActions.Coordinator)
             await RegroupRoomAsync(room);
         else if (pick == RoomRowActions.Reboot)
@@ -400,10 +400,12 @@ sealed class TopologyPage : RemotePage
         {
             await AppServices.Link.Speakers.SetCoordinatorAsync(room, wholeHouse: false, CancellationToken.None);
             _status.Text = room + " is leading its group.";
+            Toasts.Show(_status.Text);
         }
         catch (Exception ex)
         {
-            _status.Text = ex.Message;
+            _status.Text = string.IsNullOrWhiteSpace(ex.Message) ? "Could not change the coordinator." : ex.Message;
+            Toasts.Show(_status.Text);
         }
 
         await LoadAsync();
@@ -417,10 +419,12 @@ sealed class TopologyPage : RemotePage
         {
             await AppServices.Link.Speakers.LeaveGroupAsync(room, CancellationToken.None);
             _status.Text = room + " left the group.";
+            Toasts.Show(_status.Text);
         }
         catch (Exception ex)
         {
-            _status.Text = ex.Message;
+            _status.Text = string.IsNullOrWhiteSpace(ex.Message) ? "Could not leave the group." : ex.Message;
+            Toasts.Show(_status.Text);
         }
 
         await LoadAsync();
@@ -434,19 +438,23 @@ sealed class TopologyPage : RemotePage
             if (room is null)
             {
                 _status.Text = "No speakers yet.";
+                Toasts.Show(_status.Text);
                 return;
             }
 
             if (!await Confirm("Group all", $"Join every room to {room}?"))
                 return;
+            _status.Text = "Grouping…";
             try
             {
                 await AppServices.Link.Speakers.SetCoordinatorAsync(room, wholeHouse: true, CancellationToken.None);
                 _status.Text = "Grouped under " + room + ".";
+                Toasts.Show(_status.Text);
             }
             catch (Exception ex)
             {
-                _status.Text = ex.Message;
+                _status.Text = string.IsNullOrWhiteSpace(ex.Message) ? "Regroup failed." : ex.Message;
+                Toasts.Show(_status.Text);
             }
 
             await LoadAsync();
@@ -455,7 +463,8 @@ sealed class TopologyPage : RemotePage
 
         if (!await Confirm("Regroup", "Regroup the Daily speaker group under the preferred coordinator?"))
             return;
-        await Act(ct => AppServices.Client.RegroupAsync(null, ct), _status);
+        _status.Text = "Regrouping…";
+        await Act(ct => AppServices.Client.RegroupAsync(null, ct), _status, announce: true, done: "Regrouped");
         await LoadAsync();
     }
 
@@ -469,7 +478,8 @@ sealed class TopologyPage : RemotePage
 
         if (!await Confirm("Coordinator", $"Make {room} the coordinator and regroup the Daily group?"))
             return;
-        await Act(ct => AppServices.Client.RegroupAsync(room, ct), _status);
+        _status.Text = "Regrouping…";
+        await Act(ct => AppServices.Client.RegroupAsync(room, ct), _status, announce: true, done: "Regrouped");
         await LoadAsync();
     }
 
@@ -486,6 +496,7 @@ sealed class TopologyPage : RemotePage
             : $"Restart {room}? It drops off for about a minute.";
         if (!await Confirm("Reboot", message))
             return;
-        await Act(ct => AppServices.Client.RebootAsync(room, null, all, ct), _status);
+        _status.Text = "Rebooting…";
+        await Act(ct => AppServices.Client.RebootAsync(room, null, all, ct), _status, announce: true, done: "Reboot requested");
     }
 }

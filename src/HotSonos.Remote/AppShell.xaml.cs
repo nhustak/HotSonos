@@ -19,6 +19,7 @@ public partial class AppShell : ContentPage
     readonly Stack<RemotePage> _stack = new();
     readonly Dictionary<string, RemotePage> _cached = new();
     int _index = -1;
+    int _toast;
 
     public AppShell()
     {
@@ -154,6 +155,22 @@ public partial class AppShell : ContentPage
         var page = _stack.Count > 0 ? _stack.Peek() : _pages[_index];
         Body.Content = page.TakeBody();
         page.NotifyShown();
+    }
+
+    public void ShowToast(string text)
+    {
+        var mine = ++_toast;
+        ToastText.Text = text;
+        Toast.IsVisible = true;
+        Toast.ZIndex = 10;
+        _ = HideToastAsync(mine);
+    }
+
+    async Task HideToastAsync(int mine)
+    {
+        await Task.Delay(2200).ConfigureAwait(true);
+        if (mine == _toast)
+            Toast.IsVisible = false;
     }
 
     public void Select(int index)

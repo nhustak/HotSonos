@@ -16,8 +16,11 @@ sealed class RemoteLive
     CancellationTokenSource? _loop;
 
     public RemoteStatusResponse? Status { get; private set; }
+    public RemoteUpcomingDto? Upcoming { get; private set; }
     public string? Problem { get; private set; }
     public event Action? Changed;
+    int? _queueTrack;
+    int _queueGeneration;
 
     /// <summary>True while the 2-second poll is running. A watch command must not restart it.</summary>
     public bool IsRunning
@@ -73,6 +76,7 @@ sealed class RemoteLive
                         link.NotePcUp();
                         Status = call.Value;
                         Problem = null;
+                        ConsiderQueue(call.Value);
                     }
                     else
                     {
@@ -97,6 +101,7 @@ sealed class RemoteLive
                     var snap = await link.Speakers.ReadSnapshotAsync(ct).ConfigureAwait(false);
                     Status = FromSpeakers(snap);
                     Problem = null;
+                    ConsiderQueue(Status);
                 }
 
                 MainThread.BeginInvokeOnMainThread(() => Changed?.Invoke());
@@ -112,6 +117,83 @@ sealed class RemoteLive
                 try { await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) { return; }
             }
+        }
+    }
+
+    /// <summary>One status read after a transport command, so the watch is not waiting on the 2-second poll.</summary>
+    public async Task PullNowAsync()
+    {
+        try
+        {
+            var link = AppServices.Link;
+            if (link.DrivePc && AppServices.Connection.IsPaired)
+            {
+                var call = await AppServices.Client.GetStatusAsync(CancellationToken.None).ConfigureAwait(false);
+                if (call.Kind == RemoteCallKind.Ok && call.Value is not null)
+                {
+                    link.NotePcUp();
+                    Status = call.Value;
+                    Problem = null;
+                    ConsiderQueue(call.Value);
+                }
+            }
+            else if (!link.DrivePc && link.Speakers.Zones.Count > 0)
+            {
+                var snap = await link.Speakers.ReadSnapshotAsync(CancellationToken.None).ConfigureAwait(false);
+                Status = FromSpeakers(snap);
+                Problem = null;
+                ConsiderQueue(Status);
+            }
+
+            MainThread.BeginInvokeOnMainThread(() => Changed?.Invoke());
+        }
+        catch (Exception)
+        {
+            // The poll retries.
+        }
+    }
+
+    void ConsiderQueue(RemoteStatusResponse? status)
+    {
+        var track = status?.NowPlaying?.Track;
+        if (track is not int number || number < 1)
+            return;
+        if (_queueTrack == number)
+            return;
+        var generation = ++_queueGeneration;
+        _ = LoadQueueAsync(number, generation);
+    }
+
+    async Task LoadQueueAsync(int number, int generation)
+    {
+        try
+        {
+            IReadOnlyList<RemoteQueueItemDto> rows;
+            if (AppServices.Link.DrivePc)
+            {
+                var call = await AppServices.Client.GetQueueAsync(CancellationToken.None).ConfigureAwait(false);
+                if (generation != _queueGeneration || call.Value is not { Ok: true } queue)
+                    return;
+                rows = queue.Tracks;
+            }
+            else
+            {
+                var controller = AppServices.Link.Speakers.Controller;
+                if (controller is null || generation != _queueGeneration)
+                    return;
+                var tracks = await controller.GetQueueAsync(40, CancellationToken.None).ConfigureAwait(false);
+                if (generation != _queueGeneration)
+                    return;
+                rows = tracks.Select(t => new RemoteQueueItemDto(t.Number, t.Title, t.Artist)).ToList();
+            }
+
+            _queueTrack = number;
+            Upcoming = QueueCursor.NextAfter(number, rows);
+            MainThread.BeginInvokeOnMainThread(() => Changed?.Invoke());
+        }
+        catch (Exception)
+        {
+            // The next poll tries again while _queueTrack is still the previous number.
         }
     }
 
