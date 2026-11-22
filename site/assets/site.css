@@ -4,6 +4,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-ap
 a{color:#ff9a4d}a:hover{color:#ffb27a}
 img{max-width:100%;height:auto;display:block}
 .wrap{max-width:var(--max);margin:0 auto;padding:0 22px}
+.banner{background:#12141a;color:#d4d7e0;font-size:.9rem;line-height:1.45;text-align:center;border-bottom:1px solid var(--line)}
+.banner p{max-width:var(--max);margin:0 auto;padding:8px 22px}
 header.top{position:sticky;top:0;z-index:10;background:rgba(22,24,29,.86);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 header.top .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
 .brand{display:flex;align-items:center;gap:10px;color:var(--text);text-decoration:none;font-weight:700;font-size:1.15rem}
