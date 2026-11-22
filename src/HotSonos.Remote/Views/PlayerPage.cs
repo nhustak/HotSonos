@@ -154,12 +154,14 @@ sealed class PlayerPage : RemotePage
         var level = RemoteUi.Button("Level all", () => Go(
             (_, ct) => AppServices.Link.Speakers.SetHouseVolumeAsync((int)_slider.Value, ct),
             ct => AppServices.Client.LevelAsync(ct)));
+        var tag = RemoteUi.Button("Tag", TagPlayingAsync);
+        SemanticProperties.SetDescription(tag, "Tag the playing track");
 
         var controls = new VerticalStackLayout
         {
             Spacing = 8,
             Padding = new Thickness(4, 0, 4, 4),
-            Children = { _title, _artist, _album, transport, stepRow, _slider, level },
+            Children = { _title, _artist, _album, transport, tag, stepRow, _slider, level },
         };
 
         _column = new Grid
@@ -293,6 +295,50 @@ sealed class PlayerPage : RemotePage
 
     Task Go(Func<SonosController, CancellationToken, Task> speakers, Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc) =>
         AppServices.Link.DrivePc ? Act(pc) : Speaker(speakers);
+
+    async Task TagPlayingAsync()
+    {
+        if (!AppServices.Link.DrivePc)
+        {
+            await DisplayAlert(
+                "HotSonos",
+                "Tagging the playing track writes the library file on the PC. Open connection and use the PC.",
+                "OK");
+            return;
+        }
+
+        var call = await AppServices.Client.GetNowTagsAsync(CancellationToken.None);
+        if (call.Kind == RemoteCallKind.Unauthorized)
+        {
+            await DisplayAlert("PIN", call.Detail ?? "Wrong PIN. Open connection and enter the PIN from the PC Phone window.", "OK");
+            return;
+        }
+
+        if (call.Kind != RemoteCallKind.Ok || call.Value is not { Ok: true } page)
+        {
+            await DisplayAlert("HotSonos", call.Detail ?? "Could not reach the PC.", "OK");
+            return;
+        }
+
+        if (!page.CanTag)
+        {
+            await DisplayAlert("HotSonos", page.Message ?? "Cannot tag this track.", "OK");
+            return;
+        }
+
+        if (page.Tags.Count == 0)
+        {
+            await DisplayAlert("Tags", "No tags yet. Create one under Settings, Library.", "OK");
+            return;
+        }
+
+        var labels = page.Tags.Select(t => t.On ? t.Label + "  ✓" : t.Label).ToArray();
+        var pick = await DisplayActionSheet("Tag this track", "Cancel", null, labels);
+        var index = Array.IndexOf(labels, pick);
+        if (index < 0)
+            return;
+        await Act(ct => AppServices.Client.ToggleNowTagAsync(page.Tags[index].Key, ct));
+    }
 
     protected override void OnStatus(RemoteStatusResponse? status)
     {
@@ -662,12 +708,12 @@ sealed class GlyphDrawable : IDrawable
                 canvas.FillRoundedRectangle(left + bar + gap, h * 0.16f, bar, h * 0.68f, 3);
                 break;
             case "prev":
-                canvas.FillRoundedRectangle(w * 0.12f, h * 0.18f, w * 0.14f, h * 0.64f, 2);
-                FillTriangle(canvas, w * 0.88f, h * 0.16f, w * 0.34f, h * 0.5f, w * 0.88f, h * 0.84f);
+                DrawBar(canvas, TransportGlyph.PreviousBar, w, h);
+                DrawTriangle(canvas, TransportGlyph.PreviousTriangle, w, h);
                 break;
             case "next":
-                FillTriangle(canvas, w * 0.12f, h * 0.16f, w * 0.66f, h * 0.5f, w * 0.12f, h * 0.84f);
-                canvas.FillRoundedRectangle(w * 0.74f, h * 0.18f, w * 0.14f, h * 0.64f, 2);
+                DrawTriangle(canvas, TransportGlyph.NextTriangle, w, h);
+                DrawBar(canvas, TransportGlyph.NextBar, w, h);
                 break;
             case "speaker":
                 DrawSpeaker(canvas, w, h, waves: true);
@@ -712,6 +758,19 @@ sealed class GlyphDrawable : IDrawable
         path.MoveTo(x, h * 0.30f);
         path.QuadTo(x + reach, h * 0.50f, x, h * 0.70f);
         canvas.DrawPath(path);
+    }
+
+    static void DrawBar(ICanvas canvas, (float X, float Y, float Width, float Height) bar, float w, float h) =>
+        canvas.FillRoundedRectangle(bar.X * w, bar.Y * h, bar.Width * w, bar.Height * h, 2);
+
+    static void DrawTriangle(ICanvas canvas, IReadOnlyList<TransportGlyph.Point> points, float w, float h)
+    {
+        var path = new PathF();
+        path.MoveTo(points[0].X * w, points[0].Y * h);
+        for (var i = 1; i < points.Count; i++)
+            path.LineTo(points[i].X * w, points[i].Y * h);
+        path.Close();
+        canvas.FillPath(path);
     }
 
     static void FillTriangle(ICanvas canvas, float x1, float y1, float x2, float y2, float x3, float y3)

@@ -447,6 +447,36 @@ public sealed partial class HotSonosRemoteHost
             return Results.Json(new RemoteCommandResponse(purge?.Ok != false, message, purge?.Ok == false ? purge.Message : null), RemoteApi.Json);
         });
 
+        app.MapGet("/api/now/tags", (HttpContext ctx) =>
+        {
+            Log(ctx);
+            return Results.Json(BuildNowTags(state), RemoteApi.Json);
+        });
+
+        app.MapPost("/api/now/tags", async (HttpContext ctx) =>
+        {
+            Log(ctx);
+            var body = await ReadJson<RemoteKeyBody>(ctx).ConfigureAwait(false);
+            var key = body?.Key?.Trim();
+            if (string.IsNullOrWhiteSpace(key))
+                return BadJson();
+
+            var page = BuildNowTags(state);
+            if (!page.CanTag || string.IsNullOrWhiteSpace(page.Path) || state.Library is null)
+            {
+                return Results.Json(
+                    new RemoteCommandResponse(false, null, page.Message ?? NowPlayingTagResolve.NotInCache),
+                    RemoteApi.Json,
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var result = state.Library.SetTagFlag(page.Path, key);
+            return Results.Json(
+                new RemoteCommandResponse(result.Ok, result.Message, result.Ok ? null : result.Error ?? result.Message),
+                RemoteApi.Json,
+                statusCode: result.Ok ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
         app.MapPost("/api/tracks/tags", async (HttpContext ctx) =>
         {
             Log(ctx);
@@ -919,6 +949,14 @@ public sealed partial class HotSonosRemoteHost
         if (token.StartsWith(AppSettings.ControlShuffleGenrePrefix, StringComparison.OrdinalIgnoreCase))
             return "Genre · " + token[AppSettings.ControlShuffleGenrePrefix.Length..].Trim();
         return token;
+    }
+
+    private static RemoteNowTagsResponse BuildNowTags(HotSonosMcpState state)
+    {
+        var settings = state.Settings().EnsureShape();
+        var (track, message) = NowPlayingTagResolve.Resolve(state.GetLastNowPlaying(), state.Library);
+        var catalog = settings.Tags.Select(t => (t.Key, t.Label));
+        return NowPlayingTags.Describe(track?.Path, message, catalog, track?.TagKeys);
     }
 
     private static RemoteTrackDto ToTrack(LibraryTrack t, AppSettings settings) => new(

@@ -1,6 +1,6 @@
 # HotSonos on iPhone and iPad
 
-This is the setup for building the .NET MAUI remote for iOS and sending it to TestFlight. The app is `src/HotSonos.Remote`. Android and iOS share the id `com.tangenttech.hotsonos`. The display name is **HotSonos**. The minimum iOS version is 15.0. The binary is universal: iPhone and iPad (`UIDeviceFamily` 1 and 2).
+This is the setup for building the .NET MAUI app for iOS and sending it to TestFlight. The app is `src/HotSonos.Remote`. Android (including ChromeOS) already runs this project as a remote for the Windows tray app or standalone on the speakers. iPhone and iPad are the in-progress store path. Android and iOS share the id `com.tangenttech.hotsonos`. The display name is **HotSonos**. The minimum iOS version is 15.0. The binary is universal: iPhone and iPad (`UIDeviceFamily` 1 and 2).
 
 Nothing in this file or in `codemagic.yaml` is a secret. The App Store Connect `.p8` key, the distribution certificate, and the provisioning profile stay in Codemagic and Apple. Do not commit them.
 

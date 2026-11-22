@@ -1181,32 +1181,9 @@ public partial class App : System.Windows.Application
             }
         }
 
-        string? path = null;
-        string? resolveMsg = null;
+        var (track, resolveMsg) = NowPlayingTagResolve.Resolve(np, _library);
+        var path = track?.Path;
         string line = np is null || np.IsEmpty ? "(nothing playing)" : np.DisplayLine;
-
-        if (np is null || np.IsEmpty)
-        {
-            resolveMsg = "Nothing playing.";
-        }
-        else if (string.IsNullOrWhiteSpace(np.TrackUri))
-        {
-            resolveMsg = "No track URI from Sonos.";
-        }
-        else
-        {
-            var track = _library.FindBySonosUri(np.TrackUri);
-            if (track is null)
-            {
-                resolveMsg =
-                    "Track not in library cache (streaming/radio, or run a rescan). " +
-                    "Only Sonos Music Library files under configured roots can be tagged.";
-            }
-            else
-            {
-                path = track.Path;
-            }
-        }
 
         // Close any prior overlay instance
         foreach (Window w in Current.Windows)
@@ -1769,7 +1746,16 @@ public partial class App : System.Windows.Application
         if (_mainWindow is null)
         {
             _mainWindow = new MainWindow(_sonos, _store, _settings, _library, ApplyBindings, OnRoomChangedFromWindow,
-                action => ExecuteActionAsync(action),
+                async action =>
+                {
+                    if (action == HotsonosAction.QuickTag)
+                    {
+                        await ShowQuickTagOverlayAsync().ConfigureAwait(true);
+                        return;
+                    }
+
+                    await ExecuteActionAsync(action).ConfigureAwait(true);
+                },
                 mcpEndpoint: () => _mcpHost?.Endpoint ?? _mcpState?.Endpoint,
                 remoteEndpoint: () => _remoteHost?.IsRunning == true ? _remoteHost.Endpoint : null,
                 onRemoteSettingsChanged: () => _ = EnsureRemoteBoundAsync());

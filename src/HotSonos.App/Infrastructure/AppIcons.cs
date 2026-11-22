@@ -44,6 +44,10 @@ public static class AppIcons
     public const string Minus = "minus";
     public const string ArrowUp = "arrow-up";
     public const string ArrowDown = "arrow-down";
+    /// <summary>Skip previous: bar, then a triangle pointing left.</summary>
+    public const string SkipPrevious = "skip-previous";
+    /// <summary>Skip next: a triangle pointing right, then a bar. Mirror of <see cref="SkipPrevious"/>.</summary>
+    public const string SkipNext = "skip-next";
     public const string Reset = "reset";
     public const string Source = "source";
 

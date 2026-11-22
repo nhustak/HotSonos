@@ -85,8 +85,8 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add("🔄 Restart fresh (Daily group + shuffle)", null, (_, _) => _callbacks.FreshStart());
         _menu.Items.Add("🔀 Shuffle Music Library", null, (_, _) => _callbacks.ShuffleLibrary());
         _menu.Items.Add("Play / Pause", null, (_, _) => _callbacks.PlayPause());
-        _menu.Items.Add("Next", null, (_, _) => _callbacks.Next());
-        _menu.Items.Add("Previous", null, (_, _) => _callbacks.Previous());
+        _menu.Items.Add("⏭ Next", null, (_, _) => _callbacks.Next());
+        _menu.Items.Add("⏮ Previous", null, (_, _) => _callbacks.Previous());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Volume up", null, (_, _) => _callbacks.VolumeUp());
         _menu.Items.Add("Volume down", null, (_, _) => _callbacks.VolumeDown());

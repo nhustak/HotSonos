@@ -589,6 +589,9 @@ public partial class MainWindow : Window
     private void ControlTransportPrevious_Click(object sender, RoutedEventArgs e) =>
         _ = _runAction(HotsonosAction.Previous);
 
+    private void ControlQuickTag_Click(object sender, RoutedEventArgs e) =>
+        _ = _runAction(HotsonosAction.QuickTag);
+
     private void ControlTransportVolUp_Click(object sender, RoutedEventArgs e) =>
         _ = _runAction(HotsonosAction.VolumeUp);
 
@@ -1561,9 +1564,9 @@ public partial class MainWindow : Window
             btn.Content = sp;
         }
 
-        IconOnly(ControlTransportPreviousButton, AppIcons.History, 15);
+        IconOnly(ControlTransportPreviousButton, AppIcons.SkipPrevious, 15);
         IconOnly(ControlTransportPlayPauseButton, AppIcons.Speaker, 18);
-        IconOnly(ControlTransportNextButton, AppIcons.Refresh, 15);
+        IconOnly(ControlTransportNextButton, AppIcons.SkipNext, 15);
         IconOnly(ControlDeleteNowPlayingButton, AppIcons.Trash, 15);
         IconOnly(ControlTransportVolDownButton, AppIcons.ArrowDown, 15);
         IconOnly(ControlTransportVolUpButton, AppIcons.ArrowUp, 15);
