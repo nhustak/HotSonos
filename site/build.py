@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
 """Builds the static HotSonos site. Edit the page bodies below, then run: python3 build.py
 Logo lives in ONE file: assets/logo.png. To swap it, replace assets/logo.png and run make-icons.py."""
-import html
 import pathlib
-import urllib.parse
 SITE="https://hotsonos.com"
-# Privacy and the footer point at GitHub, not an inbox. This is the address
-# on Nick Hustak's commits in this repo — not a new contact.
-CONTACT="nhustak@gmail.com"
-ALPHA_HREF=html.escape("mailto:"+CONTACT+"?"+urllib.parse.urlencode({
-    "subject":"HotSonos Android alpha request",
-    "body":"I'd like to join the HotSonos Android internal alpha.\n\nName:\n\nGoogle account email on my Android phone (needed for Play internal testing):\n",
-},quote_via=urllib.parse.quote))
 REL="https://github.com/nhustak/HotSonos/releases/latest"
 REPO="https://github.com/nhustak/HotSonos"
 def head(title,desc,path):
@@ -67,7 +58,8 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 <h1>Your whole house of Sonos, <span class="g">one hotkey away.</span></h1>
 <p class="lead">HotSonos lives in the Windows system tray and gives you instant, global keyboard shortcuts for shuffle, play/pause, skip, and whole-house volume — talking to your speakers directly over your local network. No cloud, no Sonos account.</p>
 <div class="ctas"><a class="btn btn-primary" href="{REL}">Download for Windows</a><a class="btn btn-ghost" href="{REPO}">View on GitHub</a></div>
-<p class="soon-row"><span class="soon">Android: coming soon</span><span class="soon">iPhone: coming soon</span><a class="btn btn-ghost" href="{ALPHA_HREF}">Request alpha access</a></p>
+<p class="soon-row"><span class="soon">Android: remote or standalone</span><span class="soon">iPhone and iPad: in early development</span><button class="btn btn-ghost" type="button" disabled>Alpha access — coming soon</button></p>
+<p class="small" style="margin-top:10px">The Android app works either as a remote for the Windows tray app or on its own with the speakers. iPhone and iPad support is in early development.</p>
 <p class="small" style="margin-top:14px">Per-user MSI installer, .NET runtime included.</p>
 </div>
 <img class="hero-logo" src="/assets/logo.png" alt="HotSonos logo" width="320" height="320">
@@ -87,7 +79,7 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 <div class="card"><div class="ico">☀️</div><h3>Wake to music</h3><p>Schedule music to start in a room with a gentle volume ramp, from a favorite or a shuffle, optionally expanding to the whole house.</p></div>
 <div class="card"><div class="ico">🤖</div><h3>Local MCP server</h3><p>An optional loopback MCP endpoint on this PC lets AI assistants search your library and control playback.</p></div>
 </div>
-<p class="small" style="margin-top:22px">Also: favorite slots with their own hotkeys, Restart fresh (re-sync speakers and reshuffle), live speaker monitoring with auto-rejoin, and a phone remote for Android that's in progress.</p>
+<p class="small" style="margin-top:22px">Also: favorite slots with their own hotkeys, Restart fresh (re-sync speakers and reshuffle), live speaker monitoring with auto-rejoin, and an Android app that works as a remote for the Windows tray app or standalone. iPhone and iPad support is in early development.</p>
 </div></section>
 
 <section class="alt" id="screens"><div class="wrap">
@@ -118,8 +110,8 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 </div>
 <div class="dl" style="margin-top:14px">
 <div class="ico" style="width:72px;height:72px;font-size:2rem;border-radius:16px">📱</div>
-<div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos Remote for Android</strong> <span class="eyebrow" style="margin:0 0 0 6px">Coming soon</span><br><span class="small">Android remote app: coming to internal testing soon.<br>Control HotSonos from your phone on the same Wi-Fi.</span></div>
-<a class="btn btn-ghost" href="{ALPHA_HREF}">Request alpha access</a>
+<div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos for Android</strong><br><span class="small">The Android app (including on a Chromebook) works either as a remote for the Windows tray app or standalone, on the same Wi-Fi. iPhone and iPad support is in early development.</span></div>
+<button class="btn btn-ghost" type="button" disabled>Alpha access — coming soon</button>
 </div>
 <p class="small" style="margin-top:14px">The installer isn't code-signed yet, so Windows SmartScreen may ask you to choose <em>More info → Run anyway</em>.</p>
 </div></section>
@@ -139,7 +131,7 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 <details><summary>Does HotSonos need a Sonos account or the internet?</summary><p>No. It finds and controls your speakers directly on your local network, the same way the speakers talk to each other. There's no HotSonos account and no HotSonos server.</p></details>
 <details><summary>Does it replace the Sonos app?</summary><p>No — it sits alongside it. Use the Sonos app for setup and music services; use HotSonos for fast, keyboard-first everyday control.</p></details>
 <details><summary>How does the shuffle avoid repeats?</summary><p>As songs play or you skip them, HotSonos remembers them and leaves them out of the next batch (by default, roughly the last couple of weeks). If you've heard most of your library, it loosens that rule so music keeps playing.</p></details>
-<details><summary>Is there a Mac or phone version?</summary><p>HotSonos is Windows-only. An Android remote that controls the HotSonos app on your PC over your home network is in progress.</p></details>
+<details><summary>Is there a Mac or phone version?</summary><p>The tray app is Windows. The Android app works either as a remote for that tray app or standalone, talking to your speakers on the same Wi-Fi. It also runs on a Chromebook. iPhone and iPad support is in early development. There is no Mac app.</p></details>
 <details><summary>My speakers stutter or drop out of groups. Can HotSonos help?</summary><p>Restart fresh re-discovers and regroups speakers and starts a new shuffle. If problems persist, the README explains why turning off SonosNet and choosing a 5 GHz group coordinator often helps.</p></details>
 <details><summary>Why does Windows warn me when I install it?</summary><p>The MSI isn't code-signed yet. SmartScreen may show a prompt; choose More info → Run anyway.</p></details>
 <details><summary>Is it free?</summary><p>Yes. HotSonos is open source under the MIT license. The source and every release are on <a href="{REPO}">GitHub</a>.</p></details>
@@ -150,7 +142,7 @@ INDEX=head("HotSonos — global hotkeys for your Sonos system",DESC,"/")+f'''
 PRIV=head("Privacy — HotSonos","How HotSonos handles your data: it runs on your PC, stores data locally, and talks to your speakers on your local network.","/privacy.html")+f'''
 <main class="doc">
 <h1>Privacy</h1>
-<p class="small">Last updated November 18, 2026</p>
+<p class="small">Last updated November 22, 2026</p>
 <p>HotSonos is a Windows tray app that runs on your own PC. It has no HotSonos account, no HotSonos server, no analytics, no ads, and no telemetry. The developer never receives your data.</p>
 
 <h2>What stays on your PC</h2>
@@ -178,8 +170,8 @@ PRIV=head("Privacy — HotSonos","How HotSonos handles your data: it runs on you
 <h2>Local MCP server (optional)</h2>
 <p>When turned on, the MCP endpoint for AI assistants listens only on this PC's loopback address (<code>127.0.0.1</code>). Other devices on your network can't reach it. Any AI assistant you connect to it is governed by that assistant's own privacy policy.</p>
 
-<h2>Phone remote (Android, in progress)</h2>
-<p>The Android remote is a remote control for the HotSonos app on your PC; it does not talk to your speakers or to the internet. It connects to your PC's local network address and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only.</p>
+<h2>Android app (remote or standalone)</h2>
+<p>The Android app, including on a Chromebook, works in two ways. As a remote, it connects to the HotSonos tray app on your PC over your local network and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only. Standalone, the app talks to your Sonos speakers on the same Wi-Fi and does not contact the PC. It does not use a HotSonos account or a HotSonos server. iPhone and iPad support is in early development.</p>
 
 <h2>This website</h2>
 <p>hotsonos.com is a static site with no cookies, trackers, or analytics. Like any web server, it may keep standard access logs (such as IP address and pages requested) for security and troubleshooting. Download links go to GitHub, which has its own privacy policy.</p>
@@ -204,8 +196,8 @@ out=pathlib.Path(__file__).parent
 (out/"robots.txt").write_text(f"User-agent: *\nAllow: /\n\nSitemap: {SITE}/sitemap.xml\n")
 (out/"sitemap.xml").write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>{SITE}/</loc><lastmod>2026-11-18</lastmod></url>
-  <url><loc>{SITE}/privacy.html</loc><lastmod>2026-11-18</lastmod></url>
+  <url><loc>{SITE}/</loc><lastmod>2026-11-22</lastmod></url>
+  <url><loc>{SITE}/privacy.html</loc><lastmod>2026-11-22</lastmod></url>
 </urlset>
 ''')
 (out/"site.webmanifest").write_text('{"name":"HotSonos","short_name":"HotSonos","icons":[{"src":"/icon-192.png","sizes":"192x192","type":"image/png"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png"}],"theme_color":"#16181d","background_color":"#16181d","display":"standalone"}\n')

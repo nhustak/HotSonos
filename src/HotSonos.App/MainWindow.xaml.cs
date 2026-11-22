@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private readonly Func<string?> _mcpEndpoint;
     private readonly Func<string?> _remoteEndpoint;
     private readonly Action? _onRemoteSettingsChanged;
+    private readonly Action? _showQuickTag;
     private DispatcherTimer? _libraryStatusTimer;
     private bool _mcpUiHooked;
 
@@ -102,7 +103,8 @@ public partial class MainWindow : Window
         Func<HotsonosAction, Task> runAction,
         Func<string?>? mcpEndpoint = null,
         Func<string?>? remoteEndpoint = null,
-        Action? onRemoteSettingsChanged = null)
+        Action? onRemoteSettingsChanged = null,
+        Action? showQuickTag = null)
     {
         _sonos = sonos;
         _store = store;
@@ -114,6 +116,7 @@ public partial class MainWindow : Window
         _mcpEndpoint = mcpEndpoint ?? (() => null);
         _remoteEndpoint = remoteEndpoint ?? (() => null);
         _onRemoteSettingsChanged = onRemoteSettingsChanged;
+        _showQuickTag = showQuickTag;
 
         _levelVolumes = Clone(_settings.LevelVolumes);
         _freshStart = Clone(_settings.FreshStart);
@@ -588,6 +591,17 @@ public partial class MainWindow : Window
 
     private void ControlTransportPrevious_Click(object sender, RoutedEventArgs e) =>
         _ = _runAction(HotsonosAction.Previous);
+
+    private void ControlQuickTag_Click(object sender, RoutedEventArgs e)
+    {
+        if (_showQuickTag is null)
+        {
+            SetStatus("Quick tag is not available.", warn: true);
+            return;
+        }
+
+        _showQuickTag();
+    }
 
     private void ControlTransportVolUp_Click(object sender, RoutedEventArgs e) =>
         _ = _runAction(HotsonosAction.VolumeUp);
@@ -1561,9 +1575,11 @@ public partial class MainWindow : Window
             btn.Content = sp;
         }
 
-        IconOnly(ControlTransportPreviousButton, AppIcons.History, 15);
+        if (ControlTransportPreviousButton is not null)
+            ControlTransportPreviousButton.Content = AppIcons.CreateSkipImage(previous: true, 15);
         IconOnly(ControlTransportPlayPauseButton, AppIcons.Speaker, 18);
-        IconOnly(ControlTransportNextButton, AppIcons.Refresh, 15);
+        if (ControlTransportNextButton is not null)
+            ControlTransportNextButton.Content = AppIcons.CreateSkipImage(previous: false, 15);
         IconOnly(ControlDeleteNowPlayingButton, AppIcons.Trash, 15);
         IconOnly(ControlTransportVolDownButton, AppIcons.ArrowDown, 15);
         IconOnly(ControlTransportVolUpButton, AppIcons.ArrowUp, 15);

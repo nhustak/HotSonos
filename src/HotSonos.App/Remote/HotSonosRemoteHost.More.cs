@@ -457,6 +457,23 @@ public sealed partial class HotSonosRemoteHost
             return Results.Json(new RemoteCommandResponse(result.Ok, result.Message, result.Ok ? null : result.Error ?? result.Message), RemoteApi.Json);
         });
 
+        app.MapGet("/api/now/tags", () => Results.Json(DescribeNowTags(state), RemoteApi.Json));
+
+        app.MapPost("/api/now/tags", async (HttpContext ctx) =>
+        {
+            Log(ctx);
+            var body = await ReadJson<RemoteKeyBody>(ctx).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(body?.Key))
+                return BadJson();
+            if (state.Library is null)
+                return Results.Json(new RemoteCommandResponse(false, null, NowPlayingTagTarget.LibraryUnavailable), RemoteApi.Json);
+            var described = DescribeNowTags(state);
+            if (!described.CanTag || string.IsNullOrWhiteSpace(described.Path))
+                return Results.Json(new RemoteCommandResponse(false, null, described.Message ?? NowPlayingTagTarget.NotInLibrary), RemoteApi.Json);
+            var result = state.Library.SetTagFlag(described.Path, body.Key.Trim(), null);
+            return Results.Json(new RemoteCommandResponse(result.Ok, result.Message, result.Ok ? null : result.Error ?? result.Message), RemoteApi.Json);
+        });
+
         app.MapPost("/api/tracks/tags/set", async (HttpContext ctx) =>
         {
             Log(ctx);
@@ -818,6 +835,49 @@ public sealed partial class HotSonosRemoteHost
         }
 
         return rooms;
+    }
+
+    private static RemoteNowTagsResponse DescribeNowTags(HotSonosMcpState state)
+    {
+        var settings = state.Settings().EnsureShape();
+        var np = state.GetLastNowPlaying();
+        var empty = np is null || np.IsEmpty;
+        var missingUri = np is null || string.IsNullOrWhiteSpace(np.TrackUri);
+        string? libraryPath = null;
+        if (!empty && !missingUri && state.Library is not null)
+            libraryPath = state.Library.FindBySonosUri(np!.TrackUri)?.Path;
+
+        var (canTag, path, message) = NowPlayingTagTarget.Resolve(empty, missingUri, libraryPath);
+        if (state.Library is null && !empty && !missingUri)
+        {
+            canTag = false;
+            path = null;
+            message = NowPlayingTagTarget.LibraryUnavailable;
+        }
+
+        var on = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (canTag && path is not null && state.Library is not null)
+        {
+            var track = state.Library.GetTrack(path);
+            if (track is not null)
+            {
+                foreach (var key in track.TagKeys)
+                {
+                    if (!string.IsNullOrWhiteSpace(key))
+                        on.Add(key);
+                }
+            }
+        }
+
+        var tags = settings.Tags
+            .Where(t => !string.IsNullOrWhiteSpace(t.Key))
+            .Select(t => new RemoteNowTagDto(
+                t.Key,
+                string.IsNullOrWhiteSpace(t.Label) ? t.Key : t.Label,
+                on.Contains(t.Key)))
+            .ToList();
+        var title = np is null || string.IsNullOrWhiteSpace(np.Title) ? null : np.Title;
+        return new RemoteNowTagsResponse(true, canTag, path, title, message, tags);
     }
 
     private static DailyGroupModel CaptureDaily(AppSettings settings) => new()

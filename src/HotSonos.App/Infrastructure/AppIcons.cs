@@ -1,5 +1,6 @@
 using System.Windows.Controls;
 using System.Windows.Media;
+using HotSonos.Remote.Protocol;
 using SharpVectors.Converters;
 using SharpVectors.Renderers.Wpf;
 using Brush = System.Windows.Media.Brush;
@@ -94,6 +95,51 @@ public static class AppIcons
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Skip-previous (left) or skip-next (right) from <see cref="TransportGlyph"/>.
+    /// Previous is the mirror of next. These replace the history and refresh marks on transport.
+    /// </summary>
+    public static Image CreateSkipImage(bool previous, double size = 15)
+    {
+        var shape = previous ? TransportGlyph.Previous : TransportGlyph.Next;
+        var stream = new StreamGeometry();
+        using (var context = stream.Open())
+        {
+            var a = shape.Triangle[0];
+            var b = shape.Triangle[1];
+            var c = shape.Triangle[2];
+            context.BeginFigure(new System.Windows.Point(a.X, a.Y), isFilled: true, isClosed: true);
+            context.LineTo(new System.Windows.Point(b.X, b.Y), isStroked: true, isSmoothJoin: false);
+            context.LineTo(new System.Windows.Point(c.X, c.Y), isStroked: true, isSmoothJoin: false);
+        }
+
+        stream.Freeze();
+        var bar = shape.Bar;
+        var rect = new RectangleGeometry(
+            new System.Windows.Rect(bar.X, bar.Y, bar.Width, bar.Height),
+            0.04,
+            0.04);
+        rect.Freeze();
+        var group = new GeometryGroup();
+        group.Children.Add(stream);
+        group.Children.Add(rect);
+        group.Freeze();
+        var drawing = new GeometryDrawing(System.Windows.Media.Brushes.Black, null, group);
+        drawing.Freeze();
+        var source = new DrawingImage(drawing);
+        source.Freeze();
+        return new Image
+        {
+            Source = source,
+            Width = size,
+            Height = size,
+            Stretch = Stretch.Uniform,
+            SnapsToDevicePixels = true,
+            Margin = new Thickness(0),
+            VerticalAlignment = System.Windows.VerticalAlignment.Center,
+        };
     }
 
     /// <summary>WPF <see cref="Image"/> control for inline use (chips, buttons, legends).</summary>

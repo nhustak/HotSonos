@@ -230,6 +230,12 @@ public sealed class RemoteClient : IDisposable
     public Task<RemoteCall<RemoteCommandResponse>> ToggleTagAsync(string path, string key, CancellationToken ct) =>
         PostAsync("api/tracks/tags", new RemoteTagToggleBody { Path = path, Key = key }, RemoteJsonContext.Default.RemoteTagToggleBody, Slow, ct);
 
+    public Task<RemoteCall<RemoteNowTagsResponse>> GetNowTagsAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/now/tags", null, Fast, RemoteJsonContext.Default.RemoteNowTagsResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> ToggleNowTagAsync(string key, CancellationToken ct) =>
+        PostAsync("api/now/tags", new RemoteKeyBody { Key = key }, RemoteJsonContext.Default.RemoteKeyBody, Slow, ct);
+
     public Task<RemoteCall<RemoteSongsResponse>> GetSongsAsync(string? query, int limit, int offset, CancellationToken ct) =>
         SendAsync(HttpMethod.Get, "api/reports/songs?q=" + Uri.EscapeDataString(query ?? "") + "&limit=" + limit + "&offset=" + offset, null, Fast, RemoteJsonContext.Default.RemoteSongsResponse, ct);
 

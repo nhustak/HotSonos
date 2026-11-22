@@ -1,6 +1,6 @@
 # hotsonos.com
 
-Static landing page for HotSonos (no framework). Served by nginx on docker1 from `~/clover-dev/sites/hotsonos`.
+Static landing page for HotSonos (no framework). Served by nginx on docker1 from `~/clover-dev/sites/hotsonos` (container root `/usr/share/nginx/sites/hotsonos`, config `deploy/hotsonos.conf`). Merging this repo does not publish the site. Copy the built `site/` files onto that host after `python3 build.py`.
 
 - `build.py` — page content (index, privacy, 404, robots, sitemap, manifest). Run `python3 build.py` after edits.
 - `assets/logo.png` — the one logo file. Swap it, then run `python3 make-icons.py` to regenerate favicons and `assets/og-image.png`.
