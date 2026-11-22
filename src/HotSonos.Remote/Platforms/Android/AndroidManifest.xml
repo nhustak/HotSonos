@@ -5,6 +5,16 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+      Media session for a paired watch and the lock screen. These are normal
+      permissions, not hardware features, so a Chromebook still installs.
+      POST_NOTIFICATIONS is requested at runtime on Android 13+. The service
+      type is mediaPlayback. The session is a foreground service so the
+      notification stays while the app is in the background.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Camera is optional. Scan QR asks at runtime and hides when there is no camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!--

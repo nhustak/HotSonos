@@ -29,6 +29,9 @@ public partial class AppShell : ContentPage
 #endif
         _current = this;
         AppServices.Live.Start();
+#if ANDROID
+        MediaControls.Install();
+#endif
         _pages =
         [
             new PlayerPage(),

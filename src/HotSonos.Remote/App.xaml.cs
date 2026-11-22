@@ -19,7 +19,13 @@ public partial class App : Application
     {
         var window = base.CreateWindow(activationState);
         window.Created += (_, _) => ResumeLink();
-        window.Resumed += (_, _) => ResumeLink();
+        window.Resumed += (_, _) =>
+        {
+            ResumeLink();
+#if ANDROID
+            MediaControls.OnHostResumed();
+#endif
+        };
         return window;
     }
 
