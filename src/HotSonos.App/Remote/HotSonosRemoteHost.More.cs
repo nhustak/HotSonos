@@ -184,8 +184,11 @@ public sealed partial class HotSonosRemoteHost
             return Results.Json(new RemoteCommandResponse(true, "Removed", null), RemoteApi.Json);
         });
 
-        app.MapGet("/api/topology", async (HttpContext ctx) =>
-            Results.Json(await BuildTopologyAsync(state, ctx.RequestAborted).ConfigureAwait(false), RemoteApi.Json));
+        // Block body. An expression-bodied async HttpContext lambda binds as RequestDelegate and drops the JSON (ASP0016).
+        app.MapGet("/api/topology", async Task<IResult> (HttpContext ctx) =>
+        {
+            return Results.Json(await BuildTopologyAsync(state, ctx.RequestAborted).ConfigureAwait(false), RemoteApi.Json);
+        });
 
         app.MapPost("/api/topology/refresh", async (HttpContext ctx) =>
         {

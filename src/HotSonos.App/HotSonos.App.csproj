@@ -10,6 +10,8 @@
     <RootNamespace>HotSonos.App</RootNamespace>
     <AssemblyName>HotSonos</AssemblyName>
     <ApplicationIcon>hotsonos.ico</ApplicationIcon>
+    <!-- Expression-bodied async (HttpContext) handlers bind as RequestDelegate and discard IResult. -->
+    <WarningsAsErrors>$(WarningsAsErrors);ASP0016</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
