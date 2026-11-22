@@ -46,6 +46,8 @@ Old master `1.0.0.60` / `1.0.0.61` (fail-fast regroup) were **not** brought onto
 
 **1.0.0.72:** when the 14-day unheard pool is short, slide in the oldest plays first; never replay a track heard in the last 24 hours while any older track exists.
 
+**Top-up:** a top-up never appends a track that is still waiting (enqueued this session and not played since). With a folder of about 50 tracks (queue 80, top-up 60 at 4 remaining) the first batch queues the folder and the top-up does not append those 4 again. When nothing unheard is left, the top-up replays tracks that have been heard and are not still waiting, oldest first. If every in-scope track is still waiting, it appends nothing. `ShuffleExcludePlayed` only controls recently heard tracks. A fresh shuffle still replaces the queue and, when every in-scope track was heard in the last 24 hours, still reuses that whole scope.
+
 **1.0.0.73:** MCP **`queue_now`** first landed; 1.0.0.73 still sought and played (Play now). Wrong.
 
 **1.0.0.74:** **`queue_now`** only pushes up-next: insert after the current track, no seek, no play, no shuffle clear. Not a refresh. Library ⚡ remains **Play now** (insert + seek + play).
@@ -134,7 +136,7 @@ Old master `1.0.0.60` / `1.0.0.61` (fail-fast regroup) were **not** brought onto
 - **Do not** add master hi-res dump as a Sonos Music Library share.  
 - Tags live in **files**; SQLite is **rebuildable cache only**.  
 - Daily shuffle remains Sonos `A:TRACKS` until §6.2 / later scoping.  
-- Shuffle history: GENA + **Next/skip** both mark tracks excluded (~14d); top-up also excludes tracks already enqueued this session.  
+- Shuffle history: GENA + **Next/skip** both mark tracks excluded (~14d). **ShuffleExcludePlayed** controls that history only. A top-up never re-adds a track that is still queued and unplayed. When every eligible track was heard in the last 24h, top-up replays already-heard tracks oldest first and still skips anything waiting; if nothing is eligible it appends nothing. A fresh shuffle (queue replace) is unchanged.  
 - MCP is loopback only; register tools via `C:\Project\_mcp\mcp-servers.json` + `sync-mcp.ps1` (server list), but HotSonos tools are live from the running app.  
 - Commit only when the user asks; steps 1–2 are ready to commit when they do.  
 - NuGet audit: transitive `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 may warn NU1903 until Microsoft.Data.Sqlite ships a newer native bundle — local DB only, not network-facing.
@@ -213,7 +215,7 @@ Sonos speakers expose a local UPnP/SOAP server on **TCP 1400**, discoverable via
 | Play Playlist | Browse `SQ:` → `x-rincon-playlist:{uuid}#SQ:N` → queue + play |
 | Play Spotify list | A saved name or a pasted share link. Remembered in settings with a name. Containers enqueue (`AddURIToQueue`), then the group queue plays. `SetAVTransportURI` of `x-rincon-cpcontainer:` returns UPnP **714**. |
 | Heard outside the library | Control list under Now playing. Named Spotify, radio, and other non-library tracks. Copy the name. Library tracks are excluded. `%LocalAppData%\HotSonos\heard-outside-library.json`. MCP `get_heard_tracks`. |
-| Shuffle Music Library | Browse `A:TRACKS`; **short queue (~80)**; hard-exclude tracks **played or skipped** (~14d); top-up also skips **session-enqueued** tracks; **auto top-up** near queue end; artist spread; `NORMAL` |
+| Shuffle Music Library | Browse `A:TRACKS`; **short queue (~80)**; hard-exclude tracks **played or skipped** (~14d) when that option is on; top-up never re-adds tracks still queued and unplayed, and when the unheard pool is empty replays already-heard tracks oldest-first (or appends nothing); **auto top-up** near queue end; artist spread; `NORMAL` |
 | Volume | Per-member `RenderingControl` (group write often 803 with fixed-volume members) |
 | Level all | Absolute `SetVolume` + unmute |
 | Now playing | GENA AVTransport `LastChange` |
@@ -700,6 +702,7 @@ Auth: localhost only. Return small result pages — never dump the whole library
 | 2026-11-22 | Previous on Player and the tray Control card is a left-pointing skip-previous icon, the mirror of next. Quick tag (the playing-track hotkey) is a button on both. Phone uses `GET` / `POST /api/now/tags` behind the existing PIN |
 | 2026-11-22 | §6.6 pairing: PC Phone window QR for `hotsonos://pair`. Phone scans it, opens the link, or pastes it, then saves and tests. Camera stays optional. Same app id keeps the saved pairing; an id change wipes it |
 | 2026-11-22 | §6.6 phone: Library song rows drop the Queue button (Play and Wipe queue stay). Rooms rows are the name, what's playing, and the 40dp volume line; coordinator and reboot move to a long-press. About leads with name, AppInfo version, app id, site, GitHub, and the Sonos trademark. Player title sits under the art and does not overlap it; art size and the slider stay |
+| 2026-11-22 | Shuffle top-up never re-appends a track still waiting on the queue. The empty unheard pool replays already-heard tracks oldest first and skips anything still waiting; it appends nothing when none are eligible. ShuffleExcludePlayed only controls recently heard tracks. A fresh shuffle is unchanged |
 | 2026-07-15 | Library plan step 2: TagLib scanner → SQLite cache; rescan UI; MCP status/search/get |
 | 2026-07-15 | Main window tabs: Library results + MCP Debug command log; tray shortcuts |
 | 2026-07-15 | Library roots discovered from Sonos A:TRACKS (x-file-cifs), not manual-only |

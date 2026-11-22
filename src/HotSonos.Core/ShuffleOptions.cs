@@ -11,15 +11,26 @@ public sealed class ShuffleOptions
 
     /// <summary>
     /// URIs that must not appear in the new queue if enough other tracks exist
-    /// (typically tracks actually played recently).
+    /// (typically tracks actually played recently). Tracks that are only still
+    /// waiting on the queue are <see cref="QueuedUris"/>.
     /// </summary>
     public IReadOnlyCollection<string>? ExcludeUris { get; init; }
+
+    /// <summary>
+    /// Tracks still waiting on the queue (top-up). Never re-added, including
+    /// when the heard pool is exhausted. Null on a fresh shuffle (the queue is
+    /// replaced). An empty collection is still a top-up: the exhausted fallback
+    /// replays already-heard tracks oldest-first instead of the whole scope.
+    /// </summary>
+    public IReadOnlyCollection<string>? QueuedUris { get; init; }
 
     /// <summary>
     /// Last-played times for <see cref="ExcludeUris"/> keys (any URI form).
     /// When the unheard pool is too small, older plays may slide back in;
     /// anything inside <see cref="HardRecentWindow"/> does not, unless every
-    /// track in scope was heard that recently.
+    /// eligible track was heard that recently. A fresh shuffle then reuses the
+    /// whole scope. A top-up replays already-heard tracks oldest first and
+    /// still leaves <see cref="QueuedUris"/> out.
     /// </summary>
     public IReadOnlyDictionary<string, DateTime>? PlayedAtUtc { get; init; }
 
