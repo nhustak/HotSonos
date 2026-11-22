@@ -173,6 +173,7 @@ static class ViewActivate
             {
                 case MotionEventActions.Down:
                     Paint(down: true);
+                    Haptics.Tick();
                     return true;
                 case MotionEventActions.Move:
                     Paint(down: Inside(v, e));

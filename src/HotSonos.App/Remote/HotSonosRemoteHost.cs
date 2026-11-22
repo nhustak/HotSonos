@@ -145,6 +145,15 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
                 return;
             }
 
+            // One line per phone action, including routes that forget to log themselves.
+            // Status and art are the 2-second poll, not an action.
+            var path = ctx.Request.Path.Value ?? "";
+            var poll = HttpMethods.IsGet(ctx.Request.Method)
+                && (path.Equals("/api/status", StringComparison.OrdinalIgnoreCase)
+                    || path.Equals("/api/art", StringComparison.OrdinalIgnoreCase));
+            if (!poll)
+                AppLog.Info($"Remote {ctx.Request.Method} {path}");
+
             await next().ConfigureAwait(false);
         });
 
@@ -276,14 +285,12 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapPost("/api/volume/sample", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var (volume, muted) = await hooks.SampleVolumeAsync(ctx.RequestAborted).ConfigureAwait(false);
             return Results.Json(new RemoteVolumeSampleResponse(true, volume, muted, null), RemoteApi.Json);
         });
 
         app.MapPost("/api/transport/seek", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteSeekBody>(ctx).ConfigureAwait(false);
             if (body is null || body.Seconds is < 0 or > 86400)
                 return Results.Json(new RemoteCommandResponse(false, null, "Seek must be 0 to 86400 seconds."), RemoteApi.Json, statusCode: StatusCodes.Status400BadRequest);
@@ -322,14 +329,12 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
         app.MapPost("/api/daily/play", Transport(state, HotsonosAction.ShuffleLibrary));
         app.MapPost("/api/wake/cancel", (HttpContext ctx) =>
         {
-            Log(ctx);
             state.Wake?.Cancel();
             return Results.Json(new RemoteCommandResponse(true, "Wake cancel requested", null), RemoteApi.Json);
         });
 
         app.MapPost("/api/volume/step", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteVolumeStepBody>(ctx).ConfigureAwait(false);
             if (body is null || body.Direction is not (1 or -1))
                 return BadJson();
@@ -339,7 +344,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapPost("/api/volume", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteVolumeBody>(ctx).ConfigureAwait(false);
             if (body is null)
                 return BadJson();
@@ -350,7 +354,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapPost("/api/room", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteRoomBody>(ctx).ConfigureAwait(false);
             var room = body?.Room?.Trim();
             if (string.IsNullOrWhiteSpace(room))
@@ -369,7 +372,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapPost("/api/slots/{n:int}/play", async (HttpContext ctx, int n) =>
         {
-            Log(ctx);
             if (n is < 1 or > 6)
                 return BadJson();
             var action = HotsonosAction.Favorite1 + (n - 1);
@@ -378,7 +380,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapPost("/api/tags/play", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteKeyBody>(ctx).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(body?.Key) || state.PlayTaggedTracksAsync is null)
                 return BadJson();
@@ -387,7 +388,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapPost("/api/genres/play", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteNameBody>(ctx).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(body?.Name) || state.PlayGenreTracksAsync is null)
                 return BadJson();
@@ -396,7 +396,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapPost("/api/folders/play", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemotePathBody>(ctx).ConfigureAwait(false);
             var path = body?.Path?.Trim().TrimEnd('\\', '/');
             if (string.IsNullOrWhiteSpace(path) || state.PlayLibraryFolderAsync is null)
@@ -411,7 +410,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapPost("/api/tracks/play", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteTrackBody>(ctx).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(body?.Path) || state.PlayLibraryTrackAsync is null)
                 return BadJson();
@@ -420,7 +418,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapPost("/api/tracks/queue", async (HttpContext ctx) =>
         {
-            Log(ctx);
             var body = await ReadJson<RemoteTrackBody>(ctx).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(body?.Path) || state.QueueNowAsync is null)
                 return BadJson();
@@ -480,7 +477,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
 
         app.MapGet("/api/library/search", (HttpContext ctx) =>
         {
-            Log(ctx);
             var lib = state.Library;
             var limit = 25;
             if (int.TryParse(ctx.Request.Query["limit"], out var parsedLimit))
@@ -540,9 +536,6 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
         }
     }
 
-    private static void Log(HttpContext ctx) =>
-        AppLog.Info($"Remote {ctx.Request.Method} {ctx.Request.Path}");
-
     private static async Task<T?> ReadJson<T>(HttpContext ctx) where T : class
     {
         try
@@ -562,11 +555,8 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
     private static Delegate Transport(HotSonosMcpState state, HotsonosAction action) =>
         async (HttpContext ctx) => await Command(ctx, () => state.ExecuteActionAsync(action)).ConfigureAwait(false);
 
-    private static Task<IResult> Command(HttpContext ctx, Func<Task<string?>> run)
-    {
-        Log(ctx);
-        return RunToast(run);
-    }
+    private static Task<IResult> Command(HttpContext _, Func<Task<string?>> run) =>
+        RunToast(run);
 
     private static async Task<IResult> RunToast(Func<Task<string?>> run)
     {

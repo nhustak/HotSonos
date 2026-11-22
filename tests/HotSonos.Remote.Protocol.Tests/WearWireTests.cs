@@ -46,13 +46,20 @@ public class WearWireTests
     {
         var playing = MediaControlMapping.FromStatus(Sample("Afternoon", "Ada", "Playing", 40));
         Assert.Equal(
-            """{"title":"Afternoon","artist":"Ada","playing":true,"volume":40}""",
+            """{"title":"Afternoon","artist":"Ada","playing":true,"volume":40,"nextTitle":null,"nextArtist":null}""",
             WearWire.EncodeState(playing));
 
         var paused = MediaControlMapping.FromStatus(Sample("Afternoon", "Ada", "PausedPlayback", null));
         Assert.Equal(
-            """{"title":"Afternoon","artist":"Ada","playing":false,"volume":null}""",
+            """{"title":"Afternoon","artist":"Ada","playing":false,"volume":null,"nextTitle":null,"nextArtist":null}""",
             WearWire.EncodeState(paused));
+
+        var ahead = WearWire.EncodeState(playing, upcoming: new RemoteUpcomingDto("Night", "Bea"));
+        Assert.Contains("\"nextTitle\":\"Night\"", ahead, StringComparison.Ordinal);
+        Assert.Contains("\"nextArtist\":\"Bea\"", ahead, StringComparison.Ordinal);
+        var decodedAhead = WearWire.DecodeState(ahead);
+        Assert.Equal("Night", decodedAhead?.NextTitle);
+        Assert.Equal("Bea", decodedAhead?.NextArtist);
 
         var overridden = WearWire.EncodeState(playing, 55);
         Assert.Contains("\"volume\":55", overridden, StringComparison.Ordinal);
@@ -97,6 +104,9 @@ public class WearWireTests
         Assert.Contains("\"volume\"", source, StringComparison.Ordinal);
         Assert.Contains($"const val UNKNOWN_VOLUME = {WearWire.UnknownVolume}", source, StringComparison.Ordinal);
         Assert.Contains($"const val VOLUME_STEP = {PhoneVolume.SpeakerStep}", source, StringComparison.Ordinal);
+        Assert.Contains("\"nextTitle\"", source, StringComparison.Ordinal);
+        Assert.Contains("\"nextArtist\"", source, StringComparison.Ordinal);
+        Assert.Contains($"const val SKIP_HOLD_MS = {SkipAhead.HoldMs}", source, StringComparison.Ordinal);
     }
 
     static string WatchKotlin()

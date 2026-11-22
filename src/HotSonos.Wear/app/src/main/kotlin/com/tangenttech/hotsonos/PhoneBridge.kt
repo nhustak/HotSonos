@@ -22,6 +22,7 @@ object WearProtocol {
     const val REFRESH = "refresh"
     const val UNKNOWN_VOLUME = 20
     const val VOLUME_STEP = 2
+    const val SKIP_HOLD_MS = 4000
 }
 
 data class WearState(
@@ -29,6 +30,8 @@ data class WearState(
     val artist: String = "",
     val playing: Boolean = false,
     val volume: Int? = null,
+    val nextTitle: String? = null,
+    val nextArtist: String? = null,
 )
 
 class PhoneBridge(
@@ -78,6 +81,8 @@ class PhoneBridge(
             artist = json.optString("artist"),
             playing = json.optBoolean("playing", false),
             volume = if (json.isNull("volume")) null else json.optInt("volume"),
+            nextTitle = json.optString("nextTitle").ifEmpty { null },
+            nextArtist = json.optString("nextArtist").ifEmpty { null },
         )
     } catch (_: Exception) {
         null

@@ -44,11 +44,23 @@ static class RemoteUi
         };
         button.Clicked += async (_, _) =>
         {
-            try { await click().ConfigureAwait(true); }
+            if (!button.IsEnabled)
+                return;
+            button.IsEnabled = false;
+            var opacity = button.Opacity;
+            button.Opacity = 0.55;
+            try
+            {
+                await click().ConfigureAwait(true);
+            }
             catch (Exception ex)
             {
-                if (Application.Current?.MainPage is Page page)
-                    await page.DisplayAlert("HotSonos", ex.Message, "OK");
+                Toasts.Show(string.IsNullOrWhiteSpace(ex.Message) ? "Something went wrong." : ex.Message);
+            }
+            finally
+            {
+                button.Opacity = opacity <= 0 ? 1 : opacity;
+                button.IsEnabled = true;
             }
         };
         return button;
@@ -325,40 +337,60 @@ abstract class RemotePage : ContentPage
         AppServices.Link.Speakers.Controller
         ?? throw new InvalidOperationException("No speakers yet. Pull to refresh, or check that the phone is on the same Wi-Fi.");
 
-    protected async Task Speaker(Func<SonosController, CancellationToken, Task> work, Label? status = null)
+    protected async Task Speaker(Func<SonosController, CancellationToken, Task> work, Label? status = null, bool announce = false, string? done = null)
     {
         try
         {
             await work(RequireSpeaker(), CancellationToken.None).ConfigureAwait(true);
+            var message = done ?? "Done";
             if (status is not null)
-                status.Text = "Done";
+                status.Text = message;
+            if (announce)
+                Toasts.Show(message);
         }
         catch (Exception ex)
         {
-            await DisplayAlert("HotSonos", ex.Message, "OK");
+            var message = string.IsNullOrWhiteSpace(ex.Message) ? "Could not reach the speakers." : ex.Message;
+            if (status is not null)
+                status.Text = message;
+            Toasts.Show(message);
         }
     }
 
     protected Task<bool> Confirm(string title, string message) =>
-        DisplayAlert(title, message, "Do it", "Cancel");
+        Dialogs.Confirm(this, title, message);
 
-    protected async Task<bool> Act(Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> call, Label? status = null)
+    protected async Task<bool> Act(
+        Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> call,
+        Label? status = null,
+        bool announce = false,
+        string? done = null)
     {
         var result = await call(CancellationToken.None).ConfigureAwait(true);
         if (result.Kind == RemoteCallKind.Unauthorized)
         {
-            await DisplayAlert("PIN", result.Detail ?? "Wrong PIN. The PC rejected it. Open connection and enter the PIN from the PC Phone window.", "OK");
+            var pin = result.Detail ?? "Wrong PIN. The PC rejected it. Open connection and enter the PIN from the PC Phone window.";
+            if (status is not null)
+                status.Text = pin;
+            Toasts.Show(pin);
+            await Dialogs.Alert(this, "PIN", pin);
             return false;
         }
 
         if (result.Kind != RemoteCallKind.Ok || result.Value is not { Ok: true } cmd)
         {
-            await DisplayAlert("HotSonos", result.Value?.Error ?? result.Detail ?? "Could not reach the PC.", "OK");
+            var error = result.Value?.Error ?? result.Detail ?? "Could not reach the PC.";
+            if (status is not null)
+                status.Text = error;
+            Toasts.Show(error);
             return false;
         }
 
+        var detail = string.IsNullOrWhiteSpace(cmd.Message) ? (done ?? "Done") : cmd.Message;
         if (status is not null)
-            status.Text = string.IsNullOrWhiteSpace(cmd.Message) ? "Done" : cmd.Message;
+            status.Text = detail;
+        if (announce)
+            Toasts.Show(done ?? detail);
         return true;
     }
 }

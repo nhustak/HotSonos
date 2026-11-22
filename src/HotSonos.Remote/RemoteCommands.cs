@@ -17,7 +17,8 @@ static class RemoteCommands
 
     public static Task PlayPauseAsync() => Run(
         (speaker, ct) => speaker.PlayPauseAsync(ct),
-        ct => AppServices.Client.PlayPauseAsync(ct));
+        ct => AppServices.Client.PlayPauseAsync(ct),
+        pull: true);
 
     /// <summary>
     /// Session play. Speakers get an explicit Play. PC mode only has a toggle, so this
@@ -89,16 +90,19 @@ static class RemoteCommands
         var play = request == MediaTransportRequest.Play;
         return Run(
             (speaker, ct) => play ? speaker.PlayAsync(ct) : speaker.PauseAsync(ct),
-            ct => AppServices.Client.PlayPauseAsync(ct));
+            ct => AppServices.Client.PlayPauseAsync(ct),
+            pull: true);
     }
 
     public static Task NextAsync() => Run(
         (speaker, ct) => speaker.NextAsync(ct),
-        ct => AppServices.Client.NextAsync(ct));
+        ct => AppServices.Client.NextAsync(ct),
+        pull: true);
 
     public static Task PreviousAsync() => Run(
         (speaker, ct) => speaker.PreviousAsync(ct),
-        ct => AppServices.Client.PreviousAsync(ct));
+        ct => AppServices.Client.PreviousAsync(ct),
+        pull: true);
 
     public static async Task MuteAsync()
     {
@@ -110,7 +114,8 @@ static class RemoteCommands
 
     static async Task Run(
         Func<SonosController, CancellationToken, Task> speakers,
-        Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc)
+        Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc,
+        bool pull = false)
     {
         try
         {
@@ -135,6 +140,11 @@ static class RemoteCommands
         catch (Exception ex)
         {
             await Alert(string.IsNullOrWhiteSpace(ex.Message) ? "Could not reach the speakers." : ex.Message).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (pull)
+                await AppServices.Live.PullNowAsync().ConfigureAwait(false);
         }
     }
 

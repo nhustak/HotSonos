@@ -2,7 +2,7 @@
 
 HotSonos on a Pixel Watch (Wear OS) is a small screen: the current title and artist, play/pause, previous, next, and volume. The rotary crown changes volume by the same step as the phone volume buttons (2).
 
-The watch does not use the PIN, the PC address, or speaker discovery. It sends commands to the phone over the Wearable Data Layer (`MessageClient`, path `/hotsonos/v1`). The phone app forwards them to the PC client or the standalone speaker engine, the same path as the Player buttons, and sends the polled now-playing snapshot back.
+The watch does not use the PIN, the PC address, or speaker discovery. It sends commands to the phone over the Wearable Data Layer (`MessageClient`, path `/hotsonos/v1`). The phone app forwards them to the PC client or the standalone speaker engine, the same path as the Player buttons, and sends a now-playing snapshot back. That JSON includes `nextTitle` and `nextArtist` (the queue row after the one that is playing). Next paints that row immediately. A snapshot that still names the previous title is ignored for 4 seconds, then the real snapshot wins. Play, pause, next, and previous make the phone push a snapshot right away instead of waiting for the 2-second poll.
 
 .NET MAUI has no Wear OS target, so the companion is Kotlin and Compose for Wear OS in `src/HotSonos.Wear`. It uses the same application id as the phone, `com.tangenttech.hotsonos`, which is what the Data Layer requires. The two packages are installed on different devices. A watch and a phone cannot both have that id on one device.
 

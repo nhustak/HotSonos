@@ -19,12 +19,23 @@ class MainActivity : ComponentActivity() {
             var state by remember { mutableStateOf(WearState()) }
             var hint by remember { mutableStateOf("Open HotSonos on the phone") }
             var ready by remember { mutableStateOf(false) }
+            var skippedTitle by remember { mutableStateOf<String?>(null) }
+            var skippedAt by remember { mutableStateOf(0L) }
             val created = remember {
                 PhoneBridge(
                     context = this@MainActivity,
-                    onState = { next ->
-                        state = next
-                        ready = true
+                    onState = { incoming ->
+                        val skipped = skippedTitle
+                        val age = android.os.SystemClock.elapsedRealtime() - skippedAt
+                        val stale = skipped != null && age < WearProtocol.SKIP_HOLD_MS &&
+                            (incoming.title == skipped || incoming.title.isBlank() || incoming.title == "Nothing playing")
+                        if (stale) {
+                            state = state.copy(playing = incoming.playing, volume = incoming.volume)
+                        } else {
+                            skippedTitle = null
+                            state = incoming
+                            ready = true
+                        }
                     },
                     onHint = { hint = it },
                 ).also { bridge = it }
@@ -43,7 +54,20 @@ class MainActivity : ComponentActivity() {
                         created.send(if (state.playing) WearProtocol.PAUSE else WearProtocol.PLAY)
                         state = state.copy(playing = !state.playing)
                     },
-                    onNext = { created.send(WearProtocol.NEXT) },
+                    onNext = {
+                        val upcoming = state.nextTitle
+                        if (!upcoming.isNullOrBlank()) {
+                            skippedTitle = state.title
+                            skippedAt = android.os.SystemClock.elapsedRealtime()
+                            state = state.copy(
+                                title = upcoming,
+                                artist = state.nextArtist.orEmpty(),
+                                nextTitle = null,
+                                nextArtist = null,
+                            )
+                        }
+                        created.send(WearProtocol.NEXT)
+                    },
                     onVolume = { direction ->
                         val current = state.volume ?: WearProtocol.UNKNOWN_VOLUME
                         val next = (current + direction * WearProtocol.VOLUME_STEP).coerceIn(0, 100)
