@@ -5,6 +5,8 @@ import pathlib
 SITE="https://hotsonos.com"
 REL="https://github.com/nhustak/HotSonos/releases/latest"
 REPO="https://github.com/nhustak/HotSonos"
+# Exact wording of AboutCopy.Trademark (Settings → About) and the site footer. Do not paraphrase.
+DISCLAIMER="HotSonos is an independent project and is not affiliated with or endorsed by Sonos, Inc. Sonos is a trademark of Sonos, Inc."
 def head(title,desc,path):
     return f'''<!doctype html>
 <html lang="en">
@@ -35,6 +37,7 @@ def head(title,desc,path):
 <link rel="stylesheet" href="/assets/site.css">
 </head>
 <body>
+<div class="banner" role="note"><p>{DISCLAIMER}</p></div>
 <header class="top"><div class="wrap">
 <a class="brand" href="/"><img src="/assets/logo.png" alt="" width="34" height="34">HotSonos</a>
 <nav><a class="hide-sm" href="/#features">Features</a><a class="hide-sm" href="/#faq">FAQ</a><a href="/#download">Download</a><a href="/privacy.html">Privacy</a></nav>
@@ -44,7 +47,7 @@ FOOT=f'''<footer><div class="wrap">
 <div class="row"><a class="brand" href="/"><img src="/assets/logo.png" alt="" width="28" height="28">HotSonos</a>
 <div><a href="{REPO}">GitHub</a> · <a href="{REL}">Releases</a> · <a href="/privacy.html">Privacy</a> · <a href="{REPO}/blob/master/LICENSE">MIT License</a></div></div>
 <p>Open source, maintained by <a href="https://github.com/nhustak">Nick Hustak</a>. © 2026 Nick Hustak.</p>
-<p class="legal">HotSonos is an independent project and is not affiliated with or endorsed by Sonos, Inc. Sonos is a trademark of Sonos, Inc.</p>
+<p class="legal">{DISCLAIMER}</p>
 </div></footer>
 </body>
 </html>

@@ -442,7 +442,7 @@ Access model (target):
 - Later: wake source = Daily or a named group  
 
 ### 6.4 Spec/docs site
-- Static site on **hotsonos.com** (download MSI, features, GitHub link) — live; source in `site/`  
+- Static site on **hotsonos.com** (download MSI, features, GitHub link) — live; source in `site/`. Home, privacy, and the 404 page open with the Sonos trademark notice from Settings → About (`AboutCopy.Trademark`); the footer keeps that same notice.  
 
 ### 6.5 Later (not now)
 - Timed mode swap (play group A for N hours, then group B / Daily)  
