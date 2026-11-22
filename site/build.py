@@ -61,9 +61,7 @@ INDEX=head("HotSonos — global hotkeys for your music library",DESC,"/")+f'''
 <h1>Your music library, <span class="g">one hotkey away.</span></h1>
 <p class="lead">HotSonos lives in the Windows system tray and gives you global hotkeys for the music files you share to Sonos: history-aware shuffle, play/pause, skip, and whole-house volume, over your local network. No cloud and no Sonos account. Shuffle does not work with Spotify, Apple Music, or other streaming services.</p>
 <div class="ctas"><a class="btn btn-primary" href="{REL}">Download for Windows</a><a class="btn btn-ghost" href="{REPO}">View on GitHub</a></div>
-<p style="margin:14px 0 0;color:var(--muted)">Windows tray app: available now. Android (phone, tablet, Chromebook), as a remote for the tray app or standalone: alpha coming soon.</p>
-<p style="margin:8px 0 0;color:var(--muted)">iPhone and iPad: early prototype.</p>
-<p class="small" style="margin-top:14px">Per-user MSI installer, .NET runtime included.</p>
+<p class="small" style="margin-top:14px">Free for Windows 10 and 11. Per-user MSI installer, .NET runtime included.</p>
 </div>
 <img class="hero-logo" src="/assets/logo.png" alt="HotSonos logo" width="320" height="320">
 </div></section>
@@ -82,8 +80,7 @@ INDEX=head("HotSonos — global hotkeys for your music library",DESC,"/")+f'''
 <div class="card"><div class="ico">☀️</div><h3>Wake to music</h3><p>Schedule music to start in a room with a gentle volume ramp, from a favorite or a shuffle, optionally expanding to the whole house.</p></div>
 <div class="card"><div class="ico">🤖</div><h3>Local MCP server</h3><p>An optional loopback MCP endpoint on this PC lets AI assistants search your library and control playback.</p></div>
 </div>
-<p class="small" style="margin-top:22px">Also: favorite slots with their own hotkeys, Restart fresh (re-sync speakers and reshuffle), live speaker monitoring with auto-rejoin, and an Android app that works as a remote for the Windows tray app or standalone: alpha coming soon.</p>
-<p class="small" style="margin-top:8px">iPhone and iPad: early prototype.</p>
+<p class="small" style="margin-top:22px">Also: favorite slots with their own hotkeys, Restart fresh (re-sync speakers and reshuffle), and live speaker monitoring with auto-rejoin.</p>
 </div></section>
 
 <section class="alt" id="screens"><div class="wrap">
@@ -112,12 +109,16 @@ INDEX=head("HotSonos — global hotkeys for your music library",DESC,"/")+f'''
 <div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos for Windows</strong><br><span class="small">Grab <code>HotSonos-x.y.z.msi</code> from the latest GitHub release. Installs per user (no admin) and includes the .NET runtime.</span></div>
 <a class="btn btn-primary" href="{REL}">Latest release</a>
 </div>
-<div class="dl" style="margin-top:14px">
-<div class="ico" style="width:72px;height:72px;font-size:2rem;border-radius:16px">📱</div>
-<div style="flex:1;min-width:240px"><strong style="font-size:1.15rem">HotSonos for Android</strong><br><span class="small">The Android app (including on a Chromebook) works either as a remote for the Windows tray app or standalone, on the same Wi-Fi. Alpha access coming soon.</span></div>
-</div>
 <p class="small" style="margin-top:14px">The installer isn't code-signed yet, so Windows SmartScreen may ask you to choose <em>More info → Run anyway</em>.</p>
-<p class="small" style="margin-top:8px">iPhone and iPad: early prototype.</p>
+</div></section>
+
+<section id="mobile"><div class="wrap">
+<h2>Mobile apps</h2>
+<p class="sub">Separate from the Windows app above.</p>
+<div class="two">
+<div class="card"><h3>Android (phone, tablet, Chromebook)</h3><p>A remote for the Windows tray app, or standalone on the same Wi-Fi.</p><p style="margin-top:10px">Alpha coming soon.</p></div>
+<div class="card"><h3>iPhone and iPad</h3><p>Early prototype.</p></div>
+</div>
 </div></section>
 
 <section id="requirements"><div class="wrap two">
@@ -136,7 +137,7 @@ INDEX=head("HotSonos — global hotkeys for your music library",DESC,"/")+f'''
 <details><summary>Does it work with Spotify or other streaming services?</summary><p>HotSonos is built for your own music library on Sonos: local files shared to your speakers. History-aware shuffle, top-up, exclusions, and Restart fresh reshuffle use that library. They do not work with Spotify, Apple Music, or other streaming services. Play, pause, skip, and volume are sent straight to the speakers, so they still control the group while something else is already playing.</p></details>
 <details><summary>Does it replace the Sonos app?</summary><p>No — it sits alongside it. Use the Sonos app for setup and music services. Use HotSonos for keyboard-first control of your own music library.</p></details>
 <details><summary>How does the shuffle avoid repeats?</summary><p>As songs play or you skip them, HotSonos remembers them and leaves them out of the next batch (by default, roughly the last couple of weeks). If you've heard most of your library, it loosens that rule so music keeps playing.</p></details>
-<details><summary>Is there a Mac or phone version?</summary><p>The tray app is Windows. The Android app works either as a remote for that tray app or standalone, talking to your speakers on the same Wi-Fi. It also runs on a Chromebook, and alpha access is coming soon.</p><p>iPhone and iPad: early prototype. There is no Mac app.</p></details>
+<details><summary>Is there a Mac or phone version?</summary><p>The tray app is Windows. The Android app works either as a remote for that tray app or standalone, talking to your speakers on the same Wi-Fi. It also runs on a Chromebook.</p><p>iPhone and iPad: early prototype. There is no Mac app.</p></details>
 <details><summary>My speakers stutter or drop out of groups. Can HotSonos help?</summary><p>Restart fresh re-discovers and regroups speakers and starts a new shuffle. If problems persist, the README explains why turning off SonosNet and choosing a 5 GHz group coordinator often helps.</p></details>
 <details><summary>Why does Windows warn me when I install it?</summary><p>The MSI isn't code-signed yet. SmartScreen may show a prompt; choose More info → Run anyway.</p></details>
 <details><summary>Is it free?</summary><p>Yes. HotSonos is open source under the MIT license. The source and every release are on <a href="{REPO}">GitHub</a>.</p></details>
@@ -176,7 +177,7 @@ PRIV=head("Privacy — HotSonos","How HotSonos handles your data: it runs on you
 <p>When turned on, the MCP endpoint for AI assistants listens only on this PC's loopback address (<code>127.0.0.1</code>). Other devices on your network can't reach it. Any AI assistant you connect to it is governed by that assistant's own privacy policy.</p>
 
 <h2>Android app (remote or standalone)</h2>
-<p>The Android app, including on a Chromebook, works in two ways. As a remote, it connects to the HotSonos tray app on your PC over your local network and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only. Standalone, the app talks to your Sonos speakers on the same Wi-Fi and does not contact the PC. It does not use a HotSonos account or a HotSonos server. Android alpha access is coming soon.</p>
+<p>The Android app, including on a Chromebook, works in two ways. As a remote, it connects to the HotSonos tray app on your PC over your local network and sends a 6-digit house PIN, shown in the PC tray app, with every request. The PC rejects requests without the correct PIN. The phone stores only the PC address and PIN in the app's private storage. The remote listener on the PC can be turned off in Options, and the firewall rule HotSonos offers to add applies to Private networks only. Standalone, the app talks to your Sonos speakers on the same Wi-Fi and does not contact the PC. It does not use a HotSonos account or a HotSonos server.</p>
 <p>iPhone and iPad: early prototype.</p>
 
 <h2>This website</h2>
