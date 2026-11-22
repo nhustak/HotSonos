@@ -18,7 +18,7 @@ sealed class AboutSettingsPage : RemotePage
             RemoteUi.Button("Refresh", LoadAsync),
             RemoteUi.Section(PhoneSections.AboutHeard, "Heard outside the library", _heard),
             RemoteUi.Section(PhoneSections.AboutLog, "Recent PC log", _logs),
-            RemoteUi.Muted("Hotkey capture, Quick Tag, Quick Play, the tray flyout, and Start with Windows stay on the PC."));
+            RemoteUi.Muted("Hotkey capture, the Quick tag and Quick play overlays, the tray flyout, and Start with Windows stay on the PC. Player has a Quick tag button for the playing track."));
     }
 
     protected override void OnShown()

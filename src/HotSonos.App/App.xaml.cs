@@ -13,6 +13,7 @@ using HotSonos.App.Models;
 using HotSonos.App.Services;
 using HotSonos.App.Windows;
 using HotSonos.Core.Models;
+using HotSonos.Remote.Protocol;
 
 namespace HotSonos.App;
 
@@ -1185,28 +1186,15 @@ public partial class App : System.Windows.Application
         string? resolveMsg = null;
         string line = np is null || np.IsEmpty ? "(nothing playing)" : np.DisplayLine;
 
-        if (np is null || np.IsEmpty)
-        {
-            resolveMsg = "Nothing playing.";
-        }
-        else if (string.IsNullOrWhiteSpace(np.TrackUri))
-        {
-            resolveMsg = "No track URI from Sonos.";
-        }
-        else
-        {
-            var track = _library.FindBySonosUri(np.TrackUri);
-            if (track is null)
-            {
-                resolveMsg =
-                    "Track not in library cache (streaming/radio, or run a rescan). " +
-                    "Only Sonos Music Library files under configured roots can be tagged.";
-            }
-            else
-            {
-                path = track.Path;
-            }
-        }
+        var libraryPath = np is null || np.IsEmpty || string.IsNullOrWhiteSpace(np.TrackUri)
+            ? null
+            : _library.FindBySonosUri(np.TrackUri)?.Path;
+        var target = NowPlayingTagTarget.Resolve(
+            np is null || np.IsEmpty,
+            np is null || string.IsNullOrWhiteSpace(np.TrackUri),
+            libraryPath);
+        path = target.Path;
+        resolveMsg = target.Message;
 
         // Close any prior overlay instance
         foreach (Window w in Current.Windows)
@@ -1772,7 +1760,8 @@ public partial class App : System.Windows.Application
                 action => ExecuteActionAsync(action),
                 mcpEndpoint: () => _mcpHost?.Endpoint ?? _mcpState?.Endpoint,
                 remoteEndpoint: () => _remoteHost?.IsRunning == true ? _remoteHost.Endpoint : null,
-                onRemoteSettingsChanged: () => _ = EnsureRemoteBoundAsync());
+                onRemoteSettingsChanged: () => _ = EnsureRemoteBoundAsync(),
+                showQuickTag: () => _ = ShowQuickTagOverlayAsync());
             _mainWindow.HideToTrayRequested += (_, _) => _mainWindow?.Hide();
             _mainWindow.Closing += OnMainWindowClosing;
         }

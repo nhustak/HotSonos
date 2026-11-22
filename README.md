@@ -19,7 +19,7 @@ HotSonos talks to your Sonos speakers entirely over the **local network** (UPnP/
 - **Settings UI:** tabs — **Control · Play · Hotkeys · Shuffle · Library · Tags · Wake · Options · Topology · Reports · Logs · Debug**. Top bar: **Phone**. Tray: Phone…, Library…, Topology…, Logs…, Reports…, Debug…
 - **Next:** playlist create-from-filter + play (see **[spec.md](spec.md)** §0).
 - **MCP:** with the tray app running: `http://127.0.0.1:42341/mcp` (devices, control, library search/tags/genres/master, play track/tag/genre/folder, logs).
-- **Phone:** Android, iPhone, and iPad app (`src/HotSonos.Remote`, .NET MAUI, id `com.tangenttech.hotsonos`) opens **Connect** until a PC is saved. It then opens on **Player** (art, transport, and − / + volume) over `http://<pc>:42342` with header `X-HotSonos-Pin`, or straight on the speakers. The **Phone** button on the PC shows the address and PIN to type. Link: Auto, PC only, or Speakers only, under Settings → Connection / PC. iOS TestFlight setup is [docs/ios.md](docs/ios.md).
+- **Phone:** Android and ChromeOS app (`src/HotSonos.Remote`, .NET MAUI, id `com.tangenttech.hotsonos`) works as a remote for this tray app or standalone on the speakers. It opens **Connect** until a PC is saved, then **Player**: art, a left-pointing previous icon (the mirror of next), play/pause, next, and − / percent / + with the mute icon on that line. Remote calls use `http://<pc>:42342` and header `X-HotSonos-Pin`. The **Phone** window shows the address and PIN to type. **Quick tag** on Player and on the tray Control now-playing card tags the playing library track (same as the Quick tag hotkey). Link: Auto, PC only, or Speakers only. iPhone and iPad support is in early development (Codemagic / TestFlight, [docs/ios.md](docs/ios.md)).
 
 **Having issues (stutter, dead zones, flaky grouping)?** Make sure **SonosNet is off** — see [Turn off SonosNet](#turn-off-sonosnet) near the bottom.
 
@@ -72,7 +72,7 @@ No. This is a live daily mix for whole-house listening. Tags and Sonos favorites
 Re-discovers speakers, force-regroups them, and starts a new history-aware shuffle. Tray item, Control button, optional hotkey, MCP `fresh_start`.
 
 ### ⏯️ Transport & volume hotkeys
-Play/pause, next, previous, volume up/down, mute, and level-all — from any app. Re-bindable under **Hotkeys**.
+Play/pause, next, previous, volume up/down, mute, and level-all — from any app. Re-bindable under **Hotkeys**. On the Control now-playing card and on the phone Player, previous is a left-pointing skip-previous icon, the mirror of next.
 
 **Volume ±** uses **house logical** level (normal rooms with offset 0) for the toast and step base — not the group coordinator’s raw %, so a Port/Theater with a big amp offset never becomes “the volume.” Each room is written as `logical + room offset` (Port stays loud enough; Eras stay at house level). Steps stay snappy: one fast write for feedback, other rooms fan out in the background.
 
@@ -94,7 +94,7 @@ Flat tag catalog: each tag has an **opaque key** (stored in files) and a **renam
 ### 🎴 Quick Tag & Quick Play overlays
 | Overlay | Default | What it does |
 |---|---|---|
-| **Quick Tag** | `Ctrl + Alt + T` | Tag the currently playing library track (keys 1–9 = catalog order). |
+| **Quick Tag** | `Ctrl + Alt + T` | Tag the currently playing library track (keys 1–9 = catalog order). The same action is the **Quick tag** button on Control now playing and on the phone Player. |
 | **Quick Play** | `Ctrl + Alt + P` | **1** = library shuffle; **2–9** = tags, genres & Sonos playlists (same idea as Control Play). |
 
 ### ⭐ Favorite slots (1–6)
@@ -102,6 +102,7 @@ Each slot can be a **Sonos favorite/playlist**, a **HotSonos tag**, or a **libra
 
 ### 🎮 Control page
 - **From** dropdown (All / folder / tag / genre) + **Start shuffle now** / Restart fresh, level-all, target room/group, **full-width speakers**.
+- **Now playing** transport uses a left-pointing previous icon and a right-pointing next icon. **Quick tag** opens the same overlay as the Quick tag hotkey for the playing library track.
 - **Daily group** — all speakers, or a checked subset of rooms, for house shuffle.
 - **Preferred coordinator** — which room **leads the group and sends the audio** to the others (Control dropdown + **Set preferred coordinator**). Independent of SonosNet: playback is still house Wi‑Fi. Pick a **5 GHz** player (**Era 100s** here) so that fan-out is not sourced from a 2.4 GHz Port. ★ COORD on Topology. MCP `set_house_coordinator`.
 - **Play tags, genres & Sonos playlists** — one-click play; list shares vertical space with speakers.
@@ -233,7 +234,7 @@ dotnet run --project src/HotSonos.Harness -- --room "Living Room" shuffle
 
 ### Android
 
-The phone app is .NET MAUI (`src/HotSonos.Remote`, package `com.tangenttech.hotsonos`, minSdk 24). It is not in `HotSonos.slnx`, so the Windows solution does not need the Android workload. A build with this package does not replace an install of the previous id `com.hotsonos.remote`.
+The Android app is .NET MAUI (`src/HotSonos.Remote`, package `com.tangenttech.hotsonos`, minSdk 24). It works as a remote for the Windows tray app or standalone on the speakers, and the same package runs on ChromeOS. It is not in `HotSonos.slnx`, so the Windows solution does not need the Android workload. A build with this package does not replace an install of the previous id `com.hotsonos.remote`.
 
 ```powershell
 dotnet build src\HotSonos.Remote\HotSonos.Remote.csproj -f net10.0-android
@@ -250,13 +251,13 @@ Release publish writes `com.tangenttech.hotsonos-Signed.aab` (and an APK) under 
 
 ### iPhone and iPad
 
-The same project targets `net10.0-ios` on a Mac, or when you pass `-p:HotSonosRemoteTargetFrameworks=net10.0-ios`. Windows and Linux builds, including GitHub Actions, stay on Android. The store version is TestFlight via Codemagic. The steps (Apple Developer membership, App ID `com.tangenttech.hotsonos`, App Store Connect API key, Codemagic placeholders) are in [docs/ios.md](docs/ios.md). Find PC and speaker search need an Apple multicast entitlement that is not in the app until Apple approves it; type the PC address and PIN until then. On iPad the Player column is centered. The iOS target has not been compiled in the change that added it.
+iPhone and iPad support is in early development. The same project targets `net10.0-ios` on a Mac, or when you pass `-p:HotSonosRemoteTargetFrameworks=net10.0-ios`. Windows and Linux builds, including GitHub Actions, stay on Android. The store path is TestFlight via Codemagic. The steps (Apple Developer membership, App ID `com.tangenttech.hotsonos`, App Store Connect API key, Codemagic placeholders) are in [docs/ios.md](docs/ios.md). Find PC and speaker search need an Apple multicast entitlement that is not in the app until Apple approves it; type the PC address and PIN until then. On iPad the Player column is centered. The iOS target has not been compiled in the change that added it.
 
 On the PC, open HotSonos and press **Phone** (or the tray item **Phone…**). The first phone screen is **Connect**. Type the address and the 6-digit PIN shown there (port **42342** if you leave it blank). **Find PC** uses a UDP announce on port 42343; an emulator is not on that subnet, so type the PC's 192.168 address. `10.0.2.2` is the PC loopback, and the listener is not bound there. The header on every request is `X-HotSonos-Pin`. The listener is plain HTTP and only binds the address that shares a network with a speaker.
 
 **Test and connect** stays in **PC only**. Settings → Connection / PC can switch to **Auto** (try the PC, then the speakers) or **Speakers only**. Each screen except Player has a tappable line (`PC`, `Speakers`, `Speakers: room`, `PC unreachable`, or `PC: not paired`) that opens those connection settings. The PC address is on that page, not on Player. Speakers only needs no PIN: the phone discovers ZonePlayer devices on the Wi-Fi (it holds an Android multicast lock) and sends the same UPnP calls as the tray app. HotSonos shuffle, tags, Daily groups, Reports, wake, and saved Spotify links say they need the PC, with a button back to connection, when the phone is on the speakers.
 
-The phone polls now-playing every 2 seconds while it is open, and loads the other tabs when you open them. It checks the PC again when the app resumes. Reboot, regroup, fresh start, rescan, wiping the queue, deleting a tag, and leaving or leading a group ask you to confirm first.
+The phone polls now-playing every 2 seconds while it is open, and loads the other tabs when you open them. It checks the PC again when the app resumes. Player has **Quick tag** for the playing library track (the Quick tag hotkey). That button needs the PC. Reboot, regroup, fresh start, rescan, wiping the queue, deleting a tag, and leaving or leading a group ask you to confirm first.
 
 ### ChromeOS
 
@@ -268,7 +269,7 @@ Keyboard and mouse, when a text field is not focused: **Space** play/pause, **Le
 
 **Play internal testing** (no developer mode):
 
-1. `dotnet publish src\HotSonos.Remote\HotSonos.Remote.csproj -f net10.0-android -c Release` and upload `com.hotsonos.remote-Signed.aab` from `src\HotSonos.Remote\bin\Release\net10.0-android\publish\`.
+1. `dotnet publish src\HotSonos.Remote\HotSonos.Remote.csproj -f net10.0-android -c Release` and upload `com.tangenttech.hotsonos-Signed.aab` from `src\HotSonos.Remote\bin\Release\net10.0-android\publish\`.
 2. In Play Console, open Testing → Internal testing, create a release, and add the Google account that is signed in on the Chromebook.
 3. On the Chromebook, open the opt-in link in Chrome and install HotSonos from the Play Store.
 
@@ -281,17 +282,17 @@ Keyboard and mouse, when a text field is not focused: **Space** play/pause, **Le
 ```bash
 sudo apt update && sudo apt install -y adb
 adb connect 100.115.92.2:5555
-adb install -r com.hotsonos.remote-Signed.apk
+adb install -r com.tangenttech.hotsonos-Signed.apk
 ```
 
-Accept the debugging prompt on the Chromebook. `100.115.92.2` is the Android container as seen from the Linux VM. A debug build's APK is `src\HotSonos.Remote\bin\Debug\net10.0-android\com.hotsonos.remote-Signed.apk`.
+Accept the debugging prompt on the Chromebook. `100.115.92.2` is the Android container as seen from the Linux VM. A debug build's APK is `src\HotSonos.Remote\bin\Debug\net10.0-android\com.tangenttech.hotsonos-Signed.apk`.
 
 ### Project layout
 | Project | Purpose |
 |---|---|
 | `HotSonos.Core` | UPnP client (discovery, control, events, shuffle) |
 | `HotSonos.App` | Tray app: hotkeys, settings, library, tags, MCP, wake, phone listener |
-| `HotSonos.Remote` | Android, iPhone, and iPad (MAUI) full remote. Not in the Windows solution. iOS build: `docs/ios.md` |
+| `HotSonos.Remote` | Android and ChromeOS app (remote or standalone). iPhone and iPad are in early development. Not in the Windows solution. iOS build: `docs/ios.md` |
 | `HotSonos.Remote.Protocol` | Shared phone DTOs and Daily speaker-group rules |
 | `HotSonos.Harness` | Console tester |
 | `HotSonos.Core.Tests` | Offline unit tests |
@@ -310,7 +311,7 @@ Version is single-sourced in `Directory.Build.props`; release tags override with
 - **Control shuffle From** — `ControlShuffleSource` = `all` | `folder:{path}` | `tag:{key}` | `genre:{name}`; genres gated by `ShowGenresInPlaySources`.  
 - **Library** — filesystem scan under discovered UNC roots; optional master match for dual-write.  
 - **MCP** — Kestrel loopback host inside the tray process.
-- **Phone** — a second Kestrel host on the speaker subnet, port 42342, PIN on every route. It calls the same action gate as MCP.  
+- **Phone** — a second Kestrel host on the speaker subnet, port 42342, PIN on every route, including `GET` / `POST /api/now/tags` for Quick tag. It calls the same action gate as MCP. Android and ChromeOS use that host, or talk to the speakers with no PC. iPhone and iPad support is in early development.  
 - **GENA** — optional speaker push (now-playing, topology, volume). **Options → Use speaker push events (GENA)**; `HOTSONOS_GENA=1` still forces on. Off = poll only.  
 - **Volume** — house logical % for ±; per-room offsets on absolute write (Level all / Wake / ±); Speakers sliders show raw Sonos %.
 

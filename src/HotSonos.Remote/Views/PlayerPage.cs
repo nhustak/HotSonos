@@ -38,6 +38,7 @@ sealed class PlayerPage : RemotePage
         LineBreakMode = LineBreakMode.TailTruncation,
     };
     readonly Label _volume = RemoteUi.Muted(PhoneVolume.Label(null, false));
+    readonly Label _tagStatus = RemoteUi.Muted("");
     readonly Slider _slider = new() { Minimum = 0, Maximum = 100, Value = 20 };
     readonly GlyphView _playGlyph = new() { Kind = "play" };
     readonly Border _playButton;
@@ -154,12 +155,15 @@ sealed class PlayerPage : RemotePage
         var level = RemoteUi.Button("Level all", () => Go(
             (_, ct) => AppServices.Link.Speakers.SetHouseVolumeAsync((int)_slider.Value, ct),
             ct => AppServices.Client.LevelAsync(ct)));
+        var quickTag = RemoteUi.Button("Quick tag", QuickTagAsync);
+        SemanticProperties.SetDescription(quickTag, "Quick tag");
+        _tagStatus.HorizontalTextAlignment = TextAlignment.Center;
 
         var controls = new VerticalStackLayout
         {
             Spacing = 8,
             Padding = new Thickness(4, 0, 4, 4),
-            Children = { _title, _artist, _album, transport, stepRow, _slider, level },
+            Children = { _title, _artist, _album, transport, stepRow, _slider, level, quickTag, _tagStatus },
         };
 
         _column = new Grid
@@ -293,6 +297,46 @@ sealed class PlayerPage : RemotePage
 
     Task Go(Func<SonosController, CancellationToken, Task> speakers, Func<CancellationToken, Task<RemoteCall<RemoteCommandResponse>>> pc) =>
         AppServices.Link.DrivePc ? Act(pc) : Speaker(speakers);
+
+    async Task QuickTagAsync()
+    {
+        if (!AppServices.Link.DrivePc || !AppServices.Link.OnPc)
+        {
+            _tagStatus.Text = "Quick tag needs the PC. It writes the playing library track.";
+            return;
+        }
+
+        var listed = await AppServices.Client.GetNowTagsAsync(CancellationToken.None).ConfigureAwait(true);
+        if (listed.Kind != RemoteCallKind.Ok || listed.Value is null)
+        {
+            _tagStatus.Text = listed.Detail ?? "Could not load tags.";
+            return;
+        }
+
+        var value = listed.Value;
+        if (!value.CanTag || string.IsNullOrWhiteSpace(value.Path))
+        {
+            _tagStatus.Text = value.Message ?? NowPlayingTagTarget.NotInLibrary;
+            return;
+        }
+
+        if (value.Tags is not { Count: > 0 })
+        {
+            _tagStatus.Text = "No tags yet. Create them on the PC Tags tab.";
+            return;
+        }
+
+        var labels = value.Tags.Select(tag => tag.On ? tag.Label + "  ✓" : tag.Label).ToArray();
+        var pick = await DisplayActionSheet("Quick tag", "Cancel", null, labels).ConfigureAwait(true);
+        var index = Array.IndexOf(labels, pick);
+        if (index < 0)
+            return;
+
+        var toggled = await AppServices.Client.ToggleNowTagAsync(value.Tags[index].Key, CancellationToken.None).ConfigureAwait(true);
+        _tagStatus.Text = toggled.Kind == RemoteCallKind.Ok
+            ? (toggled.Value?.Message ?? "Updated")
+            : (toggled.Detail ?? "Tag failed");
+    }
 
     protected override void OnStatus(RemoteStatusResponse? status)
     {
@@ -662,12 +706,10 @@ sealed class GlyphDrawable : IDrawable
                 canvas.FillRoundedRectangle(left + bar + gap, h * 0.16f, bar, h * 0.68f, 3);
                 break;
             case "prev":
-                canvas.FillRoundedRectangle(w * 0.12f, h * 0.18f, w * 0.14f, h * 0.64f, 2);
-                FillTriangle(canvas, w * 0.88f, h * 0.16f, w * 0.34f, h * 0.5f, w * 0.88f, h * 0.84f);
+                DrawSkip(canvas, w, h, TransportGlyph.Previous);
                 break;
             case "next":
-                FillTriangle(canvas, w * 0.12f, h * 0.16f, w * 0.66f, h * 0.5f, w * 0.12f, h * 0.84f);
-                canvas.FillRoundedRectangle(w * 0.74f, h * 0.18f, w * 0.14f, h * 0.64f, 2);
+                DrawSkip(canvas, w, h, TransportGlyph.Next);
                 break;
             case "speaker":
                 DrawSpeaker(canvas, w, h, waves: true);
@@ -712,6 +754,18 @@ sealed class GlyphDrawable : IDrawable
         path.MoveTo(x, h * 0.30f);
         path.QuadTo(x + reach, h * 0.50f, x, h * 0.70f);
         canvas.DrawPath(path);
+    }
+
+    static void DrawSkip(ICanvas canvas, float w, float h, TransportGlyph.Shape shape)
+    {
+        var triangle = shape.Triangle;
+        FillTriangle(
+            canvas,
+            w * triangle[0].X, h * triangle[0].Y,
+            w * triangle[1].X, h * triangle[1].Y,
+            w * triangle[2].X, h * triangle[2].Y);
+        var bar = shape.Bar;
+        canvas.FillRoundedRectangle(w * bar.X, h * bar.Y, w * bar.Width, h * bar.Height, 2);
     }
 
     static void FillTriangle(ICanvas canvas, float x1, float y1, float x2, float y2, float x3, float y3)

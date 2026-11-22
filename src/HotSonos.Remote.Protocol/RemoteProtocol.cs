@@ -206,6 +206,17 @@ public sealed record RemoteNowPlayingDto(
     int? PositionSeconds = null,
     int? DurationSeconds = null);
 
+/// <summary>Catalog tags for the track that is playing, so Quick tag does not need a file path from the phone.</summary>
+public sealed record RemoteNowTagsResponse(
+    bool Ok,
+    bool CanTag,
+    string? Path,
+    string? Title,
+    string? Message,
+    IReadOnlyList<RemoteNowTagDto> Tags);
+
+public sealed record RemoteNowTagDto(string Key, string Label, bool On);
+
 public sealed record RemoteCommandResponse(bool Ok, string? Message, string? Error);
 
 public sealed record RemoteVolumeSampleResponse(bool Ok, int? Volume, bool? Muted, string? Error);
