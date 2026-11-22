@@ -127,6 +127,11 @@ sealed class TopologyPage : RemotePage
         if (value is null)
         {
             _status.Text = topo.Detail ?? "No topology.";
+            ShowCards(null, [], []);
+            _members.Clear();
+            _volumes.Clear();
+            // Speaker rows and sliders come from /api/volumes, which does not need the topology payload.
+            await LoadSpeakerVolumesAsync(speakerRows: true);
             return;
         }
 
@@ -140,25 +145,23 @@ sealed class TopologyPage : RemotePage
 
         _members.Clear();
         foreach (var member in value.Members.Where(m => !m.Invisible))
+            AddSpeakerRow(member.Room, member.IsCoordinator);
+
+        await LoadSpeakerVolumesAsync(speakerRows: false);
+    }
+
+    async Task LoadSpeakerVolumesAsync(bool speakerRows)
+    {
+        var volumes = await AppServices.Client.GetVolumesAsync(CancellationToken.None);
+        var speakers = volumes.Value?.Speakers ?? [];
+        if (speakerRows)
         {
-            var room = member.Room;
-            var label = member.IsCoordinator ? room + " · coordinator" : room;
-            var row = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(new GridLength(2, GridUnitType.Star)), new ColumnDefinition(), new ColumnDefinition() } };
-            var name = RemoteUi.Muted(label);
-            var lead = RemoteUi.Button("Lead", () => RegroupRoomAsync(room));
-            var reboot = RemoteUi.Button("Reboot", () => RebootAsync(room, false), danger: true);
-            Grid.SetColumn(name, 0);
-            Grid.SetColumn(lead, 1);
-            Grid.SetColumn(reboot, 2);
-            row.Add(name);
-            row.Add(lead);
-            row.Add(reboot);
-            _members.Add(row);
+            foreach (var speaker in speakers)
+                AddSpeakerRow(speaker.Room, coordinator: false);
         }
 
-        var volumes = await AppServices.Client.GetVolumesAsync(CancellationToken.None);
         _volumes.Clear();
-        foreach (var speaker in volumes.Value?.Speakers ?? [])
+        foreach (var speaker in speakers)
         {
             var room = speaker.Room;
             var slider = new Slider { Minimum = 0, Maximum = 100, Value = speaker.Volume };
@@ -168,6 +171,22 @@ sealed class TopologyPage : RemotePage
                 Act(ct => AppServices.Client.SetRoomVolumeAsync(room, null, null, !speaker.Muted, ct), _status));
             _volumes.Add(RemoteUi.Card(RemoteUi.Muted($"{room} · {speaker.Volume}%{(speaker.Muted ? " muted" : "")}{(speaker.Reachable ? "" : " · offline")}"), slider, mute));
         }
+    }
+
+    void AddSpeakerRow(string room, bool coordinator)
+    {
+        var label = coordinator ? room + " · coordinator" : room;
+        var row = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(new GridLength(2, GridUnitType.Star)), new ColumnDefinition(), new ColumnDefinition() } };
+        var name = RemoteUi.Muted(label);
+        var lead = RemoteUi.Button("Lead", () => RegroupRoomAsync(room));
+        var reboot = RemoteUi.Button("Reboot", () => RebootAsync(room, false), danger: true);
+        Grid.SetColumn(name, 0);
+        Grid.SetColumn(lead, 1);
+        Grid.SetColumn(reboot, 2);
+        row.Add(name);
+        row.Add(lead);
+        row.Add(reboot);
+        _members.Add(row);
     }
 
     async Task LoadSpeakersAsync()
