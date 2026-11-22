@@ -31,6 +31,7 @@ public partial class App : Application
 
     public static void EnterApp()
     {
+        Views.PairingHandoff.DetachVisible();
         var connection = AppServices.Connection;
         if (connection.IsPaired)
             AppServices.Client.Apply(connection.Host, connection.Port, connection.Pin);
@@ -40,6 +41,7 @@ public partial class App : Application
 
     public static void ShowConnect()
     {
+        Views.PairingHandoff.DetachVisible();
         AppServices.Live.Stop();
         Current!.MainPage = new Views.PairPage();
     }

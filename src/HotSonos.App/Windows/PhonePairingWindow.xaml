@@ -12,6 +12,16 @@
             <TextBlock Text="Phone" FontSize="26" FontWeight="SemiBold" Foreground="#FF1C2536" />
             <TextBlock x:Name="StatusText" TextWrapping="Wrap" Foreground="#FF60707F" Margin="0,4,0,12" />
 
+            <TextBlock Text="Scan this on the phone" FontWeight="SemiBold" Margin="0,0,0,8" />
+            <Border x:Name="QrBorder" Background="White" BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="8"
+                    Padding="12" HorizontalAlignment="Left" Visibility="Collapsed">
+                <Image x:Name="QrImage" Width="220" Height="220" Stretch="Uniform"
+                       RenderOptions.BitmapScalingMode="NearestNeighbor" />
+            </Border>
+            <TextBlock x:Name="QrHint" TextWrapping="Wrap" Foreground="#FF60707F" FontSize="12" Margin="0,8,0,4" />
+            <Button x:Name="CopyLinkButton" Content="Copy link" HorizontalAlignment="Left" Margin="0,0,0,12"
+                    Padding="10,4" Visibility="Collapsed" Click="CopyLink_Click" />
+
             <TextBlock Text="Type these on the phone" FontWeight="SemiBold" Margin="0,0,0,8" />
             <Border Background="White" BorderBrush="#FFD8DEE4" BorderThickness="1" CornerRadius="8" Padding="14">
                 <StackPanel>

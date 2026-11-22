@@ -16,6 +16,7 @@ public partial class PhonePairingWindow : Window
     private readonly Action _newPin;
     private readonly Action _firewall;
     private bool _adbBusy;
+    private string? _pairLink;
 
     public PhonePairingWindow(AppSettings settings, Func<string?> endpoint, Action newPin, Action firewall)
     {
@@ -37,10 +38,11 @@ public partial class PhonePairingWindow : Window
         var locals = HotSonosRemoteHost.LocalIpv4();
         if (!string.IsNullOrWhiteSpace(live) && Uri.TryCreate(live, UriKind.Absolute, out var uri))
         {
-            StatusText.Text = "The phone can reach this PC while HotSonos is running. Type this address and PIN on the Connect screen.";
+            StatusText.Text = "The phone can reach this PC while HotSonos is running. Scan the code, or type this address and PIN on the Connect screen.";
             HostText.Text = uri.Host;
             PortText.Text = uri.Port.ToString();
             UrlText.Text = "Listening at " + live + ". The phone also looks for a UDP announce on port " + RemoteDiscovery.Port + ".";
+            ShowPairingCode(uri.Host, uri.Port, settings.RemotePin);
             var others = locals.Where(a => !string.Equals(a, uri.Host, StringComparison.OrdinalIgnoreCase)).ToList();
             OtherAddressesText.Text = others.Count == 0
                 ? ""
@@ -55,6 +57,7 @@ public partial class PhonePairingWindow : Window
             PortText.Text = settings.RemotePort.ToString();
             UrlText.Text = "When a speaker is found, type the address that shares the speaker's network.";
             OtherAddressesText.Text = "";
+            ShowPairingCode(null, settings.RemotePort, settings.RemotePin);
         }
 
         PinText.Text = settings.RemotePin ?? "";
@@ -63,6 +66,42 @@ public partial class PhonePairingWindow : Window
             $"-LocalPort {settings.RemotePort} -Action Allow -Profile Private" + Environment.NewLine +
             "New-NetFirewallRule -DisplayName \"HotSonos Remote Discover\" -Direction Inbound -Protocol UDP " +
             $"-LocalPort {RemoteDiscovery.Port} -Action Allow -Profile Private";
+    }
+
+    private void ShowPairingCode(string? host, int port, string? pin)
+    {
+        _pairLink = null;
+        if (string.IsNullOrWhiteSpace(host) || !PhonePairLink.TryFormat(host, port, pin, out var link, out _))
+        {
+            QrBorder.Visibility = Visibility.Collapsed;
+            QrImage.Source = null;
+            CopyLinkButton.Visibility = Visibility.Collapsed;
+            QrHint.Text = "The code appears when HotSonos is listening for the phone. Until then, type the address and PIN below.";
+            return;
+        }
+
+        try
+        {
+            QrImage.Source = PairingQr.Create(link);
+            QrBorder.Visibility = Visibility.Visible;
+            CopyLinkButton.Visibility = Visibility.Visible;
+            _pairLink = link;
+            QrHint.Text = "Scan this from Connect, or from Settings → Connection / PC. Copy link puts the same address, port, and PIN on the clipboard as a hotsonos://pair link the phone can paste.";
+        }
+        catch
+        {
+            QrBorder.Visibility = Visibility.Collapsed;
+            QrImage.Source = null;
+            CopyLinkButton.Visibility = Visibility.Collapsed;
+            QrHint.Text = "The pairing code could not be drawn. Type the address and PIN below.";
+        }
+    }
+
+    private void CopyLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_pairLink))
+            return;
+        System.Windows.Clipboard.SetText(_pairLink);
     }
 
     private void NewPin_Click(object sender, RoutedEventArgs e) => _newPin();

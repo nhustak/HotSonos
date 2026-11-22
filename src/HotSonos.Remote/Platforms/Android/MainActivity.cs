@@ -1,14 +1,15 @@
 using Android.App;
+using Android.Content;
 using Android.Content.PM;
 using Android.Views;
 using Android.Widget;
-using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote;
 
 [Activity(
     Theme = "@style/Maui.SplashTheme",
     MainLauncher = true,
+    Exported = true,
     LaunchMode = LaunchMode.SingleTop,
     ResizeableActivity = true,
     ScreenOrientation = ScreenOrientation.Unspecified,
@@ -21,10 +22,37 @@ namespace HotSonos.Remote;
         | ConfigChanges.Navigation
         | ConfigChanges.UiMode
         | ConfigChanges.Density)]
+[IntentFilter(
+    new[] { Intent.ActionView },
+    Categories = new[] { Intent.CategoryDefault, Intent.CategoryBrowsable },
+    DataSchemes = new[] { "hotsonos" },
+    DataHosts = new[] { "pair" })]
 public class MainActivity : MauiAppCompatActivity
 {
     static readonly SemaphoreSlim VolumeGate = new(1, 1);
     static long _lastKeyVolume;
+
+    protected override void OnCreate(Android.OS.Bundle? savedInstanceState)
+    {
+        base.OnCreate(savedInstanceState);
+        AcceptPairingIntent(Intent);
+    }
+
+    protected override void OnNewIntent(Intent? intent)
+    {
+        base.OnNewIntent(intent);
+        if (intent is not null)
+            Intent = intent;
+        AcceptPairingIntent(intent);
+    }
+
+    static void AcceptPairingIntent(Intent? intent)
+    {
+        var text = intent?.DataString;
+        if (string.IsNullOrWhiteSpace(text) || !text.StartsWith("hotsonos:", StringComparison.OrdinalIgnoreCase))
+            return;
+        Views.PairingHandoff.Offer(text);
+    }
 
     /// <summary>Hardware volume keys step the house volume, same as the previous remote.</summary>
     public override bool DispatchKeyEvent(KeyEvent? e)

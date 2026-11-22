@@ -49,7 +49,7 @@ TestFlight is not available on a free Apple ID. If the membership has lapsed, re
 
 Find PC sends a UDP probe on port **42343**. Speaker search sends SSDP to `239.255.255.250:1900`. iOS treats both as multicast. Without the entitlement the calls fail or get no answer. The app does not crash: Connect keeps the address and PIN fields, and the status line tells you to type the address from the PC Phone window. Speaker search says the same and points back at Connect.
 
-There is no `NSBonjourServices` entry. HotSonos does not use mDNS. Do not add one to "make local network work." `NSLocalNetworkUsageDescription` is already set, and `NSAllowsLocalNetworking` allows plain HTTP to the PC (`42342`) and the speakers (`1400`).
+There is no `NSBonjourServices` entry. HotSonos does not use mDNS. Do not add one to "make local network work." `NSLocalNetworkUsageDescription` is already set, and `NSAllowsLocalNetworking` allows plain HTTP to the PC (`42342`) and the speakers (`1400`). `NSCameraUsageDescription` is set so Scan QR can use the camera. `CFBundleURLTypes` registers the `hotsonos` scheme so a `hotsonos://pair` link opens the app. The saved PC address, port, and PIN stay across updates of bundle id `com.tangenttech.hotsonos`. Changing that id wipes the pairing.
 
 When you want Find PC and SSDP to work on a device:
 
