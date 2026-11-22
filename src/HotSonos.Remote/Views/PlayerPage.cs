@@ -56,7 +56,10 @@ sealed class PlayerPage : RemotePage
 #if ANDROID
     readonly Grid _host;
 #endif
+    readonly MuteIcon _mute;
     bool _muted;
+    bool _muteBusy;
+    DateTime _muteHoldUntil;
     bool _known;
     bool _sampling;
     bool _sampleAgain;
@@ -83,9 +86,9 @@ sealed class PlayerPage : RemotePage
             Content = _art,
         };
 
-        _volume.FontSize = 18;
+        _volume.FontSize = 16;
         _volume.TextColor = Swatches.Ink;
-        _volume.LineBreakMode = LineBreakMode.NoWrap;
+        _volume.LineBreakMode = LineBreakMode.TailTruncation;
         _volume.MaxLines = 1;
         _volume.HorizontalTextAlignment = TextAlignment.Center;
         _volume.VerticalTextAlignment = TextAlignment.Center;
@@ -131,33 +134,32 @@ sealed class PlayerPage : RemotePage
             Children = { previous, _playButton, next },
         };
 
+        _mute = new MuteIcon(ToggleMuteAsync);
         var stepRow = new Grid
         {
-            ColumnSpacing = 12,
+            ColumnSpacing = 8,
             ColumnDefinitions =
             {
                 new ColumnDefinition(GridLength.Auto),
                 new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
                 new ColumnDefinition(GridLength.Auto),
             },
         };
         Put(stepRow, StepButton("−", -1), 0);
         Put(stepRow, _volume, 1);
         Put(stepRow, StepButton("+", 1), 2);
+        Put(stepRow, _mute.View, 3);
 
-        var volumeRow = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition() } };
-        Put(volumeRow, RemoteUi.Button("Mute", () => Go(
-            async (_, ct) => { await AppServices.Link.Speakers.ToggleGroupMuteAsync(ct); },
-            ct => AppServices.Client.MuteAsync(ct))), 0);
-        Put(volumeRow, RemoteUi.Button("Level all", () => Go(
+        var level = RemoteUi.Button("Level all", () => Go(
             (_, ct) => AppServices.Link.Speakers.SetHouseVolumeAsync((int)_slider.Value, ct),
-            ct => AppServices.Client.LevelAsync(ct))), 1);
+            ct => AppServices.Client.LevelAsync(ct)));
 
         var controls = new VerticalStackLayout
         {
             Spacing = 8,
-            Padding = new Thickness(8, 0, 8, 4),
-            Children = { _title, _artist, _album, transport, stepRow, _slider, volumeRow },
+            Padding = new Thickness(4, 0, 4, 4),
+            Children = { _title, _artist, _album, transport, stepRow, _slider, level },
         };
 
         _column = new Grid
@@ -306,7 +308,8 @@ sealed class PlayerPage : RemotePage
         if (status?.Volume is int volume)
         {
             _known = true;
-            _muted = status.Muted == true;
+            if (DateTime.UtcNow >= _muteHoldUntil)
+                _muted = status.Muted == true;
             var keepLocal = _local && volume != _shown && DateTime.UtcNow < _acceptStatusAfter;
             if (_drag || keepLocal)
                 Paint(_shown);
@@ -422,6 +425,7 @@ sealed class PlayerPage : RemotePage
         _known = true;
         _shown = Math.Clamp(volume, 0, 100);
         _volume.Text = PhoneVolume.Label(_shown, _muted);
+        _mute.SetMuted(_muted);
         if (!_drag)
             _slider.Value = _shown;
     }
@@ -449,7 +453,8 @@ sealed class PlayerPage : RemotePage
                     continue;
                 if (_local && !forceThis)
                     continue;
-                _muted = muted == true;
+                if (DateTime.UtcNow >= _muteHoldUntil)
+                    _muted = muted == true;
                 _local = false;
                 _applied = n;
                 _target = n;
@@ -523,6 +528,53 @@ sealed class PlayerPage : RemotePage
         try
         {
             await AppServices.Link.Speakers.SetHouseVolumeAsync(percent, CancellationToken.None).ConfigureAwait(true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (Application.Current?.MainPage is Page page)
+                await page.DisplayAlert("HotSonos", ex.Message, "OK").ConfigureAwait(true);
+            return false;
+        }
+    }
+
+    async Task ToggleMuteAsync()
+    {
+        if (_muteBusy)
+            return;
+        _muteBusy = true;
+        var previous = _muted;
+        try
+        {
+            _muted = !previous;
+            _muteHoldUntil = DateTime.UtcNow.AddSeconds(3);
+            Paint(_shown);
+            var ok = await CommitMuteAsync().ConfigureAwait(true);
+            if (!ok)
+            {
+                _muted = previous;
+                _muteHoldUntil = DateTime.MinValue;
+                Paint(_shown);
+                return;
+            }
+
+            Paint(_shown);
+            _ = SampleAsync(force: true);
+        }
+        finally
+        {
+            _muteBusy = false;
+        }
+    }
+
+    async Task<bool> CommitMuteAsync()
+    {
+        if (AppServices.Link.DrivePc)
+            return await Act(ct => AppServices.Client.MuteAsync(ct)).ConfigureAwait(true);
+
+        try
+        {
+            _muted = await AppServices.Link.Speakers.ToggleGroupMuteAsync(CancellationToken.None).ConfigureAwait(true);
             return true;
         }
         catch (Exception ex)
@@ -617,10 +669,49 @@ sealed class GlyphDrawable : IDrawable
                 FillTriangle(canvas, w * 0.12f, h * 0.16f, w * 0.66f, h * 0.5f, w * 0.12f, h * 0.84f);
                 canvas.FillRoundedRectangle(w * 0.74f, h * 0.18f, w * 0.14f, h * 0.64f, 2);
                 break;
+            case "speaker":
+                DrawSpeaker(canvas, w, h, waves: true);
+                break;
+            case "muted":
+                DrawSpeaker(canvas, w, h, waves: false);
+                canvas.StrokeColor = Colors.White;
+                canvas.StrokeSize = Math.Max(2.2f, w * 0.1f);
+                canvas.StrokeLineCap = LineCap.Round;
+                canvas.DrawLine(w * 0.56f, h * 0.22f, w * 0.92f, h * 0.78f);
+                canvas.DrawLine(w * 0.92f, h * 0.22f, w * 0.56f, h * 0.78f);
+                break;
             default:
                 FillTriangle(canvas, w * 0.28f, h * 0.14f, w * 0.84f, h * 0.5f, w * 0.28f, h * 0.86f);
                 break;
         }
+    }
+
+    static void DrawSpeaker(ICanvas canvas, float w, float h, bool waves)
+    {
+        canvas.FillColor = Colors.White;
+        canvas.FillRoundedRectangle(w * 0.06f, h * 0.32f, w * 0.22f, h * 0.36f, w * 0.08f);
+        var cone = new PathF();
+        cone.MoveTo(w * 0.26f, h * 0.34f);
+        cone.LineTo(w * 0.26f, h * 0.66f);
+        cone.LineTo(w * 0.50f, h * 0.84f);
+        cone.LineTo(w * 0.50f, h * 0.16f);
+        cone.Close();
+        canvas.FillPath(cone);
+        if (!waves)
+            return;
+        canvas.StrokeColor = Colors.White;
+        canvas.StrokeSize = Math.Max(2f, w * 0.09f);
+        canvas.StrokeLineCap = LineCap.Round;
+        StrokeWave(canvas, w * 0.58f, h, w * 0.12f);
+        StrokeWave(canvas, w * 0.74f, h, w * 0.14f);
+    }
+
+    static void StrokeWave(ICanvas canvas, float x, float h, float reach)
+    {
+        var path = new PathF();
+        path.MoveTo(x, h * 0.30f);
+        path.QuadTo(x + reach, h * 0.50f, x, h * 0.70f);
+        canvas.DrawPath(path);
     }
 
     static void FillTriangle(ICanvas canvas, float x1, float y1, float x2, float y2, float x3, float y3)

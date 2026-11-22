@@ -260,7 +260,7 @@ The phone polls now-playing every 2 seconds while it is open, and loads the othe
 
 ### ChromeOS
 
-The same APK runs as an Android app on a Chromebook. The window is resizable and not locked to portrait, and resizing it does not restart the activity. A phone-width window keeps the phone Player. A wider window centers that column (album art stays square, transport and Mute / Level all stay a phone size) and keeps the bottom tab bar. Once the window is wide enough for every tab, they sit in one row instead of scrolling.
+The same APK runs as an Android app on a Chromebook. The window is resizable and not locked to portrait, and resizing it does not restart the activity. A phone-width window keeps the phone Player. A wider window centers that column (album art stays square, transport and Level all stay a phone size, and Mute stays the 40dp speaker icon on the volume line) and keeps the bottom tab bar. Once the window is wide enough for every tab, they sit in one row instead of scrolling.
 
 Keyboard and mouse, when a text field is not focused: **Space** play/pause, **Left** / **Right** (or media previous / next) skip, **Up** / **Down** or **+** / **-** change volume by the same step as the hardware volume keys, **M** mute. Media play, pause, next, and previous work even while typing. **Enter** activates the focused control. Buttons light up under the pointer. The wheel scrolls lists, and scrolls the tab strip sideways when the pointer is over it.
 

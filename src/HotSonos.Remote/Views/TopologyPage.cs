@@ -15,6 +15,7 @@ sealed class TopologyPage : RemotePage
     bool _suppressKeep;
     bool _loading;
     bool _loadQueued;
+    int _volumeRows;
     string? _seenKey;
 
     public TopologyPage()
@@ -130,7 +131,7 @@ sealed class TopologyPage : RemotePage
             ShowCards(null, [], []);
             _members.Clear();
             _volumes.Clear();
-            // Speaker rows and sliders come from /api/volumes, which does not need the topology payload.
+            // Speaker rows and volume lines come from /api/volumes, which does not need the topology payload.
             await LoadSpeakerVolumesAsync(speakerRows: true);
             return;
         }
@@ -160,17 +161,33 @@ sealed class TopologyPage : RemotePage
                 AddSpeakerRow(speaker.Room, coordinator: false);
         }
 
+        var generation = ++_volumeRows;
+        var step = await VolumeStepAsync();
         _volumes.Clear();
         foreach (var speaker in speakers)
         {
             var room = speaker.Room;
-            var slider = new Slider { Minimum = 0, Maximum = 100, Value = speaker.Volume };
-            slider.DragCompleted += async (_, _) =>
-                await Act(ct => AppServices.Client.SetRoomVolumeAsync(room, null, (int)slider.Value, null, ct), _status);
-            var mute = RemoteUi.Button(speaker.Muted ? "Unmute" : "Mute", () =>
-                Act(ct => AppServices.Client.SetRoomVolumeAsync(room, null, null, !speaker.Muted, ct), _status));
-            _volumes.Add(RemoteUi.Card(RemoteUi.Muted($"{room} · {speaker.Volume}%{(speaker.Muted ? " muted" : "")}{(speaker.Reachable ? "" : " · offline")}"), slider, mute));
+            _volumes.Add(VolumeLine.Room(
+                room,
+                speaker.Volume,
+                speaker.Muted,
+                speaker.Reachable,
+                step,
+                generation,
+                () => _volumeRows,
+                percent => Act(ct => AppServices.Client.SetRoomVolumeAsync(room, null, percent, null, ct), _status),
+                mute => Act(ct => AppServices.Client.SetRoomVolumeAsync(room, null, null, mute, ct), _status)));
         }
+    }
+
+    async Task<int> VolumeStepAsync()
+    {
+        if (!AppServices.Link.DrivePc)
+            return PhoneVolume.SpeakerStep;
+        var call = await AppServices.Client.GetSettingsAsync(CancellationToken.None).ConfigureAwait(true);
+        return call.Value is { Ok: true } settings
+            ? PhoneVolume.Normalize(settings.VolumeStep)
+            : PhoneVolume.SpeakerStep;
     }
 
     void AddSpeakerRow(string room, bool coordinator)
@@ -248,26 +265,49 @@ sealed class TopologyPage : RemotePage
             _members.Add(row);
         }
 
-        _volumes.Clear();
         var volumes = await house.ReadVolumesAsync(CancellationToken.None);
+        var step = await VolumeStepAsync();
+        var generation = ++_volumeRows;
+        _volumes.Clear();
         foreach (var speaker in volumes)
         {
             var ip = speaker.Ip;
-            var slider = new Slider { Minimum = 0, Maximum = 100, Value = speaker.Volume };
-            slider.DragCompleted += async (_, _) =>
-            {
-                try { await house.SetVolumeAsync(ip, (int)slider.Value, CancellationToken.None); _status.Text = "Done"; }
-                catch (Exception ex) { _status.Text = ex.Message; }
-            };
-            var mute = RemoteUi.Button(speaker.Muted ? "Unmute" : "Mute", async () =>
-            {
-                try { await house.SetMuteAsync(ip, !speaker.Muted, CancellationToken.None); _status.Text = "Done"; await LoadAsync(); }
-                catch (Exception ex) { _status.Text = ex.Message; }
-            });
-            _volumes.Add(RemoteUi.Card(
-                RemoteUi.Muted($"{speaker.Room} · {speaker.Volume}%{(speaker.Muted ? " muted" : "")}{(speaker.Reachable ? "" : " · offline")}"),
-                slider,
-                mute));
+            _volumes.Add(VolumeLine.Room(
+                speaker.Room,
+                speaker.Volume,
+                speaker.Muted,
+                speaker.Reachable,
+                step,
+                generation,
+                () => _volumeRows,
+                async percent =>
+                {
+                    try
+                    {
+                        await house.SetVolumeAsync(ip, percent, CancellationToken.None).ConfigureAwait(true);
+                        _status.Text = "Done";
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _status.Text = ex.Message;
+                        return false;
+                    }
+                },
+                async mute =>
+                {
+                    try
+                    {
+                        await house.SetMuteAsync(ip, mute, CancellationToken.None).ConfigureAwait(true);
+                        _status.Text = "Done";
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _status.Text = ex.Message;
+                        return false;
+                    }
+                }));
         }
     }
 
