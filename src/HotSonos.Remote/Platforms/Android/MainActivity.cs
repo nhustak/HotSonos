@@ -3,6 +3,7 @@ using Android.Content;
 using Android.Content.PM;
 using Android.Views;
 using Android.Widget;
+using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote;
 
