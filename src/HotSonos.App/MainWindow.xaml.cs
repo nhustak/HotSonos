@@ -12,6 +12,7 @@ using System.Windows.Threading;
 using HotSonos.App.Infrastructure;
 using HotSonos.App.Library;
 using HotSonos.Core;
+using HotSonos.Core.Models;
 using HotSonos.App.Mcp;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
@@ -40,6 +41,10 @@ public partial class MainWindow : Window
     private readonly Func<string?> _remoteEndpoint;
     private readonly Action? _onRemoteSettingsChanged;
     private readonly Action? _showQuickTag;
+    private readonly Func<string, Task<string>>? _applyLayout;
+    private readonly HotkeyConfig _cycleLayouts;
+    private bool _suppressLayoutUi;
+    private readonly List<CheckBox> _layoutRoomChecks = [];
     private DispatcherTimer? _libraryStatusTimer;
     private bool _mcpUiHooked;
 
@@ -104,7 +109,8 @@ public partial class MainWindow : Window
         Func<string?>? mcpEndpoint = null,
         Func<string?>? remoteEndpoint = null,
         Action? onRemoteSettingsChanged = null,
-        Action? showQuickTag = null)
+        Action? showQuickTag = null,
+        Func<string, Task<string>>? applyLayout = null)
     {
         _sonos = sonos;
         _store = store;
@@ -117,6 +123,7 @@ public partial class MainWindow : Window
         _remoteEndpoint = remoteEndpoint ?? (() => null);
         _onRemoteSettingsChanged = onRemoteSettingsChanged;
         _showQuickTag = showQuickTag;
+        _applyLayout = applyLayout;
 
         _levelVolumes = Clone(_settings.LevelVolumes);
         _freshStart = Clone(_settings.FreshStart);
@@ -130,6 +137,7 @@ public partial class MainWindow : Window
         _quickTag = Clone(_settings.QuickTag);
         _quickPlay = Clone(_settings.QuickPlay);
         _failureDiagnostic = Clone(_settings.FailureDiagnostic);
+        _cycleLayouts = Clone(_settings.CycleLayouts);
         _favHotkeys = _settings.FavoriteSlots.Select(s => Clone(s.Hotkey)).ToArray();
 
         InitializeComponent();
@@ -256,6 +264,7 @@ public partial class MainWindow : Window
         _boxToConfig[QuickTagHotkeyBox] = _quickTag;
         _boxToConfig[QuickPlayHotkeyBox] = _quickPlay;
         _boxToConfig[FailureDiagnosticHotkeyBox] = _failureDiagnostic;
+        _boxToConfig[CycleLayoutsHotkeyBox] = _cycleLayouts;
         _boxToConfig[Fav1HotkeyBox] = _favHotkeys[0];
         _boxToConfig[Fav2HotkeyBox] = _favHotkeys[1];
         _boxToConfig[Fav3HotkeyBox] = _favHotkeys[2];
@@ -275,6 +284,7 @@ public partial class MainWindow : Window
         _byTag["QuickTag"] = (QuickTagHotkeyBox, _quickTag);
         _byTag["QuickPlay"] = (QuickPlayHotkeyBox, _quickPlay);
         _byTag["FailureDiagnostic"] = (FailureDiagnosticHotkeyBox, _failureDiagnostic);
+        _byTag["CycleLayouts"] = (CycleLayoutsHotkeyBox, _cycleLayouts);
         _byTag["Fav1"] = (Fav1HotkeyBox, _favHotkeys[0]);
         _byTag["Fav2"] = (Fav2HotkeyBox, _favHotkeys[1]);
         _byTag["Fav3"] = (Fav3HotkeyBox, _favHotkeys[2]);
@@ -338,6 +348,7 @@ public partial class MainWindow : Window
         RefreshControlShuffleSourceCombo();
         RefreshLibrarySearchScopeCombo();
         RefreshControlDailySpeakersUi();
+        RefreshLayoutsUi();
         RefreshControlPlayList();
         // Seed from live cache (poll/GENA already running). Null only if truly unknown.
         ApplyControlNowPlaying(_sonos.LastNowPlaying);
@@ -5234,6 +5245,7 @@ public partial class MainWindow : Window
             ShowGenresInPlaySourcesCheckBox.IsChecked = _settings.ShowGenresInPlaySources;
             LoadWakeUiFromSettings();
             RefreshControlShuffleSourceCombo();
+            RefreshLayoutsUi();
         }
         finally
         {
@@ -5333,6 +5345,7 @@ public partial class MainWindow : Window
         _settings.QuickTag = _quickTag;
         _settings.QuickPlay = _quickPlay;
         _settings.FailureDiagnostic = _failureDiagnostic;
+        _settings.CycleLayouts = _cycleLayouts;
         if (int.TryParse(VolumeStepBox.Text, out var step) && step is >= 1 and <= 50)
             _settings.VolumeStep = step;
         if (int.TryParse(LevelPercentBox.Text, out var level) && level is >= 0 and <= 100)
@@ -6150,4 +6163,297 @@ public partial class MainWindow : Window
         Key.LeftShift or Key.RightShift or
         Key.LWin or Key.RWin or
         Key.System;
+
+    private void RefreshLayoutsUi()
+    {
+        if (ControlLayoutsList is null)
+            return;
+
+        _suppressLayoutUi = true;
+        try
+        {
+            var selectedId = (ControlLayoutsList.SelectedItem as LayoutListItem)?.Id;
+            var items = _settings.EnsureShape().SpeakerLayouts
+                .Select(l => new LayoutListItem(l.Id, l.Name))
+                .ToList();
+            ControlLayoutsList.ItemsSource = items;
+            var keep = items.FirstOrDefault(i => i.Id == selectedId);
+            ControlLayoutsList.SelectedItem = keep ?? items.FirstOrDefault();
+        }
+        finally
+        {
+            _suppressLayoutUi = false;
+        }
+
+        LoadSelectedLayoutIntoEditor();
+    }
+
+    private SpeakerLayout? SelectedLayout()
+    {
+        var id = (ControlLayoutsList?.SelectedItem as LayoutListItem)?.Id;
+        if (id is null)
+            return null;
+        return _settings.EnsureShape().SpeakerLayouts
+            .FirstOrDefault(l => string.Equals(l.Id, id, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private IReadOnlyList<string> VisibleRoomNames()
+    {
+        var names = _sonos.LastTopology?.Members
+            .Where(m => !m.Invisible)
+            .Select(m => m.RoomName)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+        if (names.Count == 0)
+        {
+            names = _sonos.Groups
+                .Select(g => g.CoordinatorRoom)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        return names;
+    }
+
+    private List<string> CheckedLayoutRooms() =>
+        _layoutRoomChecks
+            .Where(c => c.IsChecked == true && c.Tag is string name)
+            .Select(c => (string)c.Tag)
+            .ToList();
+
+    private void RebuildLayoutRoomChecks(IReadOnlyCollection<string>? checkedRooms)
+    {
+        if (ControlLayoutRoomsHost is null)
+            return;
+        var selected = new HashSet<string>(checkedRooms ?? [], StringComparer.OrdinalIgnoreCase);
+        var rooms = VisibleRoomNames().ToList();
+        foreach (var extra in selected)
+        {
+            if (!rooms.Any(r => string.Equals(r, extra, StringComparison.OrdinalIgnoreCase)))
+                rooms.Add(extra);
+        }
+
+        ControlLayoutRoomsHost.Children.Clear();
+        _layoutRoomChecks.Clear();
+        foreach (var room in rooms)
+        {
+            var box = new CheckBox
+            {
+                Content = room,
+                Tag = room,
+                IsChecked = selected.Contains(room) || (selected.Count == 0 && rooms.Count <= 2),
+                Margin = new Thickness(0, 0, 12, 4),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            _layoutRoomChecks.Add(box);
+            ControlLayoutRoomsHost.Children.Add(box);
+        }
+
+        RebuildLayoutSubRoomPicker(SonosBonding.SubHostRoom(SelectedLayout() ?? new SpeakerLayout()));
+    }
+
+    private void RebuildLayoutSubRoomPicker(string? subRoom)
+    {
+        if (ControlLayoutSubRoomBox is null)
+            return;
+        var rooms = CheckedLayoutRooms();
+        if (rooms.Count == 0)
+            rooms = VisibleRoomNames().ToList();
+        ControlLayoutSubRoomBox.ItemsSource = rooms;
+        if (!string.IsNullOrWhiteSpace(subRoom) && rooms.Any(r => string.Equals(r, subRoom, StringComparison.OrdinalIgnoreCase)))
+            ControlLayoutSubRoomBox.SelectedItem = rooms.First(r => string.Equals(r, subRoom, StringComparison.OrdinalIgnoreCase));
+        else if (ControlLayoutSubRoomBox.SelectedItem is null && rooms.Count > 0)
+            ControlLayoutSubRoomBox.SelectedIndex = 0;
+    }
+
+    private void LoadSelectedLayoutIntoEditor()
+    {
+        var layout = SelectedLayout();
+        if (ControlLayoutNameBox is not null)
+            ControlLayoutNameBox.Text = layout?.Name ?? "";
+        RebuildLayoutRoomChecks(layout?.Rooms.Select(r => r.RoomName).ToList());
+        BindLayoutHotkeyBox(layout);
+    }
+
+    private void BindLayoutHotkeyBox(SpeakerLayout? layout)
+    {
+        if (ControlLayoutHotkeyBox is null)
+            return;
+        if (layout is null)
+        {
+            _boxToConfig[ControlLayoutHotkeyBox] = new HotkeyConfig();
+            ControlLayoutHotkeyBox.Text = "";
+            ControlLayoutHotkeyBox.IsEnabled = false;
+            return;
+        }
+
+        ControlLayoutHotkeyBox.IsEnabled = true;
+        var settings = _settings.EnsureShape();
+        if (!settings.LayoutHotkeys.TryGetValue(layout.Id, out var cfg) || cfg is null)
+        {
+            cfg = new HotkeyConfig();
+            settings.LayoutHotkeys[layout.Id] = cfg;
+        }
+
+        _boxToConfig[ControlLayoutHotkeyBox] = cfg;
+        ControlLayoutHotkeyBox.Text = cfg.IsSet ? cfg.ToString() : "";
+    }
+
+    private void ControlLayoutsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressLayoutUi)
+            return;
+        LoadSelectedLayoutIntoEditor();
+    }
+
+    private void ControlLayoutHotkeyClear_Click(object sender, RoutedEventArgs e)
+    {
+        if (ControlLayoutHotkeyBox is null)
+            return;
+        if (!_boxToConfig.TryGetValue(ControlLayoutHotkeyBox, out var cfg))
+            return;
+        cfg.Control = cfg.Alt = cfg.Shift = cfg.Windows = false;
+        cfg.Key = "";
+        ControlLayoutHotkeyBox.Text = "";
+    }
+
+    private void ControlLayoutSaveFromCurrent_Click(object sender, RoutedEventArgs e)
+    {
+        var snap = _sonos.LastTopology;
+        if (snap is null || snap.Members.Count == 0)
+        {
+            SetLayoutStatus("No topology yet.");
+            return;
+        }
+
+        var rooms = CheckedLayoutRooms();
+        if (rooms.Count == 0)
+        {
+            SetLayoutStatus("Check at least one room.");
+            return;
+        }
+
+        var name = ControlLayoutNameBox?.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            name = "New layout";
+
+        var layout = SonosBonding.Snapshot(snap, name, rooms);
+        if (layout.Rooms.Count == 0)
+        {
+            SetLayoutStatus("None of the checked rooms are on the network.");
+            return;
+        }
+
+        var subRoom = ControlLayoutSubRoomBox?.SelectedItem as string;
+        if (!string.IsNullOrWhiteSpace(subRoom)
+            && layout.Rooms.Any(r => string.Equals(r.RoomName, subRoom, StringComparison.OrdinalIgnoreCase)))
+        {
+            var currentHost = SonosBonding.SubHostRoom(layout);
+            if (!string.Equals(currentHost, subRoom, StringComparison.OrdinalIgnoreCase)
+                && layout.Rooms.Any(r => !string.IsNullOrWhiteSpace(r.SubUuid) || ChannelMaps.HasSub(r.ChannelMapSet)))
+            {
+                try
+                {
+                    layout = SonosBonding.RelocateSub(layout, subRoom);
+                    layout.Name = name;
+                }
+                catch (Exception ex)
+                {
+                    SetLayoutStatus(ex.Message);
+                    return;
+                }
+            }
+        }
+
+        var existing = SelectedLayout();
+        if (existing is not null && string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase))
+        {
+            layout.Id = existing.Id;
+            var idx = _settings.SpeakerLayouts.FindIndex(l => l.Id == existing.Id);
+            if (idx >= 0)
+                _settings.SpeakerLayouts[idx] = layout;
+            else
+                _settings.SpeakerLayouts.Add(layout);
+        }
+        else
+        {
+            _settings.EnsureShape().SpeakerLayouts.Add(layout);
+        }
+
+        PersistLayouts();
+        RefreshLayoutsUi();
+        _suppressLayoutUi = true;
+        try
+        {
+            ControlLayoutsList.SelectedItem = ((IEnumerable<LayoutListItem>)ControlLayoutsList.ItemsSource)
+                .FirstOrDefault(i => i.Id == layout.Id);
+        }
+        finally
+        {
+            _suppressLayoutUi = false;
+        }
+        LoadSelectedLayoutIntoEditor();
+        SetLayoutStatus($"Saved {layout.Name}.");
+    }
+
+    private async void ControlLayoutApply_Click(object sender, RoutedEventArgs e)
+    {
+        var layout = SelectedLayout();
+        if (layout is null)
+        {
+            SetLayoutStatus("Pick a layout.");
+            return;
+        }
+
+        if (_applyLayout is null)
+        {
+            SetLayoutStatus("Apply isn't wired.");
+            return;
+        }
+
+        SetLayoutStatus("Applying…");
+        var toast = await _applyLayout(layout.Id);
+        SetLayoutStatus(toast);
+    }
+
+    private void ControlLayoutDelete_Click(object sender, RoutedEventArgs e)
+    {
+        var layout = SelectedLayout();
+        if (layout is null)
+            return;
+        _settings.EnsureShape().SpeakerLayouts.RemoveAll(l => l.Id == layout.Id);
+        _settings.LayoutHotkeys.Remove(layout.Id);
+        PersistLayouts();
+        RefreshLayoutsUi();
+        SetLayoutStatus($"Deleted {layout.Name}.");
+    }
+
+    private void PersistLayouts()
+    {
+        try
+        {
+            _store.Save(_settings.EnsureShape());
+            _ = _applyBindings();
+        }
+        catch (Exception ex)
+        {
+            SetLayoutStatus($"Save failed: {ex.Message}");
+        }
+    }
+
+    private void SetLayoutStatus(string text)
+    {
+        if (ControlLayoutStatus is not null)
+            ControlLayoutStatus.Text = text;
+    }
+
+    private sealed record LayoutListItem(string Id, string Name)
+    {
+        public override string ToString() => Name;
+    }
+
 }

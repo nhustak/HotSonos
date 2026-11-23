@@ -24,6 +24,8 @@ public enum HotsonosAction
     Favorite4,
     Favorite5,
     Favorite6,
+    /// <summary>Apply the next saved speaker layout (cycles between them).</summary>
+    CycleLayouts,
 }
 
 public static class HotsonosActionExtensions

@@ -38,6 +38,8 @@ public sealed class TrayController : IDisposable
         Action DoubleClick,
         Action OpenPhone,
         Action RegroupDaily,
+        Action<string> ApplyLayout,
+        Action CycleLayouts,
         Action Exit);
 
     private readonly NotifyIcon _notifyIcon;
@@ -51,6 +53,7 @@ public sealed class TrayController : IDisposable
     private readonly ToolStripMenuItem _dailyPresetItem;
     private readonly ToolStripMenuItem _driftItem;
     private readonly ToolStripMenuItem _favoritesMenu;
+    private readonly ToolStripMenuItem _layoutsMenu;
     private readonly ToolStripMenuItem _offlineItem;
     private readonly ToolStripMenuItem _stopWakeItem;
     private readonly ToolStripMenuItem _mcpItem;
@@ -96,8 +99,10 @@ public sealed class TrayController : IDisposable
 
         _roomMenu = new ToolStripMenuItem("Room: (discovering…)");
         _favoritesMenu = new ToolStripMenuItem("Play favorite");
+        _layoutsMenu = new ToolStripMenuItem("Speaker layouts");
         _menu.Items.Add(_roomMenu);
         _menu.Items.Add(_favoritesMenu);
+        _menu.Items.Add(_layoutsMenu);
         _menu.Items.Add(new ToolStripSeparator());
         _offlineItem = new ToolStripMenuItem("All speakers online") { Enabled = false };
         _menu.Items.Add(_offlineItem);
@@ -198,6 +203,29 @@ public sealed class TrayController : IDisposable
             var slotIndex = i;
             item.Click += (_, _) => _callbacks.PlayFavoriteSlot(slotIndex);
             _favoritesMenu.DropDownItems.Add(item);
+        }
+    }
+
+    /// <summary>Rebuilds the speaker-layout submenu.</summary>
+    public void UpdateLayouts(IReadOnlyList<(string Id, string Name)> layouts)
+    {
+        _layoutsMenu.DropDownItems.Clear();
+        if (layouts.Count == 0)
+        {
+            _layoutsMenu.DropDownItems.Add(new ToolStripMenuItem("None saved — add some on the Control tab") { Enabled = false });
+            return;
+        }
+
+        foreach (var (id, name) in layouts)
+        {
+            var captured = id;
+            _layoutsMenu.DropDownItems.Add(name, null, (_, _) => _callbacks.ApplyLayout(captured));
+        }
+
+        if (layouts.Count >= 2)
+        {
+            _layoutsMenu.DropDownItems.Add(new ToolStripSeparator());
+            _layoutsMenu.DropDownItems.Add("Cycle layouts", null, (_, _) => _callbacks.CycleLayouts());
         }
     }
 

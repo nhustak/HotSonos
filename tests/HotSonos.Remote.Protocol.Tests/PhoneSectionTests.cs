@@ -10,6 +10,7 @@ public class PhoneSectionTests
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.RoomsGroups));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.RoomsVolume));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.SpeakersDaily));
+        Assert.True(PhoneSections.DefaultOpen(PhoneSections.SpeakersLayouts));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.LibraryFolders));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.PlaybackShuffle));
         Assert.True(PhoneSections.DefaultOpen(PhoneSections.Wake));

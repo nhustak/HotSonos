@@ -298,6 +298,70 @@ public sealed partial class HotSonosRemoteHost
             return Results.Json(new RemoteCommandResponse(true, "Removed", null), RemoteApi.Json);
         });
 
+        app.MapGet("/api/layouts", () => Results.Json(BuildLayouts(state), RemoteApi.Json));
+
+        app.MapPost("/api/layouts/{id}/apply", async (string id, HttpContext ctx) =>
+        {
+            var result = await state.ApplyLayoutAsync(id, ctx.RequestAborted).ConfigureAwait(false);
+            var toast = App.FormatLayoutToast(result);
+            return Results.Json(
+                new RemoteCommandResponse(result.Ok, result.Ok ? toast : null, result.Ok ? null : toast),
+                RemoteApi.Json);
+        });
+
+        app.MapPost("/api/layouts", async (HttpContext ctx) =>
+        {
+            var body = await ReadJson<RemoteLayoutSaveBody>(ctx).ConfigureAwait(false);
+            if (body is null || string.IsNullOrWhiteSpace(body.Name) || body.Rooms is null || body.Rooms.Count == 0)
+                return BadJson();
+            var snap = state.Sonos.LastTopology;
+            if (snap is null || snap.Members.Count == 0)
+                return Results.Json(new RemoteCommandResponse(false, null, "No topology yet."), RemoteApi.Json);
+
+            var layout = SonosBonding.Snapshot(snap, body.Name.Trim(), body.Rooms);
+            if (layout.Rooms.Count == 0)
+                return Results.Json(new RemoteCommandResponse(false, null, "None of those rooms are on the network."), RemoteApi.Json);
+            if (!string.IsNullOrWhiteSpace(body.SubInRoom)
+                && layout.Rooms.Any(r => string.Equals(r.RoomName, body.SubInRoom, StringComparison.OrdinalIgnoreCase))
+                && (layout.Rooms.Any(r => !string.IsNullOrWhiteSpace(r.SubUuid) || ChannelMaps.HasSub(r.ChannelMapSet)))
+                && !string.Equals(SonosBonding.SubHostRoom(layout), body.SubInRoom, StringComparison.OrdinalIgnoreCase))
+            {
+                layout = SonosBonding.RelocateSub(layout, body.SubInRoom);
+                layout.Name = body.Name.Trim();
+            }
+
+            var settings = state.Settings().EnsureShape();
+            if (!string.IsNullOrWhiteSpace(body.Id))
+            {
+                layout.Id = body.Id.Trim();
+                var idx = settings.SpeakerLayouts.FindIndex(l => string.Equals(l.Id, layout.Id, StringComparison.OrdinalIgnoreCase));
+                if (idx >= 0)
+                    settings.SpeakerLayouts[idx] = layout;
+                else
+                    settings.SpeakerLayouts.Add(layout);
+            }
+            else
+            {
+                settings.SpeakerLayouts.Add(layout);
+            }
+
+            SaveSettings(state);
+            state.AfterSettingsChanged?.Invoke();
+            return Results.Json(new RemoteCommandResponse(true, $"Saved {layout.Name}", null), RemoteApi.Json);
+        });
+
+        app.MapPost("/api/layouts/{id}/delete", (string id) =>
+        {
+            var settings = state.Settings().EnsureShape();
+            var removed = settings.SpeakerLayouts.RemoveAll(l => string.Equals(l.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (removed == 0)
+                return Results.Json(new RemoteCommandResponse(false, null, "No such layout."), RemoteApi.Json);
+            settings.LayoutHotkeys.Remove(id);
+            SaveSettings(state);
+            state.AfterSettingsChanged?.Invoke();
+            return Results.Json(new RemoteCommandResponse(true, "Deleted", null), RemoteApi.Json);
+        });
+
         app.MapGet("/api/library/status", () =>
         {
             var lib = state.Library;
@@ -772,6 +836,24 @@ public sealed partial class HotSonosRemoteHost
                 play.TryGetValue(card.GroupId, out var state) ? state : "Unknown",
                 card.Rooms.Select(r => new RemoteTopologyRoomDto(r.Room, r.IsCoordinator, r.Folded)).ToList()))
             .ToList();
+    }
+
+    private static RemoteLayoutsResponse BuildLayouts(HotSonosMcpState state)
+    {
+        var settings = state.Settings().EnsureShape();
+        var rooms = state.Sonos.LastTopology?.Members
+            .Where(m => !m.Invisible)
+            .Select(m => m.RoomName)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+        var layouts = settings.SpeakerLayouts.Select(l => new RemoteLayoutDto(
+            l.Id,
+            l.Name,
+            l.Rooms.Select(r => r.RoomName).ToList(),
+            SonosBonding.SubHostRoom(l))).ToList();
+        return new RemoteLayoutsResponse(true, layouts, rooms, null);
     }
 
     private static RemoteDailyGroupsResponse BuildDaily(HotSonosMcpState state)

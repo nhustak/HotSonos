@@ -213,6 +213,15 @@ public sealed class AppSettings
     /// <summary>Hotkey to set all speakers to <see cref="LevelVolumePercent"/>.</summary>
     public HotkeyConfig LevelVolumes { get; set; } = new();
 
+    /// <summary>Named speaker bond layouts (pairs and Subs). Unchecked rooms are never touched.</summary>
+    public List<SpeakerLayout> SpeakerLayouts { get; set; } = [];
+
+    /// <summary>Optional per-layout global hotkeys, keyed by layout id.</summary>
+    public Dictionary<string, HotkeyConfig> LayoutHotkeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Hotkey that cycles through <see cref="SpeakerLayouts"/>.</summary>
+    public HotkeyConfig CycleLayouts { get; set; } = new();
+
     /// <summary>Offset for a room name (0 if unset).</summary>
     public int GetVolumeOffset(string? roomName)
     {
@@ -599,6 +608,7 @@ public sealed class AppSettings
             HotsonosAction.QuickTag => QuickTag,
             HotsonosAction.QuickPlay => QuickPlay,
             HotsonosAction.FailureDiagnostic => FailureDiagnostic,
+            HotsonosAction.CycleLayouts => CycleLayouts,
             _ => new HotkeyConfig(),
         };
     }
@@ -618,6 +628,37 @@ public sealed class AppSettings
         QuickTag ??= new HotkeyConfig();
         QuickPlay ??= new HotkeyConfig();
         FailureDiagnostic ??= new HotkeyConfig();
+        CycleLayouts ??= new HotkeyConfig();
+        SpeakerLayouts ??= [];
+        SpeakerLayouts = SpeakerLayouts
+            .Where(l => l is not null && !string.IsNullOrWhiteSpace(l.Name))
+            .Select(l =>
+            {
+                l.Id = string.IsNullOrWhiteSpace(l.Id) ? Guid.NewGuid().ToString("n") : l.Id.Trim();
+                l.Name = l.Name.Trim();
+                l.Rooms ??= [];
+                l.Rooms = l.Rooms
+                    .Where(r => r is not null && !string.IsNullOrWhiteSpace(r.RoomName) && !string.IsNullOrWhiteSpace(r.PrimaryUuid))
+                    .Select(r =>
+                    {
+                        r.RoomName = r.RoomName.Trim();
+                        r.PrimaryUuid = r.PrimaryUuid.Trim();
+                        r.ChannelMapSet ??= "";
+                        return r;
+                    })
+                    .ToList();
+                return l;
+            })
+            .Where(l => l.Rooms.Count > 0)
+            .GroupBy(l => l.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last())
+            .ToList();
+        LayoutHotkeys ??= new Dictionary<string, HotkeyConfig>(StringComparer.OrdinalIgnoreCase);
+        var keep = new HashSet<string>(SpeakerLayouts.Select(l => l.Id), StringComparer.OrdinalIgnoreCase);
+        foreach (var stale in LayoutHotkeys.Keys.Where(k => !keep.Contains(k)).ToList())
+            LayoutHotkeys.Remove(stale);
+        foreach (var id in LayoutHotkeys.Keys.ToList())
+            LayoutHotkeys[id] ??= new HotkeyConfig();
         // First-time seed so existing installs get usable overlay hotkeys.
         if (!QuickTag.IsSet)
             QuickTag = new HotkeyConfig { Control = true, Alt = true, Key = "T" };

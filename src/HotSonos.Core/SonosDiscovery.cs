@@ -173,6 +173,7 @@ public sealed class SonosDiscovery
 
             // ChannelMapSet may appear on the primary (visible) member: UUID:ROLE,ROLE;UUID:ROLE
             var roleByUuid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var mapByUuid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var gm in groupMembers)
             {
                 var map = (string?)gm.Attribute("ChannelMapSet")
@@ -190,6 +191,7 @@ public sealed class SonosDiscovery
                     var primary = roles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                         .FirstOrDefault() ?? roles;
                     roleByUuid[uuid] = primary;
+                    mapByUuid[uuid] = map;
                 }
             }
 
@@ -202,6 +204,7 @@ public sealed class SonosDiscovery
                     continue;
 
                 roleByUuid.TryGetValue(uuid, out var role);
+                mapByUuid.TryGetValue(uuid, out var channelMapSet);
                 // Anyone listed in ChannelMapSet / HTSatChanMapSet is bonded
                 // (primary + RF mate + Sub), not only the invisible partner.
                 var isBonded = roleByUuid.ContainsKey(uuid);
@@ -215,6 +218,7 @@ public sealed class SonosDiscovery
                     GroupId = groupId,
                     Invisible = (string?)member.Attribute("Invisible") == "1",
                     ChannelRole = role,
+                    ChannelMapSet = channelMapSet,
                     IsBonded = isBonded,
                     EthLink = ParseBool01((string?)member.Attribute("EthLink")),
                     WifiEnabled = ParseBool01((string?)member.Attribute("WifiEnabled")),

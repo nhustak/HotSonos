@@ -248,6 +248,18 @@ public sealed class RemoteClient : IDisposable
     public Task<RemoteCall<RemoteCommandResponse>> RemoveDailyAsync(string name, CancellationToken ct) =>
         PostAsync("api/daily-groups/remove", new RemoteNameBody { Name = name }, RemoteJsonContext.Default.RemoteNameBody, Fast, ct);
 
+    public Task<RemoteCall<RemoteLayoutsResponse>> GetLayoutsAsync(CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, "api/layouts", null, Fast, RemoteJsonContext.Default.RemoteLayoutsResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> ApplyLayoutAsync(string id, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, $"api/layouts/{Uri.EscapeDataString(id)}/apply", null, Slow, RemoteJsonContext.Default.RemoteCommandResponse, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> SaveLayoutAsync(RemoteLayoutSaveBody body, CancellationToken ct) =>
+        PostAsync("api/layouts", body, RemoteJsonContext.Default.RemoteLayoutSaveBody, Fast, ct);
+
+    public Task<RemoteCall<RemoteCommandResponse>> DeleteLayoutAsync(string id, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, $"api/layouts/{Uri.EscapeDataString(id)}/delete", null, Fast, RemoteJsonContext.Default.RemoteCommandResponse, ct);
+
     public Task<RemoteCall<RemoteLibraryStatusResponse>> GetLibraryStatusAsync(CancellationToken ct) =>
         SendAsync(HttpMethod.Get, "api/library/status", null, Fast, RemoteJsonContext.Default.RemoteLibraryStatusResponse, ct);
 

@@ -16,10 +16,14 @@ public sealed class GlobalHotkeyManager : IDisposable
 
     private readonly HwndSource _source;
     private readonly Dictionary<int, HotsonosAction> _actionsById = [];
+    private readonly Dictionary<int, string> _layoutsById = [];
     private int _nextId = 1;
 
     /// <summary>Raised on the UI thread when a registered hotkey is pressed.</summary>
     public event Action<HotsonosAction>? HotkeyPressed;
+
+    /// <summary>Raised on the UI thread when a per-layout hotkey is pressed (layout id).</summary>
+    public event Action<string>? LayoutHotkeyPressed;
 
     public GlobalHotkeyManager()
     {
@@ -55,6 +59,15 @@ public sealed class GlobalHotkeyManager : IDisposable
                 failures.Add(action);
         }
 
+        foreach (var (layoutId, hotkey) in settings.EnsureShape().LayoutHotkeys)
+        {
+            if (hotkey is null || !hotkey.IsSet || hotkey.VirtualKey == 0)
+                continue;
+            var id = _nextId++;
+            if (RegisterHotKey(_source.Handle, id, hotkey.Modifiers, hotkey.VirtualKey))
+                _layoutsById[id] = layoutId;
+        }
+
         return failures;
     }
 
@@ -62,15 +75,28 @@ public sealed class GlobalHotkeyManager : IDisposable
     {
         foreach (var id in _actionsById.Keys)
             UnregisterHotKey(_source.Handle, id);
+        foreach (var id in _layoutsById.Keys)
+            UnregisterHotKey(_source.Handle, id);
         _actionsById.Clear();
+        _layoutsById.Clear();
+        _nextId = 1;
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == WM_HOTKEY && _actionsById.TryGetValue(wParam.ToInt32(), out var action))
+        if (msg == WM_HOTKEY)
         {
-            handled = true;
-            HotkeyPressed?.Invoke(action);
+            var id = wParam.ToInt32();
+            if (_actionsById.TryGetValue(id, out var action))
+            {
+                handled = true;
+                HotkeyPressed?.Invoke(action);
+            }
+            else if (_layoutsById.TryGetValue(id, out var layoutId))
+            {
+                handled = true;
+                LayoutHotkeyPressed?.Invoke(layoutId);
+            }
         }
 
         return IntPtr.Zero;

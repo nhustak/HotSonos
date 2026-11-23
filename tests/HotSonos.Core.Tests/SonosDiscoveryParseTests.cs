@@ -107,5 +107,65 @@ public class SonosDeviceInfoTests
             """;
         Assert.Equal("Era 100", HotSonos.Core.SonosDeviceInfo.ParseProductName(xml));
     }
-}
 
+    [Fact]
+    public void ParseTopologySnapshot_keeps_full_ChannelMapSet_on_every_listed_member()
+    {
+        const string xml = """
+            <ZoneGroupState>
+              <ZoneGroups>
+                <ZoneGroup Coordinator="RINCON_804AF29BE1FC01400" ID="RINCON_804AF29BE1FC01400:1">
+                  <ZoneGroupMember UUID="RINCON_804AF29BE1FC01400" ZoneName="Office"
+                    Location="http://192.168.1.114:1400/xml/device_description.xml"
+                    ChannelMapSet="RINCON_804AF29BE1FC01400:LF,LF;RINCON_804AF29BE66C01400:RF,RF;RINCON_F0F6C1EEA61401400:SW"/>
+                  <ZoneGroupMember UUID="RINCON_804AF29BE66C01400" ZoneName="Office"
+                    Location="http://192.168.1.139:1400/xml/device_description.xml" Invisible="1"/>
+                  <ZoneGroupMember UUID="RINCON_F0F6C1EEA61401400" ZoneName="Office"
+                    Location="http://192.168.1.156:1400/xml/device_description.xml" Invisible="1"/>
+                  <ZoneGroupMember UUID="RINCON_C4387578325001400" ZoneName="Kitchen"
+                    Location="http://192.168.1.117:1400/xml/device_description.xml"/>
+                </ZoneGroup>
+              </ZoneGroups>
+            </ZoneGroupState>
+            """;
+
+        var snap = SonosDiscovery.ParseTopologySnapshot(xml);
+        const string expected = "RINCON_804AF29BE1FC01400:LF,LF;RINCON_804AF29BE66C01400:RF,RF;RINCON_F0F6C1EEA61401400:SW";
+
+        var left = snap.Members.Single(m => m.Uuid == "RINCON_804AF29BE1FC01400");
+        var right = snap.Members.Single(m => m.Uuid == "RINCON_804AF29BE66C01400");
+        var sub = snap.Members.Single(m => m.Uuid == "RINCON_F0F6C1EEA61401400");
+        var kitchen = snap.Members.Single(m => m.Uuid == "RINCON_C4387578325001400");
+
+        Assert.Equal(expected, left.ChannelMapSet);
+        Assert.Equal(expected, right.ChannelMapSet);
+        Assert.Equal(expected, sub.ChannelMapSet);
+        Assert.Equal("LF", left.ChannelRole);
+        Assert.Equal("RF", right.ChannelRole);
+        Assert.Equal("SW", sub.ChannelRole);
+        Assert.Null(kitchen.ChannelMapSet);
+        Assert.False(kitchen.IsBonded);
+        Assert.False(SonosBonding.IsSubFree(snap, "RINCON_F0F6C1EEA61401400"));
+    }
+
+    [Fact]
+    public void SonosSoapException_parses_UPnP_errorCode()
+    {
+        const string body = """
+            <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+              <s:Body>
+                <s:Fault>
+                  <detail>
+                    <UPnPError>
+                      <errorCode>402</errorCode>
+                      <errorDescription>Invalid Args</errorDescription>
+                    </UPnPError>
+                  </detail>
+                </s:Fault>
+              </s:Body>
+            </s:Envelope>
+            """;
+        Assert.Equal(402, SonosSoapException.TryParseErrorCode(body));
+        Assert.Null(SonosSoapException.TryParseErrorCode("nope"));
+    }
+}

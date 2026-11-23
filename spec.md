@@ -29,10 +29,10 @@ Numbered re-land of `stable/aug5-topology` commit `f6a3148` (old 1.0.0.70) onto 
 | **6** | `1.0.0.59-6` | Keep-alive close-cancel + SessionEnding / extra exit-lifecycle | **RAD** — ladder base; patches 6.7–6.12 on top |
 | **7** | `1.0.0.59-7` | Poll 5s→10s + poll breadcrumbs | Pending |
 | **8** | `1.0.0.59-8` | SSDP serialize send/recv | Pending |
-| **9** | `1.0.0.59-9` | Full ChannelMapSet on members | Pending |
+| **9** | `1.0.0.59-9` | Full ChannelMapSet on members | **DONE** — parse keeps the full map string on every listed member; used by speaker layouts |
 | **10** | `1.0.0.59-10` | SubGain | Pending |
 | **11** | `1.0.0.59-11` | Safer regroup | Partial — pause all playing coordinators for the join; block auto-recover Next/Play during hold; resume after unless caller starts a new shuffle. Version not bumped (ladder still on #6). |
-| **12** | `1.0.0.59-12` | Rebuild-bond | Pending |
+| **12** | `1.0.0.59-12` | Rebuild-bond | **DONE** — `SonosBonding` Create/SeparateStereoPair, named layouts, tray/phone/MCP apply |
 | **13** | `1.0.0.59-13` | MainWindow topology UI | Pending |
 | **14** | `1.0.0.59-14` | MCP tools expansion | Pending |
 | **15** | `1.0.0.59-15` | Flyout art log extras | Pending |

@@ -1,3 +1,4 @@
+using HotSonos.Core;
 using System.ComponentModel;
 using System.Text.Json;
 using HotSonos.App.Infrastructure;
@@ -964,6 +965,7 @@ public sealed class HotSonosDebugTools
                     s.Uuid,
                     s.IpAddress,
                     s.ChannelRole,
+                    s.ChannelMapSet,
                     s.GroupId,
                     label = s.DisplayLabel,
                 }),
@@ -974,6 +976,7 @@ public sealed class HotSonosDebugTools
                     m.IpAddress,
                     m.Invisible,
                     m.ChannelRole,
+                    m.ChannelMapSet,
                     m.GroupId,
                     m.CoordinatorUuid,
                     isCoordinator = m.IsCoordinator,
@@ -981,6 +984,45 @@ public sealed class HotSonosDebugTools
                 }),
             }, JsonOptions);
         });
+
+    [McpServerTool(Name = "list_layouts")]
+    [Description("List saved speaker layouts (bond maps for rooms, including where the Sub sits). Unchecked rooms are not in the layout and will not be touched.")]
+    public string ListLayouts() =>
+        McpActivityLog.Run("list_layouts", null, () =>
+        {
+            var layouts = _state.Settings().EnsureShape().SpeakerLayouts.Select(l => new
+            {
+                l.Id,
+                l.Name,
+                subRoom = SonosBonding.SubHostRoom(l),
+                rooms = l.Rooms.Select(r => new
+                {
+                    r.RoomName,
+                    r.PrimaryUuid,
+                    r.RightUuid,
+                    r.SubUuid,
+                    r.ChannelMapSet,
+                }),
+            });
+            return JsonSerializer.Serialize(new { ok = true, layouts }, JsonOptions);
+        });
+
+    [McpServerTool(Name = "apply_layout")]
+    [Description("Apply a saved speaker layout by id from list_layouts. Moves the Sub / rebuilds a stereo pair. Does not change volume or playback. Music may drop out for 10–15 seconds. Returns the toast, or the failing step.")]
+    public Task<string> ApplyLayout(
+        [Description("Layout id from list_layouts.")] string id,
+        CancellationToken ct) =>
+        McpActivityLog.RunAsync("apply_layout", id, async () =>
+        {
+            var result = await _state.ApplyLayoutAsync(id, ct).ConfigureAwait(false);
+            return JsonSerializer.Serialize(new
+            {
+                ok = result.Ok,
+                noOp = result.NoOp,
+                message = result.Message,
+                failedStep = result.FailedStep,
+            }, JsonOptions);
+        }, category: "control");
 
     // ---- Control (same actions as tray / hotkeys) -------------------------
 

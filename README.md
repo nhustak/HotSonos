@@ -100,6 +100,9 @@ No. This is a live daily mix for whole-house listening. Tags and Sonos favorites
 ### 🔄 Restart fresh (re-sync + reshuffle)
 Re-discovers speakers, force-regroups them, and starts a new history-aware shuffle. Tray item, Control button, optional hotkey, MCP `fresh_start`.
 
+### 🔈 Speaker layouts
+Named bond setups (stereo pair + Sub). Snapshot the current maps, tick the rooms a layout may touch, and apply from the Control tab, the tray menu, an optional hotkey, the phone, or MCP (`list_layouts`, `apply_layout`). Unchecked rooms are left alone. Applying a layout that moves the Sub drops audio for a few seconds. The phone uses the PC's layouts when it's linked; in standalone mode it stores layouts on the phone and talks to the speakers directly.
+
 ### ⏯️ Transport & volume hotkeys
 Play/pause, next, previous, volume up/down, mute, and level-all — from any app. Re-bindable under **Hotkeys**. On the Control now-playing card and on the phone Player, previous is a left-pointing skip-previous icon, the mirror of next.
 
@@ -187,7 +190,7 @@ While the app runs with MCP enabled: `http://127.0.0.1:42341/mcp` — discovery,
 
 **Library / tags (examples):** `discover_library_roots`, `get_library_config`, `get_library_status`, `library_rescan`, `library_search`, `library_get_track`, `list_tags`, `list_genres`, `tag_create`, `tag_rename`, `tag_delete`, `track_toggle_tag`, `track_set_tags`, `track_find_master`, `track_link_master`
 
-**Control (examples):** `play_pause`, next/previous, volume/mute/level, `shuffle_library`, `play_library_track`, `play_tag`, `play_genre`, `resume_shuffle`, `fresh_start`, `play_favorite_slot`, `set_active_room`, wake tools
+**Control (examples):** `play_pause`, next/previous, volume/mute/level, `shuffle_library`, `play_library_track`, `play_tag`, `play_genre`, `resume_shuffle`, `fresh_start`, `play_favorite_slot`, `set_active_room`, `list_layouts`, `apply_layout`, wake tools
 
 ### Other
 - Single-instance tray app; second launch activates the running window  
