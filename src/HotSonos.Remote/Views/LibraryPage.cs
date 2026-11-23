@@ -7,7 +7,7 @@ sealed class LibraryPage : RemotePage
 {
     readonly Entry _query = RemoteUi.Field("Search title, artist, T:, A:, TG:, F:");
     readonly Label _status = RemoteUi.Muted("");
-    readonly VerticalStackLayout _results = new();
+    readonly VerticalStackLayout _results = new() { Spacing = 2 };
     int _offset;
 
     public LibraryPage()
@@ -93,16 +93,12 @@ sealed class LibraryPage : RemotePage
         }
     }
 
-    View SpeakerCard(SonosLibraryTrack track)
-    {
-        var play = RemoteUi.Button(LibraryRowActions.Play, () => Speaker((s, ct) => s.InsertLibraryUriAndPlayNowAsync(track.Uri, track.Title, track.Artist, ct), _status));
-        var wipe = RemoteUi.Button(LibraryRowActions.Wipe, () => WipeSpeakerAsync(track), danger: true);
-        var row = ActionRow(play, wipe);
-        return RemoteUi.Card(
-            new Label { Text = track.Title, TextColor = Swatches.Ink, FontAttributes = FontAttributes.Bold },
-            RemoteUi.Muted($"{track.Artist} · {track.Album}"),
-            row);
-    }
+    View SpeakerCard(SonosLibraryTrack track) =>
+        SongRow(
+            track.Title,
+            Line(track.Artist, track.Album),
+            () => Speaker((s, ct) => s.InsertLibraryUriAndPlayNowAsync(track.Uri, track.Title, track.Artist, ct), _status),
+            () => MoreAsync(track.Title, tags: false, wipe: () => WipeSpeakerAsync(track)));
 
     async Task WipeSpeakerAsync(SonosLibraryTrack track)
     {
@@ -111,17 +107,89 @@ sealed class LibraryPage : RemotePage
         await Speaker((s, ct) => s.PlayLibraryUriAsync(track.Uri, track.Title, track.Artist, ct), _status);
     }
 
-    View TrackCard(RemoteTrackDto track)
+    View TrackCard(RemoteTrackDto track) =>
+        SongRow(
+            track.Title ?? track.Path,
+            Line(track.Artist, track.Album),
+            () => Act(ct => AppServices.Client.PlayTrackAsync(track.Path, track.Title, track.Artist, ct), _status),
+            () => MoreAsync(track.Title ?? track.Path, tags: true, wipe: () => WipeAsync(track), toggle: () => ToggleAsync(track)));
+
+    async Task MoreAsync(string title, bool tags, Func<Task> wipe, Func<Task>? toggle = null)
     {
-        var play = RemoteUi.Button(LibraryRowActions.Play, () => Act(ct => AppServices.Client.PlayTrackAsync(track.Path, track.Title, track.Artist, ct), _status));
-        var wipe = RemoteUi.Button(LibraryRowActions.Wipe, () => WipeAsync(track), danger: true);
-        var row = ActionRow(play, wipe);
-        return RemoteUi.Card(
-            new Label { Text = track.Title ?? track.Path, TextColor = Swatches.Ink, FontAttributes = FontAttributes.Bold },
-            RemoteUi.Muted($"{track.Artist} · {track.Album}"),
-            RemoteUi.Muted(string.IsNullOrWhiteSpace(track.Tags) ? track.Genre ?? "" : track.Tags!),
-            row,
-            RemoteUi.Button("Toggle a tag…", () => ToggleAsync(track)));
+        var pick = await Dialogs.Sheet(this, title, "Cancel", null, [.. LibraryRowActions.Sheet(tags)]);
+        if (pick == LibraryRowActions.Wipe)
+            await wipe();
+        else if (pick == LibraryRowActions.ToggleTag && toggle is not null)
+            await toggle();
+    }
+
+    static string Line(params string?[] parts) =>
+        string.Join(" · ", parts.Where(static p => !string.IsNullOrWhiteSpace(p)));
+
+    static View SongRow(string? title, string detail, Func<Task> play, Func<Task> more)
+    {
+        var name = new Label
+        {
+            Text = title ?? "",
+            TextColor = Swatches.Ink,
+            FontAttributes = FontAttributes.Bold,
+            FontSize = 15,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            MaxLines = 1,
+            VerticalTextAlignment = TextAlignment.End,
+        };
+        var sub = new Label
+        {
+            Text = detail,
+            TextColor = Swatches.Muted,
+            FontSize = 12,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            MaxLines = 1,
+            VerticalTextAlignment = TextAlignment.Start,
+            IsVisible = !string.IsNullOrWhiteSpace(detail),
+        };
+        var text = new VerticalStackLayout
+        {
+            Spacing = 0,
+            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Fill,
+            Children = { name, sub },
+        };
+        var dots = new Label
+        {
+            Text = "···",
+            TextColor = Swatches.Muted,
+            FontSize = 18,
+            WidthRequest = 36,
+            HeightRequest = LibraryRowActions.RowHeight,
+            HorizontalTextAlignment = TextAlignment.Center,
+            VerticalTextAlignment = TextAlignment.Center,
+        };
+        var row = new Grid
+        {
+            HeightRequest = LibraryRowActions.RowHeight,
+            MinimumHeightRequest = LibraryRowActions.RowHeight,
+            MaximumHeightRequest = LibraryRowActions.RowHeight,
+            Padding = new Thickness(12, 0, 4, 0),
+            ColumnSpacing = 0,
+            BackgroundColor = Swatches.Card,
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
+            },
+        };
+        Grid.SetColumn(text, 0);
+        Grid.SetColumn(dots, 1);
+        row.Add(text);
+        row.Add(dots);
+        SemanticProperties.SetDescription(row, $"Play {title}");
+        SemanticProperties.SetDescription(dots, "More");
+        // Tap and long-press cannot share an Android view: Activate consumes the
+        // down event, so hold never fires. The row tap plays; ··· opens the sheet.
+        RemoteInput.MakeActivable(row, play);
+        RemoteInput.MakeActivable(dots, more);
+        return row;
     }
 
     async Task WipeAsync(RemoteTrackDto track)
@@ -149,17 +217,4 @@ sealed class LibraryPage : RemotePage
         await SearchAsync(reset: true);
     }
 
-    static Grid ActionRow(View play, View wipe)
-    {
-        var row = new Grid
-        {
-            ColumnSpacing = 6,
-            ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition() },
-        };
-        Grid.SetColumn(play, 0);
-        Grid.SetColumn(wipe, 1);
-        row.Add(play);
-        row.Add(wipe);
-        return row;
-    }
 }

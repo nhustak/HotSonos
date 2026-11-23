@@ -1,8 +1,8 @@
 namespace HotSonos.Remote.Protocol;
 
 /// <summary>
-/// Buttons drawn on each Library song row.
-/// Queue is not one of them. The white Queue control was removed from the row.
+/// Library song row. Tap plays the song. Wipe queue and tags are on a
+/// long-press sheet, not buttons on the row. Queue is not an action.
 /// </summary>
 public static class LibraryRowActions
 {
@@ -10,7 +10,16 @@ public static class LibraryRowActions
 
     public const string Wipe = "Wipe queue";
 
-    public static IReadOnlyList<string> Buttons { get; } = [Play, Wipe];
+    public const string ToggleTag = "Toggle a tag…";
+
+    /// <summary>Visible height of one song row, in device-independent pixels.</summary>
+    public const double RowHeight = 48;
+
+    /// <summary>No action buttons are drawn on the row.</summary>
+    public static IReadOnlyList<string> Buttons { get; } = [];
+
+    public static IReadOnlyList<string> Sheet(bool tags) =>
+        tags ? [Wipe, ToggleTag] : [Wipe];
 }
 
 /// <summary>
