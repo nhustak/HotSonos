@@ -1435,6 +1435,7 @@ public sealed class SonosManager
 
     /// <summary>Last house logical % we set (Level all / ±). Avoids a full volume poll on every hotkey.</summary>
     private int? _houseLogicalVolume;
+    DateTime _lastLogicalWriteUtc;
 
     /// <summary>Cached house logical percent. Null until a volume write or a remote sample.</summary>
     public int? HouseLogicalVolume => _houseLogicalVolume;
@@ -1475,6 +1476,7 @@ public sealed class SonosManager
         var s = _settings().EnsureShape();
         var zones = ZonesForVolumeControl();
         _houseLogicalVolume = newLogical;
+        _lastLogicalWriteUtc = DateTime.UtcNow;
         if (zones.Count == 0)
             return newLogical;
 
@@ -1723,6 +1725,7 @@ public sealed class SonosManager
                     try
                     {
                         VolumesChanged?.Invoke();
+                        await RefreshHouseLogicalFromSpeakersAsync().ConfigureAwait(false);
                     }
                     catch
                     {
@@ -1744,6 +1747,30 @@ public sealed class SonosManager
     }
 
     /// <summary>
+    /// When volume changes come from a speaker (or the phone talking to Sonos
+    /// directly), refresh the cached house logical percent. Skip shortly after
+    /// our own write, which already set the cache.
+    /// </summary>
+    async Task RefreshHouseLogicalFromSpeakersAsync()
+    {
+        if (DateTime.UtcNow - _lastLogicalWriteUtc < TimeSpan.FromSeconds(1))
+            return;
+        try
+        {
+            var zones = ZonesForVolumeControl();
+            if (zones.Count == 0)
+                return;
+            var sampled = await SampleHouseLogicalFastAsync(zones, _settings().EnsureShape(), CancellationToken.None).ConfigureAwait(false);
+            if (sampled is int vol)
+                _houseLogicalVolume = vol;
+        }
+        catch
+        {
+            // Keep the last cache if a probe fails.
+        }
+    }
+
+    /// <summary>
     /// Sets EVERY visible speaker (across all groups) to the absolute volume
     /// (plus any per-room offset) and unmutes them. Returns the count of speakers
     /// that accepted the change (fixed-volume members are not counted).
@@ -1752,6 +1779,7 @@ public sealed class SonosManager
     {
         percent = Math.Clamp(percent, 0, 100);
         _houseLogicalVolume = percent;
+        _lastLogicalWriteUtc = DateTime.UtcNow;
         var s = _settings().EnsureShape();
         var byIp = _zones
             .GroupBy(z => z.IpAddress, StringComparer.OrdinalIgnoreCase)
@@ -2038,6 +2066,7 @@ public sealed class SonosManager
     {
         percent = Math.Clamp(percent, 0, 100);
         _houseLogicalVolume = percent;
+        _lastLogicalWriteUtc = DateTime.UtcNow;
         var s = _settings().EnsureShape();
         await Task.WhenAll(ips.Select(ip =>
         {

@@ -47,18 +47,7 @@ static class RemoteCommands
             }
             else
             {
-                var speakers = AppServices.Link.Speakers;
-                var zone = speakers.ActiveZone;
-                if (zone is null)
-                    return;
-                var ips = speakers.Zones
-                    .Where(z => string.Equals(z.CoordinatorUuid, zone.CoordinatorUuid, StringComparison.OrdinalIgnoreCase))
-                    .Select(z => z.IpAddress)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-                if (ips.Count == 0)
-                    ips.Add(zone.IpAddress);
-                await Task.WhenAll(ips.Select(ip => SetSpeakerVolumeSoft(speakers, ip, percent))).ConfigureAwait(false);
+                await AppServices.Link.Speakers.SetHouseVolumeAsync(percent, CancellationToken.None).ConfigureAwait(false);
             }
         }
         catch (Exception)
@@ -67,18 +56,6 @@ static class RemoteCommands
         }
 
         MainThread.BeginInvokeOnMainThread(() => PhoneVolumeKeys.Refresh?.Invoke());
-    }
-
-    static async Task SetSpeakerVolumeSoft(SonosDirect speakers, string ip, int percent)
-    {
-        try
-        {
-            await speakers.SetVolumeAsync(ip, percent, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception)
-        {
-            // A bonded unit that rejects SetVolume does not block the rest of the group.
-        }
     }
 
     static Task SendPlayPause(MediaTransportRequest request)
