@@ -2966,6 +2966,31 @@ public sealed class SonosManager
     }
 
     /// <summary>
+    /// Append one library track at the end of the queue without seeking,
+    /// playing, or clearing the queue.
+    /// </summary>
+    public async Task<string> QueueLibraryTrackAppendAsync(
+        string pathOrUri,
+        string? title = null,
+        string? artist = null,
+        CancellationToken ct = default)
+    {
+        if (_controller is null)
+            throw new InvalidOperationException("No Sonos room is selected. Open HotSonos and pick a room.");
+
+        if (!SonosPath.TryToCifsUri(pathOrUri, out var cifs))
+            throw new ArgumentException("Path must be a UNC path or x-file-cifs URI under the Sonos library.", nameof(pathOrUri));
+
+        var index = await _controller.InsertLibraryUriAppendAsync(cifs, title, artist, ct).ConfigureAwait(false);
+        RememberServed([cifs]);
+        var label = string.IsNullOrWhiteSpace(title)
+            ? System.IO.Path.GetFileName(pathOrUri)
+            : (string.IsNullOrWhiteSpace(artist) ? title : $"{title} — {artist}");
+        AppLog.Info($"Queue append index={index} mode={_playbackMode}: {cifs}");
+        return $"Added {label}";
+    }
+
+    /// <summary>
     /// Insert one library track after the current song and play it now without
     /// clearing the queue (keeps shuffle / remaining order intact). Does not
     /// switch playback mode away from shuffle/folder so auto top-up continues.

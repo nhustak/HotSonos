@@ -182,6 +182,9 @@ public sealed class RemoteClient : IDisposable
     public Task<RemoteCall<RemoteCommandResponse>> QueueTrackAsync(string path, string? title, string? artist, CancellationToken ct) =>
         PostAsync("api/tracks/queue", new RemoteTrackBody { Path = path, Title = title, Artist = artist }, RemoteJsonContext.Default.RemoteTrackBody, Slow, ct);
 
+    public Task<RemoteCall<RemoteCommandResponse>> AppendTrackAsync(string path, string? title, string? artist, CancellationToken ct) =>
+        PostAsync("api/tracks/queue/append", new RemoteTrackBody { Path = path, Title = title, Artist = artist }, RemoteJsonContext.Default.RemoteTrackBody, Slow, ct);
+
     public Task<RemoteCall<RemoteCommandResponse>> ReplaceTrackAsync(string path, string? title, string? artist, CancellationToken ct) =>
         PostAsync("api/tracks/replace", new RemoteTrackBody { Path = path, Title = title, Artist = artist }, RemoteJsonContext.Default.RemoteTrackBody, Slow, ct);
 

@@ -20,6 +20,7 @@ public partial class AppShell : ContentPage
     readonly Dictionary<string, RemotePage> _cached = new();
     int _index = -1;
     int _toast;
+    TaskCompletionSource<string>? _menu;
 
     public AppShell()
     {
@@ -171,6 +172,127 @@ public partial class AppShell : ContentPage
         await Task.Delay(2200).ConfigureAwait(true);
         if (mine == _toast)
             Toast.IsVisible = false;
+    }
+
+    public Task<string> ShowMenu(string title, IReadOnlyList<string> actions)
+    {
+        _menu?.TrySetResult("");
+        var tcs = new TaskCompletionSource<string>();
+        _menu = tcs;
+        BuildMenu(title ?? "", actions);
+        MenuHost.IsVisible = true;
+        MenuHost.ZIndex = 20;
+        return tcs.Task;
+    }
+
+    void BuildMenu(string title, IReadOnlyList<string> actions)
+    {
+        var dim = new BoxView { Color = Color.FromArgb("#99000000") };
+        RemoteInput.MakeActivable(dim, () =>
+        {
+            CloseMenu("");
+            return Task.CompletedTask;
+        });
+
+        var handle = new BoxView
+        {
+            WidthRequest = 36,
+            HeightRequest = 4,
+            CornerRadius = 2,
+            Color = Swatches.Muted,
+            Opacity = 0.45,
+            HorizontalOptions = LayoutOptions.Center,
+            Margin = new Thickness(0, 4, 0, 12),
+        };
+        var heading = new Label
+        {
+            Text = title,
+            TextColor = Swatches.Ink,
+            FontAttributes = FontAttributes.Bold,
+            FontSize = 16,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            MaxLines = 1,
+            Margin = new Thickness(16, 0, 16, 8),
+        };
+        var items = new VerticalStackLayout { Spacing = 0 };
+        foreach (var action in actions)
+        {
+            var label = action;
+            var row = new Grid
+            {
+                HeightRequest = 48,
+                Padding = new Thickness(16, 0),
+            };
+            row.Add(new Label
+            {
+                Text = label,
+                TextColor = Swatches.Ink,
+                FontSize = 16,
+                VerticalTextAlignment = TextAlignment.Center,
+            });
+            RemoteInput.MakeActivable(row, () =>
+            {
+                CloseMenu(label);
+                return Task.CompletedTask;
+            });
+            items.Add(row);
+        }
+
+        var cancel = new Label
+        {
+            Text = "Cancel",
+            TextColor = Swatches.Muted,
+            FontSize = 16,
+            Padding = new Thickness(16, 14),
+            HorizontalTextAlignment = TextAlignment.Center,
+        };
+        RemoteInput.MakeActivable(cancel, () =>
+        {
+            CloseMenu("");
+            return Task.CompletedTask;
+        });
+
+        var card = new Border
+        {
+            BackgroundColor = Swatches.Card,
+            StrokeThickness = 0,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle
+            {
+                CornerRadius = new CornerRadius(16, 16, 0, 0),
+            },
+            Padding = new Thickness(0, 8, 0, 20),
+            VerticalOptions = LayoutOptions.End,
+            HorizontalOptions = LayoutOptions.Fill,
+            Content = new VerticalStackLayout
+            {
+                Spacing = 0,
+                Children = { handle, heading, items, cancel },
+            },
+        };
+
+        MenuHost.Children.Clear();
+        MenuHost.Add(dim);
+        MenuHost.Add(card);
+    }
+
+    void CloseMenu(string pick)
+    {
+        MenuHost.IsVisible = false;
+        MenuHost.Children.Clear();
+        var pending = _menu;
+        _menu = null;
+        pending?.TrySetResult(pick);
+    }
+
+    protected override bool OnBackButtonPressed()
+    {
+        if (MenuHost.IsVisible)
+        {
+            CloseMenu("");
+            return true;
+        }
+
+        return base.OnBackButtonPressed();
     }
 
     public void Select(int index)

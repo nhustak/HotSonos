@@ -6,6 +6,7 @@
              Title="HotSonos">
     <Grid RowDefinitions="*,Auto">
         <ContentView x:Name="Body" />
+        <Grid x:Name="MenuHost" Grid.RowSpan="2" IsVisible="False" ZIndex="20" />
         <Border x:Name="Toast" Grid.RowSpan="2" IsVisible="False"
                 BackgroundColor="#1C2430" StrokeThickness="0"
                 Padding="14,10" Margin="16,8"

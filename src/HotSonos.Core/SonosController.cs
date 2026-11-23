@@ -952,11 +952,28 @@ public sealed class SonosController
     }
 
     /// <summary>
+    /// Where a library song is inserted. Play now and Play next share
+    /// <see cref="LibraryQueuePlace.AfterCurrent"/>; Add to queue appends.
+    /// </summary>
+    public enum LibraryQueuePlace
+    {
+        AfterCurrent,
+        Append,
+    }
+
+    /// <summary>
     /// Queue index to insert after the current track (1-based). Idle/empty → 1 (top).
     /// Never 0 — Sonos treats DesiredFirstTrackNumberEnqueued=0 as append at end.
     /// </summary>
     public static int QueueInsertIndexAfterCurrent(int currentTrackNumber) =>
         currentTrackNumber > 0 ? currentTrackNumber + 1 : 1;
+
+    /// <summary>
+    /// DesiredFirstTrackNumberEnqueued for a library queue action.
+    /// Append is always 0. Play now and Play next use the slot after the current track.
+    /// </summary>
+    public static int QueueInsertIndex(LibraryQueuePlace place, int currentTrackNumber) =>
+        place == LibraryQueuePlace.Append ? 0 : QueueInsertIndexAfterCurrent(currentTrackNumber);
 
     /// <summary>
     /// Insert one local-library URI as the next queue item (after the current track,
@@ -981,10 +998,48 @@ public sealed class SonosController
         var current = 0;
         if (int.TryParse(SonosSoapClient.ReadValue(pos, "Track"), out var cur) && cur > 0)
             current = cur;
-        var insertAt = QueueInsertIndexAfterCurrent(current);
+        var insertAt = QueueInsertIndex(LibraryQueuePlace.AfterCurrent, current);
 
         // Explicit index — EnqueueAsNext=1 while STOPPED appends at the end, then
         // a Play-now seek jumps there and skips the rest of the shuffle.
+        var enqueue = await _soap.InvokeAsync(
+            CoordinatorIp, SonosService.AvTransport, "AddURIToQueue",
+            [
+                new("InstanceID", "0"),
+                new("EnqueuedURI", uri),
+                new("EnqueuedURIMetaData", meta),
+                new("DesiredFirstTrackNumberEnqueued", insertAt.ToString()),
+                new("EnqueueAsNext", "0"),
+            ],
+            ct).ConfigureAwait(false);
+
+        if (int.TryParse(SonosSoapClient.ReadValue(enqueue, "FirstTrackNumberEnqueued"), out var first)
+            && first > 0)
+        {
+            return first;
+        }
+
+        return insertAt;
+    }
+
+    /// <summary>
+    /// Append one local-library URI at the end of the queue. Does not seek, play,
+    /// or clear the queue. Returns the 1-based queue index of the inserted track,
+    /// or 0 if Sonos did not report one.
+    /// </summary>
+    public async Task<int> InsertLibraryUriAppendAsync(
+        string cifsUri,
+        string? title = null,
+        string? artist = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(cifsUri))
+            throw new ArgumentException("Track URI is required.", nameof(cifsUri));
+
+        var uri = cifsUri.Trim();
+        var meta = BuildMinimalTrackMetadata(uri, title, artist);
+        var insertAt = QueueInsertIndex(LibraryQueuePlace.Append, currentTrackNumber: 0);
+
         var enqueue = await _soap.InvokeAsync(
             CoordinatorIp, SonosService.AvTransport, "AddURIToQueue",
             [

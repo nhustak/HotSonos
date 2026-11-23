@@ -477,6 +477,14 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
             return await RunToast(async () => await state.QueueNowAsync(body.Path.Trim(), body.Title, body.Artist, ctx.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
         });
 
+        app.MapPost("/api/tracks/queue/append", async (HttpContext ctx) =>
+        {
+            var body = await ReadJson<RemoteTrackBody>(ctx).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(body?.Path) || state.QueueAppendAsync is null)
+                return BadJson();
+            return await RunToast(async () => await state.QueueAppendAsync(body.Path.Trim(), body.Title, body.Artist, ctx.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+        });
+
         app.MapGet("/api/sources", () =>
         {
             var settings = state.Settings().EnsureShape();

@@ -49,6 +49,9 @@ public sealed class HotSonosMcpState
     /// <summary>Queue a library track up-next without seeking or playing.</summary>
     public Func<string, string?, string?, CancellationToken, Task<string>>? QueueNowAsync { get; set; }
 
+    /// <summary>Append a library track at the end of the queue without seeking or playing.</summary>
+    public Func<string, string?, string?, CancellationToken, Task<string>>? QueueAppendAsync { get; set; }
+
     /// <summary>Wipe the queue and play only this track. Rare — not "play X".</summary>
     public Func<string, string?, string?, CancellationToken, Task<string>>? ReplaceQueueWithTrackAsync { get; set; }
 
