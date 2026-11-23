@@ -6317,7 +6317,7 @@ public partial class MainWindow : Window
             return;
         if (!_boxToConfig.TryGetValue(ControlLayoutHotkeyBox, out var cfg))
             return;
-        cfg.Control = cfg.Alt = cfg.Shift = cfg.Windows = false;
+        cfg.Control = cfg.Alt = cfg.Shift = cfg.Win = false;
         cfg.Key = "";
         ControlLayoutHotkeyBox.Text = "";
     }
