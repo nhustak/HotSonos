@@ -43,15 +43,14 @@ sealed class PlayerPage : RemotePage
     readonly GlyphView _playGlyph = new() { Kind = "play" };
     readonly Border _playButton;
 
-    bool _drag;
+    readonly VolumeSliderCommit _seek = new(20);
+    CancellationTokenSource? _flushWait;
+    bool _painting;
     bool _local;
     bool _sending;
     DateTime _acceptStatusAfter;
     bool _holding;
     int _repeat;
-    int _shown = 20;
-    int _target = 20;
-    int _applied = 20;
     int _pcStep = PhoneVolume.SpeakerStep;
     readonly Grid _column;
 #if ANDROID
@@ -102,24 +101,24 @@ sealed class PlayerPage : RemotePage
         _volume.VerticalOptions = LayoutOptions.Center;
 
         RemoteInput.OmitFromTabOrder(_slider);
-        _slider.DragStarted += (_, _) => _drag = true;
+        _slider.DragStarted += (_, _) => _seek.BeginDrag();
         _slider.ValueChanged += (_, e) =>
         {
-            if (!_drag)
+            if (_painting)
                 return;
-            var percent = Math.Clamp((int)Math.Round(e.NewValue), 0, 100);
-            _shown = percent;
-            _volume.Text = PhoneVolume.Label(percent, _muted);
+            // Update the target on every move, including 0. DragCompleted is not
+            // reliable on Android when the thumb hits the end of the track.
+            var delay = _seek.PointerValue(e.NewValue);
+            _volume.Text = PhoneVolume.Label(_seek.Shown, _muted);
+            Pin();
+            ScheduleFlush(delay);
         };
         _slider.DragCompleted += (_, _) =>
         {
-            _drag = false;
-            var percent = Math.Clamp((int)_slider.Value, 0, 100);
+            var delay = _seek.EndDrag(_slider.Value);
             Pin();
-            _target = percent;
-            Paint(percent);
-            if (!_sending)
-                _ = FlushAsync();
+            Paint(_seek.Shown);
+            ScheduleFlush(delay);
         };
 
         var previous = IconButton("prev", 78, "Previous", () => Transport(
@@ -159,7 +158,7 @@ sealed class PlayerPage : RemotePage
         Put(stepRow, _mute.View, 3);
 
         var level = RemoteUi.Button("Level all", () => Transport(
-            (_, ct) => AppServices.Link.Speakers.SetHouseVolumeAsync((int)_slider.Value, ct),
+            (_, ct) => AppServices.Link.Speakers.SetHouseVolumeAsync(PhoneVolume.FromSlider(_slider.Value), ct),
             ct => AppServices.Client.LevelAsync(ct),
             done: "Levels set"));
         var quickTag = RemoteUi.Button("Quick tag", QuickTagAsync);
@@ -250,6 +249,12 @@ sealed class PlayerPage : RemotePage
     {
         _holding = false;
         _repeat++;
+        if (_seek.Dragging || _seek.NeedsFlush)
+        {
+            _seek.AbortDrag();
+            Pin();
+            ScheduleFlush(0);
+        }
         PhoneVolumeKeys.Note = null;
         PhoneVolumeKeys.Refresh = null;
     }
@@ -433,18 +438,17 @@ sealed class PlayerPage : RemotePage
             _known = true;
             if (DateTime.UtcNow >= _muteHoldUntil)
                 _muted = status.Muted == true;
-            var keepLocal = _local && volume != _shown && DateTime.UtcNow < _acceptStatusAfter;
-            if (_drag || keepLocal)
-                Paint(_shown);
+            var keepLocal = _local && volume != _seek.Shown && DateTime.UtcNow < _acceptStatusAfter;
+            if (_seek.Dragging || keepLocal)
+                Paint(_seek.Shown);
             else
             {
                 _local = false;
-                _applied = volume;
-                _target = volume;
+                _seek.Sync(volume);
                 Paint(volume);
             }
         }
-        else if (!_known && !_local && !_drag)
+        else if (!_known && !_local && !_seek.Dragging)
             _ = SampleAsync();
 
         if (np?.ArtRevision != _artRevision)
@@ -514,14 +518,13 @@ sealed class PlayerPage : RemotePage
     void Nudge(int direction)
     {
         var step = PhoneVolume.ConfiguredStep(AppServices.Link.DrivePc, _pcStep);
-        var next = PhoneVolume.Next(_shown, direction, step);
-        if (next == _shown)
+        var next = PhoneVolume.Next(_seek.Shown, direction, step);
+        if (next == _seek.Shown)
             return;
         Pin();
-        _target = next;
+        _seek.Aim(next);
         Paint(next);
-        if (!_sending)
-            _ = FlushAsync();
+        ScheduleFlush(0);
     }
 
     void Pin()
@@ -534,23 +537,31 @@ sealed class PlayerPage : RemotePage
 
     void NoteHardware(int direction)
     {
-        if (!_known || _drag || _local)
+        if (!_known || _seek.Dragging || _local)
             return;
         var step = PhoneVolume.ConfiguredStep(AppServices.Link.DrivePc, _pcStep);
-        var next = PhoneVolume.Next(_shown, direction, step);
-        _target = next;
-        _applied = next;
+        var next = PhoneVolume.Next(_seek.Shown, direction, step);
+        _seek.Sync(next);
         Paint(next);
     }
 
     void Paint(int volume)
     {
         _known = true;
-        _shown = Math.Clamp(volume, 0, 100);
-        _volume.Text = PhoneVolume.Label(_shown, _muted);
+        _seek.Show(volume);
+        _volume.Text = PhoneVolume.Label(_seek.Shown, _muted);
         _mute.SetMuted(_muted);
-        if (!_drag)
-            _slider.Value = _shown;
+        if (_seek.Dragging)
+            return;
+        _painting = true;
+        try
+        {
+            _slider.Value = _seek.Shown;
+        }
+        finally
+        {
+            _painting = false;
+        }
     }
 
     async Task SampleAsync(bool force = false)
@@ -572,15 +583,14 @@ sealed class PlayerPage : RemotePage
                 var forceThis = _forceSample;
                 _forceSample = false;
                 var (volume, muted) = await ReadHouseVolumeAsync().ConfigureAwait(true);
-                if (volume is not int n || _drag)
+                if (volume is not int n || _seek.Dragging)
                     continue;
                 if (_local && !forceThis)
                     continue;
                 if (DateTime.UtcNow >= _muteHoldUntil)
                     _muted = muted == true;
                 _local = false;
-                _applied = n;
-                _target = n;
+                _seek.Sync(n);
                 Paint(n);
             }
             while (_sampleAgain);
@@ -616,14 +626,45 @@ sealed class PlayerPage : RemotePage
             _pcStep = PhoneVolume.Normalize(settings.VolumeStep);
     }
 
+    void ScheduleFlush(int delayMs)
+    {
+        _flushWait?.Cancel();
+        _flushWait?.Dispose();
+        var cts = new CancellationTokenSource();
+        _flushWait = cts;
+        if (delayMs <= 0)
+        {
+            if (!_sending)
+                _ = FlushAsync();
+            return;
+        }
+
+        _ = WaitFlushAsync(delayMs, cts.Token);
+    }
+
+    async Task WaitFlushAsync(int delayMs, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(delayMs, ct).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (!ct.IsCancellationRequested && !_sending)
+            _ = FlushAsync();
+    }
+
     async Task FlushAsync()
     {
         _sending = true;
         try
         {
-            while (_applied != _target)
+            while (_seek.NeedsFlush)
             {
-                var percent = _target;
+                var percent = _seek.Target;
                 var ok = AppServices.Link.DrivePc
                     ? await Act(ct => AppServices.Client.SetVolumeAsync(percent, ct)).ConfigureAwait(true)
                     : await SendSpeakerVolumeAsync(percent).ConfigureAwait(true);
@@ -632,17 +673,19 @@ sealed class PlayerPage : RemotePage
                     _holding = false;
                     _repeat++;
                     _local = false;
-                    _target = _applied;
-                    Paint(_applied);
+                    _seek.Revert();
+                    Paint(_seek.Shown);
                     break;
                 }
 
-                _applied = percent;
+                _seek.AppliedOk(percent);
             }
         }
         finally
         {
             _sending = false;
+            if (_seek.NeedsFlush)
+                _ = FlushAsync();
         }
     }
 
@@ -671,17 +714,17 @@ sealed class PlayerPage : RemotePage
         {
             _muted = !previous;
             _muteHoldUntil = DateTime.UtcNow.AddSeconds(3);
-            Paint(_shown);
+            Paint(_seek.Shown);
             var ok = await CommitMuteAsync().ConfigureAwait(true);
             if (!ok)
             {
                 _muted = previous;
                 _muteHoldUntil = DateTime.MinValue;
-                Paint(_shown);
+                Paint(_seek.Shown);
                 return;
             }
 
-            Paint(_shown);
+            Paint(_seek.Shown);
             _ = SampleAsync(force: true);
         }
         finally

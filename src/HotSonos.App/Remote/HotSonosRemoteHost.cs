@@ -401,6 +401,7 @@ public sealed partial class HotSonosRemoteHost : IAsyncDisposable
                 return BadJson();
             var percent = Math.Clamp(body.Percent, 0, 100);
             var volume = await hooks.SetLogicalVolumeAsync(percent, ctx.RequestAborted).ConfigureAwait(false);
+            AppLog.Info($"Remote volume {percent}% → {volume}%");
             return Results.Json(new RemoteCommandResponse(true, $"Volume {volume}%", null), RemoteApi.Json);
         });
 
