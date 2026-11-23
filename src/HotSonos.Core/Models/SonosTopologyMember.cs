@@ -23,6 +23,12 @@ public sealed record SonosTopologyMember
     public string? ChannelRole { get; init; }
 
     /// <summary>
+    /// Full ChannelMapSet or HTSatChanMapSet string that includes this member,
+    /// e.g. RINCON_A:LF,LF;RINCON_B:RF,RF;RINCON_C:SW. Null if unbonded.
+    /// </summary>
+    public string? ChannelMapSet { get; init; }
+
+    /// <summary>
     /// True when Sonos reports Ethernet link up (<c>EthLink=1</c>).
     /// Null if the topology XML did not include the attribute.
     /// </summary>

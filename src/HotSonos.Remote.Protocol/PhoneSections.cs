@@ -34,6 +34,7 @@ public static class PhoneSections
     public const string RoomsVolume = "rooms.volume";
     public const string SpeakersRoom = "speakers.room";
     public const string SpeakersDaily = "speakers.daily";
+    public const string SpeakersLayouts = "speakers.layouts";
     public const string LibraryFolders = "library.folders";
     public const string LibraryMaster = "library.master";
     public const string LibraryTags = "library.tags";
@@ -48,7 +49,7 @@ public static class PhoneSections
 
     public static bool DefaultOpen(string key) => key switch
     {
-        NowSlots or PlayTags or RoomsHouse or RoomsGroups or RoomsVolume or SpeakersDaily
+        NowSlots or PlayTags or RoomsHouse or RoomsGroups or RoomsVolume or SpeakersDaily or SpeakersLayouts
             or LibraryFolders or PlaybackShuffle or Wake or ReportFilters => true,
         _ => false,
     };

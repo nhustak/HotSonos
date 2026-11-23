@@ -12,6 +12,7 @@ using HotSonos.App.Mcp;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
 using HotSonos.App.Windows;
+using HotSonos.Core;
 using HotSonos.Core.Models;
 using HotSonos.Remote.Protocol;
 
@@ -270,6 +271,7 @@ public partial class App : System.Windows.Application
 
         _hotkeys = new GlobalHotkeyManager();
         _hotkeys.HotkeyPressed += OnHotkeyPressed;
+        _hotkeys.LayoutHotkeyPressed += OnLayoutHotkeyPressed;
 
         _wake = new WakeMusicService(
             _sonos,
@@ -351,6 +353,7 @@ public partial class App : System.Windows.Application
             GetLastNowPlaying = () => _lastNowPlaying,
             RefreshDevicesAsync = McpRefreshDevicesAsync,
             ExecuteActionAsync = McpExecuteActionAsync,
+            ApplyLayoutAsync = ApplySpeakerLayoutResultAsync,
             SetActiveRoom = OnTraySetRoom,
             PersistSettings = () =>
             {
@@ -428,6 +431,8 @@ public partial class App : System.Windows.Application
                     _mainWindow?.ShowPhonePairing();
                 },
                 RegroupDaily: () => _ = RegroupDailyFromTrayAsync(),
+                ApplyLayout: id => _ = ApplyLayoutFromTrayAsync(id),
+                CycleLayouts: () => _ = ExecuteActionAsync(HotsonosAction.CycleLayouts),
                 Exit: ExitApplication));
 
         var failures = ApplyBindings();
@@ -973,6 +978,7 @@ public partial class App : System.Windows.Application
         _tray.UpdateFavorites(_settings.FavoriteSlots
             .Select(s => s.IsSet ? s.DisplayLabel(_settings) : null)
             .ToList());
+        _tray.UpdateLayouts(_settings.EnsureShape().SpeakerLayouts.Select(l => (l.Id, l.Name)).ToList());
         _tray.UpdateOfflineSpeakers(_sonos.OfflineSpeakers);
     }
 
@@ -1056,6 +1062,79 @@ public partial class App : System.Windows.Application
             _actionGate.Release();
         }
     }
+
+    private async void OnLayoutHotkeyPressed(string layoutId)
+    {
+        if (!_startupReady)
+        {
+            AppLog.Info($"Layout hotkey {layoutId} ignored — still starting");
+            return;
+        }
+
+        _ = ApplyLayoutFromTrayAsync(layoutId);
+    }
+
+    private async Task ApplyLayoutFromTrayAsync(string layoutId)
+    {
+        var toast = await ApplySpeakerLayoutByIdAsync(layoutId);
+        await Dispatcher.InvokeAsync(() =>
+        {
+            UpdateTrayDynamic();
+            _mainWindow?.RefreshLiveGrouping();
+            if (!string.IsNullOrWhiteSpace(toast))
+            {
+                EnsureFlyout().ShowAction(toast);
+                _tray?.ShowBalloon("HotSonos", toast);
+            }
+        });
+    }
+
+    /// <summary>Look up a saved layout and apply it. Takes the action gate.</summary>
+    public async Task<string> ApplySpeakerLayoutByIdAsync(string? id, CancellationToken ct = default) =>
+        FormatLayoutToast(await ApplySpeakerLayoutResultAsync(id, ct).ConfigureAwait(false));
+
+    public async Task<BondApplyResult> ApplySpeakerLayoutResultAsync(string? id, CancellationToken ct = default)
+    {
+        var layout = _settings.EnsureShape().SpeakerLayouts
+            .FirstOrDefault(l => string.Equals(l.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (layout is null)
+            return new BondApplyResult(false, "No such layout.", FailedStep: "Validate");
+        if (!await _actionGate.WaitAsync(0, ct).ConfigureAwait(false))
+            return new BondApplyResult(false, "Busy — try again in a moment.", FailedStep: "Busy");
+        try
+        {
+            return await ApplySpeakerLayoutUnlockedAsync(layout, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
+    private async Task<string> CycleLayoutsUnlockedAsync(CancellationToken ct = default)
+    {
+        var snap = _sonos.LastTopology;
+        if (snap is null)
+            return "No topology yet.";
+        var next = SonosBonding.NextLayout(_settings.EnsureShape().SpeakerLayouts, snap);
+        if (next is null)
+            return "No layouts saved.";
+        return FormatLayoutToast(await ApplySpeakerLayoutUnlockedAsync(next, ct).ConfigureAwait(false));
+    }
+
+    private async Task<BondApplyResult> ApplySpeakerLayoutUnlockedAsync(SpeakerLayout layout, CancellationToken ct)
+    {
+        AppLog.Info($"Apply layout {layout.Name}");
+        var result = await _sonos.ApplySpeakerLayoutAsync(layout, ct).ConfigureAwait(false);
+        var toast = FormatLayoutToast(result);
+        AppLog.Info($"Apply layout {layout.Name} → {toast}");
+        return result with { Message = result.Ok ? result.Message : toast };
+    }
+
+    internal static string FormatLayoutToast(BondApplyResult result) =>
+        result.Ok || string.IsNullOrWhiteSpace(result.FailedStep)
+            ? result.Message
+            : $"{result.FailedStep}: {result.Message}";
 
     private async void OnHotkeyPressed(HotsonosAction action)
     {
@@ -1297,6 +1376,18 @@ public partial class App : System.Windows.Application
             try
             {
                 AppLog.Info($"Action {action}");
+                if (action == HotsonosAction.CycleLayouts)
+                {
+                    var cycleToast = await CycleLayoutsUnlockedAsync();
+                    if (!string.IsNullOrEmpty(cycleToast))
+                    {
+                        AppLog.Info($"Action {action} → {cycleToast}");
+                        EnsureFlyout().ShowAction(cycleToast);
+                        _tray?.ShowBalloon("HotSonos", cycleToast);
+                    }
+                    return cycleToast;
+                }
+
                 var toast = await _sonos.ExecuteAsync(action, _settings, library: _library);
                 if (!string.IsNullOrEmpty(toast))
                 {
@@ -1761,7 +1852,8 @@ public partial class App : System.Windows.Application
                 mcpEndpoint: () => _mcpHost?.Endpoint ?? _mcpState?.Endpoint,
                 remoteEndpoint: () => _remoteHost?.IsRunning == true ? _remoteHost.Endpoint : null,
                 onRemoteSettingsChanged: () => _ = EnsureRemoteBoundAsync(),
-                showQuickTag: () => _ = ShowQuickTagOverlayAsync());
+                showQuickTag: () => _ = ShowQuickTagOverlayAsync(),
+                applyLayout: id => ApplySpeakerLayoutByIdAsync(id));
             _mainWindow.HideToTrayRequested += (_, _) => _mainWindow?.Hide();
             _mainWindow.Closing += OnMainWindowClosing;
         }

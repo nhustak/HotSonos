@@ -1130,6 +1130,56 @@ public sealed class SonosManager
     }
 
     /// <summary>
+    /// Apply a saved speaker bond layout (Sub / stereo pair). Does not change
+    /// volume or playback. Success only if the re-read maps match the layout.
+    /// </summary>
+    public async Task<BondApplyResult> ApplySpeakerLayoutAsync(SpeakerLayout layout, CancellationToken ct = default)
+    {
+        var bonding = new SonosBonding(
+            async (ip, action, map, token) =>
+            {
+                AppLog.Info($"Layout {action} at {ip}: {map}");
+                await _soap.InvokeAsync(
+                    ip,
+                    SonosService.DeviceProperties,
+                    action,
+                    new Dictionary<string, string> { ["ChannelMapSet"] = map },
+                    token).ConfigureAwait(false);
+            },
+            async token =>
+            {
+                await RefreshTopologyForBondingAsync(token).ConfigureAwait(false);
+                return _lastTopology ?? throw new InvalidOperationException("No topology yet.");
+            });
+        return await bonding.ApplyAsync(layout, ct).ConfigureAwait(false);
+    }
+
+    private async Task RefreshTopologyForBondingAsync(CancellationToken ct)
+    {
+        var ips = new List<string>();
+        if (_lastTopology is not null)
+            ips.AddRange(_lastTopology.Members.Select(m => m.IpAddress).Where(ip => !string.IsNullOrWhiteSpace(ip)));
+        ips.AddRange(_zones.Select(z => z.IpAddress).Where(ip => !string.IsNullOrWhiteSpace(ip)));
+        ips.AddRange(Groups.Select(g => g.CoordinatorIp).Where(ip => !string.IsNullOrWhiteSpace(ip)));
+
+        foreach (var ip in ips.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var snap = await _discovery.GetTopologySnapshotFromAsync(ip, ct).ConfigureAwait(false);
+                if (snap.Members.Count == 0)
+                    continue;
+                _lastTopology = await EnrichTopologyProductNamesAsync(snap, ct).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"Layout topology probe failed at {ip}", ex);
+            }
+        }
+    }
+
+    /// <summary>
     /// Fills <see cref="SonosTopologyMember.ProductName"/> from device description
     /// (cached by UUID). Used for topology type icons (Port / Era / One / Sub).
     /// </summary>

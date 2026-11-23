@@ -1,4 +1,5 @@
 using HotSonos.Core;
+using HotSonos.Core.Models;
 using HotSonos.Remote.Protocol;
 
 namespace HotSonos.Remote.Views;
@@ -15,6 +16,12 @@ sealed class SpeakersSettingsPage : RemotePage
     readonly VerticalStackLayout _speakerPick = new() { Spacing = 6, IsVisible = false };
     readonly VerticalStackLayout _presets = new();
     readonly Entry _presetName = RemoteUi.Field("Group name");
+    readonly VerticalStackLayout _layoutButtons = new() { Spacing = 6 };
+    readonly Entry _layoutName = RemoteUi.Field("Layout name");
+    readonly VerticalStackLayout _layoutRooms = new() { Spacing = 6 };
+    readonly Picker _layoutSub = new() { Title = "Sub in", TextColor = Swatches.Ink, BackgroundColor = Swatches.Card };
+    readonly Label _layoutHint = RemoteUi.Muted("");
+    string? _selectedLayoutId;
     readonly Picker _rooms = new() { Title = "Choose a room", TextColor = Swatches.Ink, BackgroundColor = Swatches.Card };
     readonly Label _roomEmpty = RemoteUi.Muted("Waiting for rooms.");
     bool _suppressRoom;
@@ -84,17 +91,29 @@ sealed class SpeakersSettingsPage : RemotePage
                     },
                     _presets,
                     _speakerPick)),
-            RemoteUi.Button("Refresh", LoadDailyAsync));
+            RemoteUi.Section(
+                PhoneSections.SpeakersLayouts,
+                "Speaker layouts",
+                RemoteUi.Card(
+                    RemoteUi.Muted("Moves the Sub and rebuilds the pair. Linked to the PC: layouts live there. Talking to the speakers directly: saved on this phone."),
+                    _layoutHint,
+                    _layoutButtons,
+                    _layoutName,
+                    _layoutRooms,
+                    _layoutSub,
+                    RemoteUi.Button("Save from current", SaveLayoutAsync),
+                    RemoteUi.Button("Delete layout", DeleteLayoutAsync, danger: true))),
+            RemoteUi.Button("Refresh", LoadAllAsync));
     }
 
     protected override void OnShown()
     {
         base.OnShown();
         ApplyRooms(AppServices.Live.Status);
-        _ = LoadDailyAsync();
+        _ = LoadAllAsync();
     }
 
-    protected override void OnLinkChanged() => _ = LoadDailyAsync();
+    protected override void OnLinkChanged() => _ = LoadAllAsync();
 
     protected override void OnStatus(RemoteStatusResponse? status)
     {
@@ -259,4 +278,250 @@ sealed class SpeakersSettingsPage : RemotePage
             : "No speakers answered yet.";
         _suppressRoom = false;
     }
+
+    async Task LoadAllAsync()
+    {
+        await LoadDailyAsync();
+        await LoadLayoutsAsync();
+    }
+
+    async Task LoadLayoutsAsync()
+    {
+        _layoutButtons.Clear();
+        _selectedLayoutId = null;
+        if (AppServices.Link.DrivePc)
+        {
+            _layoutHint.Text = "Layouts saved on the PC.";
+            if (!AppServices.Link.OnPc)
+            {
+                _layoutHint.Text = AppServices.Link.Problem ?? "Cannot reach the PC.";
+                return;
+            }
+
+            var call = await AppServices.Client.GetLayoutsAsync(CancellationToken.None);
+            var pcLayouts = call.Value;
+            if (pcLayouts is null)
+            {
+                _layoutHint.Text = PairingPrompt.Miss(call, "Could not load layouts.");
+                return;
+            }
+
+            RenderLayoutButtons(pcLayouts.Layouts.Select(l => (l.Id, l.Name, l.SubRoom)).ToList());
+            FillLayoutRoomChecks(pcLayouts.KnownRooms, []);
+            return;
+        }
+
+        _layoutHint.Text = "Saved on this phone.";
+        try
+        {
+            await AppServices.Link.Speakers.RefreshTopologyAsync();
+        }
+        catch
+        {
+            // Discover if we have no topology yet.
+            try { await AppServices.Link.Speakers.DiscoverAsync(); }
+            catch { /* status below */ }
+            try { await AppServices.Link.Speakers.RefreshTopologyAsync(); }
+            catch (Exception ex)
+            {
+                _layoutHint.Text = ex.Message;
+            }
+        }
+
+        var localLayouts = PhoneLayoutStore.Load();
+        RenderLayoutButtons(localLayouts.Select(l => (l.Id, l.Name, SonosBonding.SubHostRoom(l))).ToList());
+        var rooms = AppServices.Link.Speakers.LastTopology?.Members
+            .Where(m => !m.Invisible)
+            .Select(m => m.RoomName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+        FillLayoutRoomChecks(rooms, []);
+    }
+
+    void RenderLayoutButtons(IReadOnlyList<(string Id, string Name, string? SubRoom)> layouts)
+    {
+        _layoutButtons.Clear();
+        if (layouts.Count == 0)
+        {
+            _layoutButtons.Add(RemoteUi.Muted("None saved yet."));
+            return;
+        }
+
+        foreach (var layout in layouts)
+        {
+            var id = layout.Id;
+            var label = string.IsNullOrWhiteSpace(layout.SubRoom)
+                ? layout.Name
+                : $"{layout.Name} · Sub in {layout.SubRoom}";
+            _layoutButtons.Add(RemoteUi.Button(label, () => ApplyLayoutAsync(id)));
+        }
+    }
+
+    void FillLayoutRoomChecks(IReadOnlyList<string> rooms, IReadOnlyCollection<string> selected)
+    {
+        _layoutRooms.Clear();
+        var pick = new List<string>();
+        foreach (var room in rooms)
+        {
+            var box = new CheckBox { IsChecked = selected.Contains(room) || (selected.Count == 0 && rooms.Count <= 2), Color = Swatches.Accent };
+            var label = new Label { Text = room, TextColor = Swatches.Ink, VerticalOptions = LayoutOptions.Center };
+            _layoutRooms.Add(new HorizontalStackLayout { Spacing = 8, Children = { box, label } });
+            pick.Add(room);
+        }
+
+        _layoutSub.Items.Clear();
+        foreach (var room in pick)
+            _layoutSub.Items.Add(room);
+        if (pick.Count > 0 && _layoutSub.SelectedIndex < 0)
+            _layoutSub.SelectedIndex = 0;
+    }
+
+    List<string> CheckedLayoutRooms()
+    {
+        var rooms = new List<string>();
+        foreach (var row in _layoutRooms.Children.OfType<HorizontalStackLayout>())
+        {
+            var box = row.Children.OfType<CheckBox>().FirstOrDefault();
+            var label = row.Children.OfType<Label>().FirstOrDefault();
+            if (box?.IsChecked == true && !string.IsNullOrWhiteSpace(label?.Text))
+                rooms.Add(label.Text);
+        }
+
+        return rooms;
+    }
+
+    async Task ApplyLayoutAsync(string id)
+    {
+        _selectedLayoutId = id;
+        if (AppServices.Link.DrivePc)
+        {
+            await Act(ct => AppServices.Client.ApplyLayoutAsync(id, ct), _status, announce: true);
+            return;
+        }
+
+        var layout = PhoneLayoutStore.Load().FirstOrDefault(l => l.Id == id);
+        if (layout is null)
+        {
+            _status.Text = "No such layout.";
+            return;
+        }
+
+        _status.Text = "Applying…";
+        try
+        {
+            var result = await AppServices.Link.Speakers.ApplyLayoutAsync(layout);
+            var toast = result.Ok
+                ? result.Message
+                : string.IsNullOrWhiteSpace(result.FailedStep)
+                    ? result.Message
+                    : $"{result.FailedStep}: {result.Message}";
+            _status.Text = toast;
+            Toasts.Show(toast);
+        }
+        catch (Exception ex)
+        {
+            _status.Text = ex.Message;
+            Toasts.Show(ex.Message);
+        }
+    }
+
+    async Task SaveLayoutAsync()
+    {
+        var name = _layoutName.Text?.Trim();
+        var rooms = CheckedLayoutRooms();
+        if (string.IsNullOrWhiteSpace(name) || rooms.Count == 0)
+        {
+            _status.Text = "Name the layout and check the rooms it affects.";
+            return;
+        }
+
+        var subIn = _layoutSub.SelectedIndex >= 0 && _layoutSub.SelectedIndex < _layoutSub.Items.Count
+            ? _layoutSub.Items[_layoutSub.SelectedIndex]?.ToString()
+            : null;
+
+        if (AppServices.Link.DrivePc)
+        {
+            await Act(ct => AppServices.Client.SaveLayoutAsync(new RemoteLayoutSaveBody
+            {
+                Name = name,
+                Rooms = rooms,
+                SubInRoom = subIn,
+            }, ct), _status, announce: true);
+            await LoadLayoutsAsync();
+            return;
+        }
+
+        var snap = AppServices.Link.Speakers.LastTopology;
+        if (snap is null || snap.Members.Count == 0)
+        {
+            try { snap = await AppServices.Link.Speakers.RefreshTopologyAsync(); }
+            catch (Exception ex)
+            {
+                _status.Text = ex.Message;
+                return;
+            }
+        }
+
+        if (snap is null || snap.Members.Count == 0)
+        {
+            _status.Text = "No topology yet.";
+            return;
+        }
+
+        try
+        {
+            var layout = SonosBonding.Snapshot(snap, name, rooms);
+            if (layout.Rooms.Count == 0)
+            {
+                _status.Text = "None of the checked rooms are on the network.";
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(subIn)
+                && layout.Rooms.Any(r => string.Equals(r.RoomName, subIn, StringComparison.OrdinalIgnoreCase))
+                && layout.Rooms.Any(r => !string.IsNullOrWhiteSpace(r.SubUuid) || ChannelMaps.HasSub(r.ChannelMapSet))
+                && !string.Equals(SonosBonding.SubHostRoom(layout), subIn, StringComparison.OrdinalIgnoreCase))
+            {
+                layout = SonosBonding.RelocateSub(layout, subIn);
+                layout.Name = name;
+            }
+
+            var list = PhoneLayoutStore.Load();
+            list.Add(layout);
+            PhoneLayoutStore.Save(list);
+            _layoutName.Text = "";
+            _status.Text = $"Saved {layout.Name}.";
+            await LoadLayoutsAsync();
+        }
+        catch (Exception ex)
+        {
+            _status.Text = ex.Message;
+        }
+    }
+
+    async Task DeleteLayoutAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedLayoutId))
+        {
+            _status.Text = "Apply a layout first, or pick one after saving.";
+            return;
+        }
+
+        if (!await Confirm("Delete layout", "Delete this speaker layout?"))
+            return;
+
+        if (AppServices.Link.DrivePc)
+        {
+            await Act(ct => AppServices.Client.DeleteLayoutAsync(_selectedLayoutId, ct), _status, announce: true);
+            await LoadLayoutsAsync();
+            return;
+        }
+
+        var list = PhoneLayoutStore.Load().Where(l => l.Id != _selectedLayoutId).ToList();
+        PhoneLayoutStore.Save(list);
+        _status.Text = "Deleted.";
+        await LoadLayoutsAsync();
+    }
+
 }

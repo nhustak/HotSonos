@@ -81,6 +81,23 @@ public sealed class SonosDirect
     public SonosTopologySnapshot? LastTopology { get; private set; }
 
     /// <summary>Full ZoneGroupState from a speaker we already found, including Subs and other bonded units.</summary>
+    /// <summary>Apply a saved bond layout against the speakers this phone can see.</summary>
+    public async Task<BondApplyResult> ApplyLayoutAsync(SpeakerLayout layout, CancellationToken ct = default)
+    {
+        var bonding = new SonosBonding(
+            async (ip, action, map, token) =>
+            {
+                await _soap.InvokeAsync(
+                    ip,
+                    SonosService.DeviceProperties,
+                    action,
+                    new Dictionary<string, string> { ["ChannelMapSet"] = map },
+                    token).ConfigureAwait(false);
+            },
+            async token => await RefreshTopologyAsync(token).ConfigureAwait(false));
+        return await bonding.ApplyAsync(layout, ct).ConfigureAwait(false);
+    }
+
     public async Task<SonosTopologySnapshot> RefreshTopologyAsync(CancellationToken ct = default)
     {
         var ip = ActiveZone?.IpAddress ?? Zones.FirstOrDefault()?.IpAddress;

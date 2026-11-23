@@ -295,3 +295,23 @@ public sealed class RemoteLibraryRootBody
     public string? Path { get; set; }
     public bool InDaily { get; set; }
 }
+
+public sealed record RemoteLayoutsResponse(
+    bool Ok,
+    IReadOnlyList<RemoteLayoutDto> Layouts,
+    IReadOnlyList<string> KnownRooms,
+    string? Error);
+
+public sealed record RemoteLayoutDto(
+    string Id,
+    string Name,
+    IReadOnlyList<string> Rooms,
+    string? SubRoom);
+
+public sealed class RemoteLayoutSaveBody
+{
+    public string? Id { get; set; }
+    public string? Name { get; set; }
+    public List<string>? Rooms { get; set; }
+    public string? SubInRoom { get; set; }
+}

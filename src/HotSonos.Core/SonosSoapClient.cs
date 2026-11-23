@@ -56,8 +56,11 @@ public sealed class SonosSoapClient
         if (!response.IsSuccessStatusCode)
         {
             // UPnP errors come back as 500 with a SOAP Fault; surface the body to help debugging.
+            var errorCode = SonosSoapException.TryParseErrorCode(text);
+            var codeBit = errorCode is int code ? $" UPnP {code}." : "";
             throw new SonosSoapException(
-                $"SOAP {action} on {service.Type} at {ip} failed: HTTP {(int)response.StatusCode}. Body: {Truncate(text)}");
+                $"SOAP {action} on {service.Type} at {ip} failed: HTTP {(int)response.StatusCode}.{codeBit} Body: {Truncate(text)}",
+                errorCode);
         }
 
         return XDocument.Parse(text);
@@ -76,4 +79,23 @@ public sealed class SonosSoapClient
 }
 
 /// <summary>Thrown when a Sonos SOAP call returns a non-success status.</summary>
-public sealed class SonosSoapException(string message) : Exception(message);
+public sealed class SonosSoapException(string message, int? errorCode = null) : Exception(message)
+{
+    public int? ErrorCode { get; } = errorCode;
+
+    public static int? TryParseErrorCode(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return null;
+        const string open = "<errorCode>";
+        const string close = "</errorCode>";
+        var start = body.IndexOf(open, StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+            return null;
+        start += open.Length;
+        var end = body.IndexOf(close, start, StringComparison.OrdinalIgnoreCase);
+        if (end < 0)
+            return null;
+        return int.TryParse(body[start..end].Trim(), out var code) ? code : null;
+    }
+}

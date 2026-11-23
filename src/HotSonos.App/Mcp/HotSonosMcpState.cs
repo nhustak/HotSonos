@@ -1,6 +1,7 @@
 using HotSonos.App.Library;
 using HotSonos.App.Models;
 using HotSonos.App.Services;
+using HotSonos.Core;
 using HotSonos.Core.Models;
 
 namespace HotSonos.App.Mcp;
@@ -22,6 +23,10 @@ public sealed class HotSonosMcpState
     /// <summary>Runs a tray/hotkey action through the app gate (flyout + exclusive shuffle).</summary>
     public Func<HotsonosAction, Task<string?>> ExecuteActionAsync { get; set; } =
         _ => Task.FromResult<string?>("Action not wired.");
+
+    /// <summary>Apply a saved speaker layout by id (bond/unbond). Takes the action gate.</summary>
+    public Func<string, CancellationToken, Task<BondApplyResult>> ApplyLayoutAsync { get; set; } =
+        (_, _) => Task.FromResult(new BondApplyResult(false, "Layout apply not wired.", FailedStep: "Apply"));
 
     /// <summary>Set active room by coordinator room name (same as tray room picker).</summary>
     public Action<string>? SetActiveRoom { get; set; }
