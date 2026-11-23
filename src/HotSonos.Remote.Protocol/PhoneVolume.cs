@@ -15,6 +15,10 @@ public static class PhoneVolume
 
     public static int Normalize(int? step) => step is >= 1 and <= 50 ? step.Value : SpeakerStep;
 
+    /// <summary>Slider thumb to 0–100. Uses round, not truncate, so 0.6 becomes 1 and 0 stays 0.</summary>
+    public static int FromSlider(double value) => Math.Clamp((int)Math.Round(value, MidpointRounding.AwayFromZero), 0, 100);
+
+
     /// <summary>Next house percent. <paramref name="direction"/> is negative for down and positive for up.</summary>
     public static int Next(int current, int direction, int step)
     {
