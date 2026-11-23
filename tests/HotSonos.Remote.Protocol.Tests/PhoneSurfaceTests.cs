@@ -81,8 +81,38 @@ public class PhoneRowActionTests
     [Fact]
     public void LibraryRows_DoNotIncludeAQueueButton()
     {
-        Assert.Equal(["Play", "Wipe queue"], LibraryRowActions.Buttons);
-        Assert.DoesNotContain(LibraryRowActions.Buttons, static text => text is "Q" or "Queue");
+        Assert.Empty(LibraryRowActions.Buttons);
+        Assert.Equal(["Wipe queue"], LibraryRowActions.Sheet(tags: false));
+        Assert.Equal(["Wipe queue", "Toggle a tag…"], LibraryRowActions.Sheet(tags: true));
+        Assert.DoesNotContain("Queue", LibraryRowActions.Sheet(tags: true));
+        Assert.DoesNotContain("Play", LibraryRowActions.Sheet(tags: true));
+    }
+
+    [Fact]
+    public void LibrarySongRows_AreCompactWithNoOnRowButtons()
+    {
+        Assert.Equal(48, LibraryRowActions.RowHeight);
+        var source = Source("src", "HotSonos.Remote", "Views", "LibraryPage.cs");
+        Assert.Contains("LibraryRowActions.RowHeight", source, StringComparison.Ordinal);
+        Assert.Contains("MakeActivable", source, StringComparison.Ordinal);
+        Assert.Contains("···", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("RemoteUi.Button(LibraryRowActions.Play", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("RemoteUi.Button(LibraryRowActions.Wipe", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("""RemoteUi.Button("Toggle a tag""", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("static Grid ActionRow", source, StringComparison.Ordinal);
+    }
+
+    static string Source(params string[] parts)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (var i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            var candidate = Path.Combine(new[] { dir.FullName }.Concat(parts).ToArray());
+            if (File.Exists(candidate))
+                return File.ReadAllText(candidate);
+        }
+
+        throw new InvalidOperationException("Could not find " + Path.Combine(parts));
     }
 
     [Fact]
