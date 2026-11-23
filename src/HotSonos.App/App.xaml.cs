@@ -382,6 +382,7 @@ public partial class App : System.Windows.Application
             },
             PlayLibraryTrackAsync = McpPlayLibraryTrackAsync,
             QueueNowAsync = McpQueueNowAsync,
+            QueueAppendAsync = McpQueueAppendAsync,
             ReplaceQueueWithTrackAsync = McpReplaceQueueWithTrackAsync,
             ResumeShuffleAsync = McpResumeShuffleAsync,
             PlayTaggedTracksAsync = McpPlayTaggedTracksAsync,
@@ -683,6 +684,24 @@ public partial class App : System.Windows.Application
         {
             AppLog.Info($"MCP queue_track: {path}");
             var toast = await _sonos.QueueLibraryTrackNextAsync(path, title, artist, ct).ConfigureAwait(false);
+            if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
+                await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
+            return toast;
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
+    private async Task<string> McpQueueAppendAsync(
+        string path, string? title, string? artist, CancellationToken ct)
+    {
+        await _actionGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            AppLog.Info($"Remote queue append: {path}");
+            var toast = await _sonos.QueueLibraryTrackAppendAsync(path, title, artist, ct).ConfigureAwait(false);
             if (_settings.ShowFlyoutOnAction || _settings.FlyoutPinned)
                 await Dispatcher.InvokeAsync(() => EnsureFlyout().ShowAction(toast));
             return toast;

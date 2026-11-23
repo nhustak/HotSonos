@@ -1,3 +1,4 @@
+using HotSonos.Remote;
 namespace HotSonos.Remote.Views;
 
 /// <summary>
@@ -34,4 +35,16 @@ static class Dialogs
 
     public static Task<string> Sheet(Page caller, string title, string cancel, string? destruction, params string[] buttons) =>
         Host(caller).DisplayActionSheet(title, cancel, destruction, buttons);
+
+    /// <summary>
+    /// Themed bottom menu on the shell. Falls back to an action sheet if the
+    /// shell is not showing (connect screen, or a page with no window).
+    /// Empty string means the user cancelled.
+    /// </summary>
+    public static Task<string> Menu(Page caller, string title, params string[] buttons)
+    {
+        if (Application.Current?.MainPage is AppShell shell)
+            return shell.ShowMenu(title, buttons);
+        return Sheet(caller, title, "Cancel", null, buttons);
+    }
 }

@@ -7,7 +7,7 @@ sealed class LibraryPage : RemotePage
 {
     readonly Entry _query = RemoteUi.Field("Search title, artist, T:, A:, TG:, F:");
     readonly Label _status = RemoteUi.Muted("");
-    readonly VerticalStackLayout _results = new() { Spacing = 2 };
+    readonly VerticalStackLayout _results = new() { Spacing = 0 };
     int _offset;
 
     public LibraryPage()
@@ -97,31 +97,59 @@ sealed class LibraryPage : RemotePage
         SongRow(
             track.Title,
             Line(track.Artist, track.Album),
-            () => Speaker((s, ct) => s.InsertLibraryUriAndPlayNowAsync(track.Uri, track.Title, track.Artist, ct), _status),
-            () => MoreAsync(track.Title, tags: false, wipe: () => WipeSpeakerAsync(track)));
+            () => PlaySpeakerAsync(track, LibraryRowActions.PlayNow),
+            () => MoreSpeakerAsync(track));
 
-    async Task WipeSpeakerAsync(SonosLibraryTrack track)
+    async Task MoreSpeakerAsync(SonosLibraryTrack track)
     {
-        if (!await Confirm("Wipe the queue", $"Replace the queue with {track.Title}? The current queue is cleared."))
-            return;
-        await Speaker((s, ct) => s.PlayLibraryUriAsync(track.Uri, track.Title, track.Artist, ct), _status);
+        var pick = await Dialogs.Menu(this, track.Title, [.. LibraryRowActions.Sheet(tags: false)]);
+        if (pick is LibraryRowActions.PlayNow or LibraryRowActions.PlayNext or LibraryRowActions.AddToQueue)
+            await PlaySpeakerAsync(track, pick);
     }
+
+    Task PlaySpeakerAsync(SonosLibraryTrack track, string action) => action switch
+    {
+        LibraryRowActions.PlayNow => Speaker(
+            (s, ct) => s.InsertLibraryUriAndPlayNowAsync(track.Uri, track.Title, track.Artist, ct),
+            _status, done: $"Playing {track.Title}."),
+        LibraryRowActions.PlayNext => Speaker(
+            (s, ct) => s.InsertLibraryUriNextAsync(track.Uri, track.Title, track.Artist, ct),
+            _status, done: $"Next: {track.Title}."),
+        LibraryRowActions.AddToQueue => Speaker(
+            (s, ct) => s.InsertLibraryUriAppendAsync(track.Uri, track.Title, track.Artist, ct),
+            _status, done: $"Added {track.Title}."),
+        _ => Task.CompletedTask,
+    };
 
     View TrackCard(RemoteTrackDto track) =>
         SongRow(
             track.Title ?? track.Path,
             Line(track.Artist, track.Album),
-            () => Act(ct => AppServices.Client.PlayTrackAsync(track.Path, track.Title, track.Artist, ct), _status),
-            () => MoreAsync(track.Title ?? track.Path, tags: true, wipe: () => WipeAsync(track), toggle: () => ToggleAsync(track)));
+            () => PlayPcAsync(track, LibraryRowActions.PlayNow),
+            () => MoreTrackAsync(track));
 
-    async Task MoreAsync(string title, bool tags, Func<Task> wipe, Func<Task>? toggle = null)
+    async Task MoreTrackAsync(RemoteTrackDto track)
     {
-        var pick = await Dialogs.Sheet(this, title, "Cancel", null, [.. LibraryRowActions.Sheet(tags)]);
-        if (pick == LibraryRowActions.Wipe)
-            await wipe();
-        else if (pick == LibraryRowActions.ToggleTag && toggle is not null)
-            await toggle();
+        var pick = await Dialogs.Menu(this, track.Title ?? track.Path, [.. LibraryRowActions.Sheet(tags: true)]);
+        if (pick == LibraryRowActions.ToggleTag)
+            await ToggleAsync(track);
+        else if (pick is LibraryRowActions.PlayNow or LibraryRowActions.PlayNext or LibraryRowActions.AddToQueue)
+            await PlayPcAsync(track, pick);
     }
+
+    Task PlayPcAsync(RemoteTrackDto track, string action) => action switch
+    {
+        LibraryRowActions.PlayNow => Act(
+            ct => AppServices.Client.PlayTrackAsync(track.Path, track.Title, track.Artist, ct),
+            _status, done: $"Playing {track.Title ?? track.Path}."),
+        LibraryRowActions.PlayNext => Act(
+            ct => AppServices.Client.QueueTrackAsync(track.Path, track.Title, track.Artist, ct),
+            _status, done: $"Next: {track.Title ?? track.Path}."),
+        LibraryRowActions.AddToQueue => Act(
+            ct => AppServices.Client.AppendTrackAsync(track.Path, track.Title, track.Artist, ct),
+            _status, done: $"Added {track.Title ?? track.Path}."),
+        _ => Task.CompletedTask,
+    };
 
     static string Line(params string?[] parts) =>
         string.Join(" · ", parts.Where(static p => !string.IsNullOrWhiteSpace(p)));
@@ -155,12 +183,12 @@ sealed class LibraryPage : RemotePage
             HorizontalOptions = LayoutOptions.Fill,
             Children = { name, sub },
         };
-        var dots = new Label
+        var menu = new Label
         {
-            Text = "···",
+            Text = "⋮",
             TextColor = Swatches.Muted,
-            FontSize = 18,
-            WidthRequest = 36,
+            FontSize = 22,
+            WidthRequest = 40,
             HeightRequest = LibraryRowActions.RowHeight,
             HorizontalTextAlignment = TextAlignment.Center,
             VerticalTextAlignment = TextAlignment.Center,
@@ -170,9 +198,8 @@ sealed class LibraryPage : RemotePage
             HeightRequest = LibraryRowActions.RowHeight,
             MinimumHeightRequest = LibraryRowActions.RowHeight,
             MaximumHeightRequest = LibraryRowActions.RowHeight,
-            Padding = new Thickness(12, 0, 4, 0),
+            Padding = new Thickness(12, 0, 0, 0),
             ColumnSpacing = 0,
-            BackgroundColor = Swatches.Card,
             ColumnDefinitions =
             {
                 new ColumnDefinition(GridLength.Star),
@@ -180,23 +207,28 @@ sealed class LibraryPage : RemotePage
             },
         };
         Grid.SetColumn(text, 0);
-        Grid.SetColumn(dots, 1);
+        Grid.SetColumn(menu, 1);
         row.Add(text);
-        row.Add(dots);
-        SemanticProperties.SetDescription(row, $"Play {title}");
-        SemanticProperties.SetDescription(dots, "More");
-        // Tap and long-press cannot share an Android view: Activate consumes the
-        // down event, so hold never fires. The row tap plays; ··· opens the sheet.
+        row.Add(menu);
+        SemanticProperties.SetDescription(row, $"Play now: {title}");
+        SemanticProperties.SetDescription(menu, "More");
         RemoteInput.MakeActivable(row, play);
-        RemoteInput.MakeActivable(dots, more);
-        return row;
-    }
+        RemoteInput.MakeActivable(menu, more);
 
-    async Task WipeAsync(RemoteTrackDto track)
-    {
-        if (!await Confirm("Wipe the queue", $"Replace the queue with {track.Title ?? "this track"}? The current queue is cleared."))
-            return;
-        await Act(ct => AppServices.Client.ReplaceTrackAsync(track.Path, track.Title, track.Artist, ct), _status);
+        return new VerticalStackLayout
+        {
+            Spacing = 0,
+            Children =
+            {
+                row,
+                new BoxView
+                {
+                    HeightRequest = 1,
+                    Color = Color.FromArgb("#2A3340"),
+                    HorizontalOptions = LayoutOptions.Fill,
+                },
+            },
+        };
     }
 
     async Task ToggleAsync(RemoteTrackDto track)
@@ -209,7 +241,7 @@ sealed class LibraryPage : RemotePage
             return;
         }
 
-        var pick = await Dialogs.Sheet(this, "Toggle tag", "Cancel", null, labels);
+        var pick = await Dialogs.Menu(this, "Toggle tag", labels);
         var tag = tags.Value?.Tags.FirstOrDefault(t => t.Label == pick);
         if (tag is null)
             return;

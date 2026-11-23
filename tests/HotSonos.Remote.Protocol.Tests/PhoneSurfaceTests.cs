@@ -82,10 +82,10 @@ public class PhoneRowActionTests
     public void LibraryRows_DoNotIncludeAQueueButton()
     {
         Assert.Empty(LibraryRowActions.Buttons);
-        Assert.Equal(["Wipe queue"], LibraryRowActions.Sheet(tags: false));
-        Assert.Equal(["Wipe queue", "Toggle a tag…"], LibraryRowActions.Sheet(tags: true));
+        Assert.Equal(["Play now", "Play next", "Add to queue"], LibraryRowActions.Sheet(tags: false));
+        Assert.Equal(["Play now", "Play next", "Add to queue", "Toggle tag"], LibraryRowActions.Sheet(tags: true));
+        Assert.DoesNotContain("Wipe queue", LibraryRowActions.Sheet(tags: true));
         Assert.DoesNotContain("Queue", LibraryRowActions.Sheet(tags: true));
-        Assert.DoesNotContain("Play", LibraryRowActions.Sheet(tags: true));
     }
 
     [Fact]
@@ -95,10 +95,12 @@ public class PhoneRowActionTests
         var source = Source("src", "HotSonos.Remote", "Views", "LibraryPage.cs");
         Assert.Contains("LibraryRowActions.RowHeight", source, StringComparison.Ordinal);
         Assert.Contains("MakeActivable", source, StringComparison.Ordinal);
-        Assert.Contains("···", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("RemoteUi.Button(LibraryRowActions.Play", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("RemoteUi.Button(LibraryRowActions.Wipe", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("""RemoteUi.Button("Toggle a tag""", source, StringComparison.Ordinal);
+        Assert.Contains("⋮", source, StringComparison.Ordinal);
+        Assert.Contains("Dialogs.Menu", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Wipe queue", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("PlayLibraryUriAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReplaceTrackAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DisplayActionSheet", source, StringComparison.Ordinal);
         Assert.DoesNotContain("static Grid ActionRow", source, StringComparison.Ordinal);
     }
 

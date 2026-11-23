@@ -1,16 +1,19 @@
 namespace HotSonos.Remote.Protocol;
 
 /// <summary>
-/// Library song row. Tap plays the song. Wipe queue and tags are on a
-/// long-press sheet, not buttons on the row. Queue is not an action.
+/// Library song row. Tap is Play now (insert after the current track and
+/// skip to it; the rest of the queue stays). The ⋮ menu has Play now,
+/// Play next, Add to queue, and Toggle tag when talking to the PC.
 /// </summary>
 public static class LibraryRowActions
 {
-    public const string Play = "Play";
+    public const string PlayNow = "Play now";
 
-    public const string Wipe = "Wipe queue";
+    public const string PlayNext = "Play next";
 
-    public const string ToggleTag = "Toggle a tag…";
+    public const string AddToQueue = "Add to queue";
+
+    public const string ToggleTag = "Toggle tag";
 
     /// <summary>Visible height of one song row, in device-independent pixels.</summary>
     public const double RowHeight = 48;
@@ -19,7 +22,9 @@ public static class LibraryRowActions
     public static IReadOnlyList<string> Buttons { get; } = [];
 
     public static IReadOnlyList<string> Sheet(bool tags) =>
-        tags ? [Wipe, ToggleTag] : [Wipe];
+        tags
+            ? [PlayNow, PlayNext, AddToQueue, ToggleTag]
+            : [PlayNow, PlayNext, AddToQueue];
 }
 
 /// <summary>
