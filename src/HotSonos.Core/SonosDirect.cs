@@ -115,8 +115,58 @@ public sealed class SonosDirect
     public async Task SetHouseVolumeAsync(int percent, CancellationToken ct = default)
     {
         percent = Math.Clamp(percent, 0, 100);
-        var ips = Zones.Select(z => z.IpAddress).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        await Task.WhenAll(ips.Select(ip => SetVolumeSoft(ip, percent, ct))).ConfigureAwait(false);
+        var zone = ActiveZone ?? throw new InvalidOperationException("No speakers yet.");
+        var referenceIp = zone.CoordinatorIpAddress;
+        var current = await ReadVolumeAsync(referenceIp, zone.RoomName, ct).ConfigureAwait(false);
+        if (!current.Reachable)
+            throw new SonosSoapException("The " + zone.RoomName + " speaker did not answer a volume request.");
+
+        var from = current.Volume;
+        using (var foreground = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            foreground.CancelAfter(TimeSpan.FromMilliseconds(450));
+            await SetVolumeAsync(referenceIp, percent, foreground.Token).ConfigureAwait(false);
+        }
+
+        // Other rooms follow the same delta so offsets stay intact. Fixed-volume
+        // members (Sub, Port) reject SetVolume; those failures are ignored.
+        foreach (var ip in GroupMemberIps(zone).Where(ip =>
+                     !string.Equals(ip, referenceIp, StringComparison.OrdinalIgnoreCase)))
+        {
+            var memberIp = ip;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var background = new CancellationTokenSource(TimeSpan.FromMilliseconds(800));
+                    var member = await ReadVolumeAsync(memberIp, "", background.Token).ConfigureAwait(false);
+                    if (!member.Reachable)
+                        return;
+                    var next = HouseVolumeShift.Follow(member.Volume, from, percent);
+                    if (next == member.Volume)
+                        return;
+                    await SetVolumeAsync(memberIp, next, background.Token).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // Offline / fixed-volume / timeout — the reference room already changed.
+                }
+            });
+        }
+    }
+
+    /// <summary>Unique player IPs in the active room's group (else every known room).</summary>
+    IEnumerable<string> GroupMemberIps(SonosZone zone)
+    {
+        var members = Zones
+            .Where(z => string.Equals(z.CoordinatorUuid, zone.CoordinatorUuid, StringComparison.OrdinalIgnoreCase))
+            .Select(z => z.IpAddress)
+            .Where(ip => !string.IsNullOrWhiteSpace(ip))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (members.Count == 0 && !string.IsNullOrWhiteSpace(zone.IpAddress))
+            members.Add(zone.IpAddress);
+        return members;
     }
 
     public async Task StepHouseVolumeAsync(int delta, CancellationToken ct = default)
