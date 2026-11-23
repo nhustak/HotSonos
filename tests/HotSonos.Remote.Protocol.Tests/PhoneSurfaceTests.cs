@@ -104,6 +104,17 @@ public class PhoneRowActionTests
         Assert.DoesNotContain("static Grid ActionRow", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ShellMenu_UsesThePageColumnAndFortyEightDipRows()
+    {
+        var source = Source("src", "HotSonos.Remote", "AppShell.xaml.cs");
+        Assert.Contains("RemoteWindow.PageColumnMax", source, StringComparison.Ordinal);
+        Assert.Contains("FitMenuCard", source, StringComparison.Ordinal);
+        Assert.Contains("HeightRequest = 48", source, StringComparison.Ordinal);
+        Assert.Contains(@"MenuRow(""Cancel""", source, StringComparison.Ordinal);
+        Assert.Contains("LayoutOptions.Center", source, StringComparison.Ordinal);
+    }
+
     static string Source(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

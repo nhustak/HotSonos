@@ -21,6 +21,8 @@ public partial class AppShell : ContentPage
     int _index = -1;
     int _toast;
     TaskCompletionSource<string>? _menu;
+    Border? _menuCard;
+    bool _menuSized;
 
     public AppShell()
     {
@@ -216,53 +218,16 @@ public partial class AppShell : ContentPage
         };
         var items = new VerticalStackLayout { Spacing = 0 };
         foreach (var action in actions)
-        {
-            var label = action;
-            var row = new Grid
-            {
-                HeightRequest = 48,
-                Padding = new Thickness(16, 0),
-            };
-            row.Add(new Label
-            {
-                Text = label,
-                TextColor = Swatches.Ink,
-                FontSize = 16,
-                VerticalTextAlignment = TextAlignment.Center,
-            });
-            RemoteInput.MakeActivable(row, () =>
-            {
-                CloseMenu(label);
-                return Task.CompletedTask;
-            });
-            items.Add(row);
-        }
-
-        var cancel = new Label
-        {
-            Text = "Cancel",
-            TextColor = Swatches.Muted,
-            FontSize = 16,
-            Padding = new Thickness(16, 14),
-            HorizontalTextAlignment = TextAlignment.Center,
-        };
-        RemoteInput.MakeActivable(cancel, () =>
-        {
-            CloseMenu("");
-            return Task.CompletedTask;
-        });
+            items.Add(MenuRow(action, Swatches.Ink, () => CloseMenu(action)));
+        var cancel = MenuRow("Cancel", Swatches.Muted, () => CloseMenu(""));
 
         var card = new Border
         {
             BackgroundColor = Swatches.Card,
             StrokeThickness = 0,
-            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle
-            {
-                CornerRadius = new CornerRadius(16, 16, 0, 0),
-            },
-            Padding = new Thickness(0, 8, 0, 20),
+            Padding = new Thickness(0, 8, 0, 12),
             VerticalOptions = LayoutOptions.End,
-            HorizontalOptions = LayoutOptions.Fill,
+            HorizontalOptions = LayoutOptions.Center,
             Content = new VerticalStackLayout
             {
                 Spacing = 0,
@@ -270,15 +235,72 @@ public partial class AppShell : ContentPage
             },
         };
 
+        _menuCard = card;
+        if (!_menuSized)
+        {
+            _menuSized = true;
+            MenuHost.SizeChanged += (_, _) => FitMenuCard();
+        }
+
         MenuHost.Children.Clear();
         MenuHost.Add(dim);
         MenuHost.Add(card);
+        FitMenuCard();
+    }
+
+    static Grid MenuRow(string text, Color color, Action pick)
+    {
+        var row = new Grid
+        {
+            HeightRequest = 48,
+            MinimumHeightRequest = 48,
+            Padding = new Thickness(16, 0),
+        };
+        row.Add(new Label
+        {
+            Text = text,
+            TextColor = color,
+            FontSize = 16,
+            VerticalTextAlignment = TextAlignment.Center,
+            HorizontalTextAlignment = TextAlignment.Start,
+        });
+        RemoteInput.MakeActivable(row, () =>
+        {
+            pick();
+            return Task.CompletedTask;
+        });
+        return row;
+    }
+
+    void FitMenuCard()
+    {
+        if (_menuCard is null)
+            return;
+
+        var available = MenuHost.Width > 0 ? MenuHost.Width : Width;
+        var column = RemoteWindow.Column(available, RemoteWindow.PageColumnMax);
+        if (column <= 0)
+            return;
+
+        if (double.IsNaN(_menuCard.WidthRequest) || Math.Abs(_menuCard.WidthRequest - column) > 0.5)
+            _menuCard.WidthRequest = column;
+
+        var full = available <= column + 0.5;
+        var align = full ? LayoutOptions.Fill : LayoutOptions.Center;
+        if (_menuCard.HorizontalOptions != align)
+            _menuCard.HorizontalOptions = align;
+        var margin = full ? Thickness.Zero : new Thickness(0, 0, 0, 12);
+        if (_menuCard.Margin != margin)
+            _menuCard.Margin = margin;
+        var radius = full ? new CornerRadius(16, 16, 0, 0) : new CornerRadius(16);
+        _menuCard.StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = radius };
     }
 
     void CloseMenu(string pick)
     {
         MenuHost.IsVisible = false;
         MenuHost.Children.Clear();
+        _menuCard = null;
         var pending = _menu;
         _menu = null;
         pending?.TrySetResult(pick);
